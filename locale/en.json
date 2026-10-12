@@ -1,0 +1,6 @@
+{
+	"meta": {
+		"title": "DSH Toolbox",
+		"description": "Personal tool pack: two-layer memory injection + memory write tool, and see_image (vision model transcription via host LLM channel)."
+	}
+}

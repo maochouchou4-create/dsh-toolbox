@@ -1,0 +1,6 @@
+{
+	"meta": {
+		"title": "DSH 工具箱",
+		"description": "个人工具集：两层记忆索引注入＋memory 写侧工具，与 see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型）。"
+	}
+}

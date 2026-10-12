@@ -1,0 +1,52 @@
+{
+	"name": "dsh-toolbox",
+	"version": "0.1.0",
+	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）。单包多工具，逐工具隔离激活。",
+	"license": "MIT",
+	"type": "module",
+	"main": "lib/index.js",
+	"exports": {
+		".": "./lib/index.js",
+		"./package.json": "./package.json",
+		"./locale/*.json": "./locale/*.json",
+		"./icon": "./icon.svg"
+	},
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		}
+	},
+	"files": [
+		"lib/**",
+		"test/**",
+		"locale/**",
+		"cordis.patch.yml",
+		"icon.svg",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "node --test"
+	},
+	"engines": {
+		"node": ">=18",
+		"dsh": ">=0.2.1-alpha.0 <0.3.0"
+	},
+	"keywords": [
+		"deepseek-harness",
+		"dsh",
+		"cordis",
+		"plugin",
+		"memory",
+		"vision"
+	],
+	"peerDependencies": {
+		"@deepseek-ai/dsh-llm": ">=0.2.1-alpha.0 <0.3.0",
+		"@deepseek-ai/dsh-tools": ">=0.2.1-alpha.0 <0.3.0",
+		"@deepseek-ai/schemastery": ">=3.18.5-alpha.0 <4"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/maochouchou4-create/dsh-toolbox.git"
+	}
+}
