@@ -5,8 +5,9 @@
 
 - **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
   附会话 systemPrompt 索引注入（`memory:index`，order 200）。
-- **see_image**：把磁盘上的图片交给视觉模型转述成文字（先逐字转写可见文字，
-  再按图型结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。
+- **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
+  结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
+  `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
 
 ## see_image 通道说明
 
@@ -29,6 +30,15 @@ pi-ai openai-completions 的 zai thinking 映射）。换路由＝profile 层覆
 **存储增长口径**：每次 see_image 调用都会在宿主附件仓留下 durable 附件（内容
 寻址、同图去重）；宿主当前没有附件 GC/释放 API，长期使用会单调增长，属已知
 边界——不接受就别把 see_image 开给高频自动化流程。
+
+## 纯文本会话贴图闭环（attachment 入口）
+
+纯文本模型（inputModalities 不含 image）的会话里粘贴图片时，宿主把消息里的
+图片替换为占位符：`[image omitted because this model accepts text only;
+attachment sha256:053eb17e]`——图已落宿主附件仓，模型只见 8 位 hex 前缀。
+`see_image(attachment="053eb17e")`（也收 `sha256:…` 前缀或完整 64 位）即在
+存区 `~/.dsh/attachments/v1/objects/`（$DSH_HOME 可移）按前缀定位唯一对象、
+转述回会话。前缀歧义（同头多对象）与零命中都显式报错，不做静默兜底。
 
 ## 安装（本地仓直装）
 
