@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",
