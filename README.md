@@ -31,14 +31,19 @@ pi-ai openai-completions 的 zai thinking 映射）。换路由＝profile 层覆
 寻址、同图去重）；宿主当前没有附件 GC/释放 API，长期使用会单调增长，属已知
 边界——不接受就别把 see_image 开给高频自动化流程。
 
-## 纯文本会话贴图闭环（attachment 入口）
+## attachment 入口（会话内图片占位符）
 
-纯文本模型（inputModalities 不含 image）的会话里粘贴图片时，宿主把消息里的
-图片替换为占位符：`[image omitted because this model accepts text only;
-attachment sha256:053eb17e]`——图已落宿主附件仓，模型只见 8 位 hex 前缀。
-`see_image(attachment="053eb17e")`（也收 `sha256:…` 前缀或完整 64 位）即在
-存区 `~/.dsh/attachments/v1/objects/`（$DSH_HOME 可移）按前缀定位唯一对象、
-转述回会话。前缀歧义（同头多对象）与零命中都显式报错，不做静默兜底。
+会话里已落存的图片以占位符形态出现时——`[image omitted because this model
+accepts text only; attachment sha256:053eb17e]`——`see_image(attachment="053eb17e")`
+（也收 `sha256:…` 前缀或完整 64 位）在存区 `~/.dsh/attachments/v1/objects/`
+（$DSH_HOME 可移）按前缀定位唯一对象、转述回会话。前缀歧义（同头多对象）与
+零命中都显式报错，不做静默兜底。占位符的真实出现场景＝会话先用视觉模型
+收过图、中途切到纯文本模型后的**历史图回放**（适配层逐图替换）。
+
+注意：**向纯文本模型的新消息里贴图/拖图并不产生占位符**——宿主在 prompt
+入口直接拒收整条消息（session/attachment-invalid，
+MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」）。给纯文本
+模型喂图的正路＝磁盘路径：`see_image(path=…)`。
 
 ## 安装（本地仓直装）
 
