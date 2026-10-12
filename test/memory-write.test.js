@@ -174,6 +174,16 @@ test('editEntry：全等替换（newString===oldString）命中≠改动，repla
 	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), '重复\n重复\n')
 })
 
+test('editEntry：newString 里的 $ 模式（$` / $\' / $& / $$）按字面落盘，不得插回匹配前后文', () => {
+	const root = join(base, 'edit-dollar')
+	upsertEntry({ memoryRoot: root, layer: 'habit', file: 'topic.md', content: '甲行\n丙行', indexLine: '- [topic](topic.md) — **x→查此条**' })
+	// 规则类正文很常带 ``$` `` 这类写法（写正则笔记），按 String.replace 解释它会静默复制整条
+	const replacement = "JS 正则无 m 标志时 `$` 只认串尾；$' $& $$ 一律按字面"
+	const r = editEntry({ memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行', newString: replacement })
+	assert.equal(r.replacements, 1)
+	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), `${replacement}\n丙行\n`)
+})
+
 test('editEntry：CRLF 正文＋CRLF 索引（git checkout 形态）照常工作，落盘归一 LF、索引行报 kept、尾空行保真', () => {
 	const root = join(base, 'edit-crlf')
 	const dir = join(root, 'profile')
