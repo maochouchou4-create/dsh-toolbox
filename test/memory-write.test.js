@@ -448,6 +448,24 @@ test('editEntry：LF 正文多尾空行保真（替换不动作者行尾形态�
 	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\nA\n\n\n', '两个尾空行原样保留')
 })
 
+test('editEntry：命中域含尾换行（照 read 原文复制文末片段即命中，不必先掐掉换行）', async () => {
+	const root = join(base, 'edit-hit-tail')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(join(dir, 'topic.md'), '---\ntitle: A\ndescription: B\n---\n\n甲行\n\n乙行\n', 'utf8')
+	// 调用方是从 read 的原文里复制片段，而落盘恒以 \n 收尾：把尾换行切出命中域时，
+	// 下面第 1、3 两种写法（照抄文末几行）必然报「未命中」，报错还反指「勿凭印象」
+	const 带尾换行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '乙行\n', newString: '乙行改\n' })
+	assert.equal(带尾换行.replacements, 1)
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲行\n\n乙行改\n')
+	const 跨空行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行\n\n乙行改', newString: '甲乙合一行' })
+	assert.equal(跨空行.replacements, 1)
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲乙合一行\n')
+	const 跨空行带尾换行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '\n\n甲乙合一行\n', newString: '\n\n甲乙终行\n' })
+	assert.equal(跨空行带尾换行.replacements, 1)
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲乙终行\n', '整文全等：前两行替换后未被覆盖的形态一并钉死')
+})
+
 test('editEntry：编辑后正文为空与超失控保护走同一条拦截链（结果仍过 upsert 校验）', async () => {
 	const root = join(base, 'edit-validate')
 	const content = entry('主题条目', '触发词', '唯一一行')
