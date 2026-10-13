@@ -1,5 +1,5 @@
 /**
- * dsh-memory 读侧单测（node:test，零宿主依赖）：slug、读取状态、索引预算、
+ * dsh-memory 读侧单测（node:test，零宿主依赖）：记忆根路由与 slug、读取状态、索引预算、
  * 扫目录派生索引、注入块组装。
  * 夹具在临时目录搭建，测后清理；写侧（upsert/edit/delete/lint）在 write.test.js。
  * 每个用例独占一个根目录——避免目录内容互相牵连。
@@ -7,9 +7,9 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, workspaceSlug } from '../lib/memory/core.js'
+import { tmpdir, homedir } from 'node:os'
+import { isAbsolute, join, resolve } from 'node:path'
+import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
 
 let base
@@ -54,6 +54,22 @@ test('workspaceSlug：空串与非字符串抛 TypeError（Fail Fast）', () => 
 	assert.throws(() => workspaceSlug(undefined), TypeError)
 	assert.throws(() => workspaceSlug(null), TypeError)
 	assert.throws(() => workspaceSlug(42), TypeError)
+})
+
+test('resolveRoot：缺省兜底与绝对化一步做完，对已绝对化的入参幂等（注册期归一过再传进来不变形）', () => {
+	assert.deepEqual(resolveRoot(DEFAULT_MEMORY_ROOT), { profile: join(homedir(), '.dsh', 'memory', 'profile'), workspaces: join(homedir(), '.dsh', 'memory', 'workspaces') }, '默认根的 ~ 要展开')
+	// 兜底收在这一步：空值与非字符串一律按没给算，调用方不再各自拼回退形态
+	for (const blank of [undefined, null, '', '   ', 42]) {
+		assert.deepEqual(resolveRoot(blank), resolveRoot(DEFAULT_MEMORY_ROOT), `${JSON.stringify(blank)} 应当作没给`)
+	}
+	// 相对根必须解析成绝对路径：读侧与写侧的基目录不同，不归一就是两套语义
+	const relative = resolveRoot('./memory')
+	assert.deepEqual(relative, resolveRoot(resolve('./memory')), '相对根按 cwd 解析')
+	assert.ok(isAbsolute(relative.profile) && isAbsolute(relative.workspaces), '两个子位置都得是绝对路径')
+	// 幂等是「一次归一」这句话成立的前提：注册期已绝对化过的值再传进来结果不变
+	assert.deepEqual(resolveRoot('/abs/memory'), resolveRoot(absoluteMemoryRoot('/abs/memory')), '对已绝对化的入参幂等')
+	assert.deepEqual(resolveRoot(relative.profile), { profile: join(relative.profile, 'profile'), workspaces: join(relative.profile, 'workspaces') }, '上一层算出的子位置再解一次不塌')
+	assert.equal(absoluteMemoryRoot('/abs/memory'), '/abs/memory', 'absoluteMemoryRoot 自身也幂等')
 })
 
 test('readCapped：文件不存在返回 missing（常态，非错误）', () => {
