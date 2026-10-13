@@ -89,12 +89,18 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 - 单测：`npm test`（node --test；三类面：零宿主依赖层（纯函数直测＋node 适配器的
   真 I/O，跑在临时目录上）、端口宿主适配器的**替身**（`ctx.fs` 替身，不是宿主
   通道）、接线静态解析）。
-- 记忆注入块：`npm run check:memory -- <记忆根> <工作区 cwd>`——**必须带参数**：不带参数
-  会在仓内空跑（工作层按 `process.cwd()` 算出 `home-nvse-code-repos-dsh-toolbox` 这个不
-  存在的桶，该层在**注入块装配**里被省略，于是整块定档只量到习惯层——逐层预算那一项仍
-  照扫存在的层，整块却照印「全部达标」）。本机正确形态：
+- 记忆注入块：`npm run check:memory -- <记忆根> <工作区 cwd>`——**两参必须带全**（少给任一参
+  或给空串，桶在场那项判红、命令以 1 退出：工作层按 `process.cwd()` 算出
+  `home-nvse-code-repos-dsh-toolbox` 这个不存在的桶，该层在**注入块装配**里被省略，整块
+  定档只量得到习惯层——扫到多少就量多少，扫不到层时接线那项也不许拿「全绿」收场）。
+  本机正确形态：
   `npm run check:memory -- /home/nvse/.dsh/memory /home/nvse/code`
-  （扫两层目录，按注入侧同一份判定验预算与 frontmatter 契约；接参 `[记忆根] [工作区 cwd]`）。
+  （扫两层目录，按注入侧同一份判定验预算与 frontmatter 契约；接参 `[记忆根] [工作区 cwd]`；
+  覆盖项见命令末尾自报名单）。
+- 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
+  将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply`——落盘前先
+  把待改文件的改前原文备份到记忆根同级的 `memory-migrate-backups/<时间戳>/`，脚本可反复跑
+  （已合规条目不动、不进备份）。
 - 识图质量端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，
   答案与图吻合才留——不测易分辨的图，测「像素真喂进去了」。
 
@@ -105,7 +111,7 @@ lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，config
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋接线静态解析）
-scripts/                check-memory-index.mjs：注入块离线自检（不依赖宿主启动）
+scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`。
