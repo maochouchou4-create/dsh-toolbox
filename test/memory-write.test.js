@@ -177,6 +177,33 @@ test('upsertEntry：层内同名拦截且不落盘（先 delete 再改名）', a
 	assert.equal(again.indexLine, '- [同一个标题](first.md) — 触发词改')
 })
 
+test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语料体检干净，绕过写侧合流出的撞名被点名且写侧同拦）', async () => {
+	const root = join(base, 'dup-title-parity')
+	const dupWarnings = () => lintMemory({ memoryRoot: root }).warnings.filter((w) => w.includes('层内 title 重名'))
+
+	// 方向一：写侧一条条造出来的语料（构造上就撞不了名）体检必干净。两个动作问的不是同一件事
+	// （写侧问「再写这个 title 会不会撞上」，体检问「盘上现有的 title 有没有已经撞上的」），
+	// 但「什么算撞名」这一个判据必须是同一份，否则会出现体检沉默而写侧事后拦的错位
+	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('标题一', '触发词') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'two.md', content: entry('标题二', '触发词') })
+	assert.deepEqual(dupWarnings(), [], '各占一个 title 的语料体检不报撞名')
+
+	// 跨机合流能造出写侧造不出的语料：绕过写侧直接落盘（git merge 的等价物）。习惯层是
+	// 跨机同步语料，两台机器各自拦得住自己，合流后这层才第一次出现重名
+	writeFileSync(join(root, 'profile', 'three.md'), entry('标题一', '触发词'), 'utf8')
+	const reported = dupWarnings()
+	assert.equal(reported.length, 1, '合流出的一组撞名报一条')
+	assert.ok(reported[0].includes('one.md') && reported[0].includes('three.md'), '体检点名撞上的两条')
+
+	// 方向二：体检点名的那一组，写侧正在拦的正是那一个 title（不是别的）
+	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'four.md', content: entry('标题一', '触发词') }), /同名/)
+	// 撞名只挡那一个 title，不把整层封死：重名躺在盘上时换个 title 仍写得进去
+	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'five.md', content: entry('标题五', '触发词') })
+	const afterWrite = dupWarnings()
+	assert.equal(afterWrite.length, 1, '新写的条目不并入撞名组')
+	assert.ok(afterWrite[0].includes('one.md') && afterWrite[0].includes('three.md'), '撞名组仍是原来那两条')
+})
+
 test('upsertEntry：层内 frontmatter 不合规的条目逐条列全（报错要给出脱困路径，修完即解锁）', async () => {
 	const root = join(base, 'write-broken-peer')
 	const dir = join(root, 'profile')

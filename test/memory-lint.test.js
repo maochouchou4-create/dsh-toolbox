@@ -113,6 +113,33 @@ test('lintMemory：缺习惯层接线/日期戳/失控保护/无桶提示', () =
 	assert.ok(huge.warnings.some((w) => w.includes('失控保护') && w.includes('big.md')))
 })
 
+test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算撞（判据＝同层同 title 字段）', () => {
+	const root = join(base, 'lint-dup-title')
+	const profile = join(root, 'profile')
+	const bucket = join(root, 'workspaces', 'D-code')
+	mkdirSync(profile, { recursive: true })
+	mkdirSync(bucket, { recursive: true })
+	// 同层同 title、文件名各不同：写侧 assertTitleFree 正是按 frontmatter 的 title 字段拦的，
+	// 按文件名判的话这一组根本不会被拦——两条判据必须落在同一处
+	writeFileSync(join(profile, 'alpha.md'), entry('撞名标题', '触发词甲'), 'utf8')
+	writeFileSync(join(profile, 'beta.md'), entry('撞名标题', '触发词乙'), 'utf8')
+	writeFileSync(join(profile, 'gamma.md'), entry('独一份', '触发词丙'), 'utf8')
+	// 跨层同名不算撞：写侧扫的是一个层目录，工作层同名不挡习惯层写入，按层分组同理
+	writeFileSync(join(bucket, 'delta.md'), entry('撞名标题', '触发词丁'), 'utf8')
+	const report = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
+	assert.equal(report.ok, false)
+	const dup = report.warnings.filter((w) => w.includes('层内 title 重名'))
+	assert.equal(dup.length, 1, '只报撞名的那一组')
+	assert.ok(dup[0].includes('撞名标题'), '告警须指出撞的是哪个 title')
+	assert.ok(dup[0].includes('alpha.md') && dup[0].includes('beta.md'), '告警须点名撞上的两条')
+	assert.ok(!dup[0].includes('delta.md'), '跨层同名不进这一组')
+	assert.ok(!dup[0].includes('gamma.md'), '未撞名的条目不牵进来')
+	// frontmatter 不合规的条目 title 不可知，不占坑也不被当成无同名（写侧对它是另一条专门口径）
+	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
+	const withBroken = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
+	assert.equal(withBroken.warnings.filter((w) => w.includes('层内 title 重名')).length, 1, '坏条目不改变撞名判定')
+})
+
 test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
 	const root = join(base, 'lint-degraded')
 	const profile = join(root, 'profile')
