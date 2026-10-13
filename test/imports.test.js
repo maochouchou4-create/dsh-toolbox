@@ -168,6 +168,7 @@ const NODE_FS_DIRECT = new Map([
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],
+	['working-dir.js', false],
 	['index.js', false],
 ])
 
