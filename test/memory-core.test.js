@@ -265,6 +265,12 @@ test('applyIndexBudget：超行预算截断并显式标注', () => {
 	assert.ok(!r.text.includes(`line-${INDEX_LINE_BUDGET}`), '截断后不含超预算的第一行')
 })
 
+/** 去掉成对的代理项后仍有残留码元＝注入串里有游离代理对（半个 emoji）。 */
+const 有游离代理对 = (text) => /[\uD800-\uDFFF]/.test(text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ''))
+
+/** 注入串＝正文段（行尾 … 已在其中）＋块尾截断标注。 */
+const 注入正文段 = (text) => text.replace(/\n\n…（索引超预算截断[\s\S]*\n$/, '')
+
 test('applyIndexBudget：行数达标但超字符预算走字符截断', () => {
 	// 行数取满预算内、每行长度使总量越字符预算：行/字符两条分支必须各自可达，
 	// 只测其中一条会让另一条退化成永远不走的死分支
@@ -273,7 +279,39 @@ test('applyIndexBudget：行数达标但超字符预算走字符截断', () => {
 	const r = applyIndexBudget(text)
 	assert.equal(r.truncated, true)
 	assert.ok(r.text.includes('仅注入前'))
-	assert.ok(r.text.length > INDEX_CHAR_BUDGET && r.text.length < INDEX_CHAR_BUDGET + 200)
+	// 切点回退到行边界：注入段只由原文整行拼成、末行带 …，块尾另附一条标注。
+	// 断言的是「不切在行中间」这条契约本身，不拿截断后总长与预算比大小——那个数字
+	// 取决于标注文案长度，超没超预算跟注入内容对不对无关
+	const injected = 注入正文段(r.text)
+	assert.ok(injected.endsWith('…'), '行尾留 … 标出切点')
+	const 原文行 = new Set(text.split('\n'))
+	assert.ok(injected.replace(/…$/, '').split('\n').every((line) => 原文行.has(line)), '注入段每一行都是原文整行，无半行碎片')
+	assert.equal(有游离代理对(r.text), false)
+})
+
+test('applyIndexBudget：4999 字符＋emoji 尾巴的语料按行回退（不产半个 emoji，也不产无标注半行）', () => {
+	const 行长 = 125
+	const 行 = '字'.repeat(行长)
+	const 末行 = '字'.repeat(4999 - 39 * (行长 + 1))
+	const text = `${Array.from({ length: 39 }, () => 行).join('\n')}\n${末行}😀`
+	assert.equal(text.length, 5001, '语料＝4999 字符＋一个 emoji，恰超字符预算且不超行预算')
+	const r = applyIndexBudget(text)
+	assert.equal(r.truncated, true)
+	assert.equal(r.origLines, INDEX_LINE_BUDGET, '行数未超预算，走的确实是字符分支')
+	const injected = 注入正文段(r.text)
+	assert.equal(injected, `${Array.from({ length: 39 }, () => 行).join('\n')}…`, '切点回退到预算内最后一个换行，末行整行不带进注入')
+	assert.equal(有游离代理对(r.text), false, '注入串里不许出现半个 emoji')
+})
+
+test('applyIndexBudget：单行就超字符预算时按预算切，高代理项摘掉而不是留半个 emoji', () => {
+	const text = `${'字'.repeat(4999)}😀`
+	const r = applyIndexBudget(text)
+	assert.equal(r.truncated, true)
+	// 无换行可回退的边界：不因「切不成整行」就丢掉整条索引（连标题都没了，而标题正是
+	// 召回入口），只把落在高代理项上的那个码元摘掉
+	assert.equal(注入正文段(r.text), `${'字'.repeat(4999)}…`)
+	assert.equal(有游离代理对(r.text), false)
+	assert.ok(r.text.includes('仅注入前 4999 字符'), '标注报的是实际注入的原文长度（不含 …）')
 })
 
 test('applyIndexBudget：恰满行数＋尾换行不误报（生成器产物形态）', () => {
