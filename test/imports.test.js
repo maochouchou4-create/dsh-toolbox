@@ -36,7 +36,10 @@ function parseExportNames(source) {
 	return names
 }
 
-/** 去注释后扫 ctx.<service> 消费（注释里的提及不算数）。 */
+/** 去注释后扫服务消费（注释里的提及不算数）。
+ * 覆盖的是**注入面消费**（ctx.<service>）外加按需取用（ctx.get('<service>')）——后者
+ * 不在 inject 面是设计（工具族不需要它必然在场），收集起来只为识别、不参与下面的
+ * 双向对齐；本函数因此看不见任何其它形式的服务引用（如解构注入、插件闭包取用）。 */
 const SERVICES = ['systemPrompt', 'tools', 'llm', 'attachments', 'workingDirectory', 'fs']
 function consumedServices(source) {
 	const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
@@ -44,6 +47,7 @@ function consumedServices(source) {
 	for (const service of SERVICES) {
 		if (new RegExp(`ctx\\.${service}\\b`).test(code)) used.add(service)
 	}
+	for (const match of code.matchAll(/ctx\.get\(\s*'(\w+)'/g)) used.add(match[1])
 	return used
 }
 
@@ -99,13 +103,33 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 
 	const used = new Set([...consumedServices(glue), ...consumedServices(readLib('memory/index.js')), ...consumedServices(readLib('see-image/index.js'))])
 	for (const service of used) {
+		// 只对注入面服务做双向对齐：ctx.get('sandboxPolicy') 这类按需取用不在 inject 面
+		// 是设计，对齐它会把设计当噪音报错
+		if (!SERVICES.includes(service)) continue
 		assert.ok(declared.has(service), `模块消费了 ctx.${service} 但 inject 未声明——cordis 抛 cannot get property 而插件 DOA`)
 	}
 	for (const service of declared) {
 		assert.ok(used.has(service), `inject 声明了 '${service}' 但无模块消费——多余的 DOA 风险/约束噪音`)
 	}
+	// 反向钉住按需取用的识别：上面那个 continue 会把「正则退化成永不命中」伪装成
+	// 「没问题」，而这正是本用例的立身之本（少声明＝DOA）
+	assert.ok(used.has('sandboxPolicy'), "memory/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
 
 	for (const file of ['memory/index.js', 'see-image/index.js']) {
 		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
+	}
+})
+
+test('写侧 upsert/edit 不直连 node:fs（防回退到端口化之前）', () => {
+	const source = readLib('memory/write.js')
+	for (const name of ['upsertEntry', 'editEntry']) {
+		const start = source.indexOf(`export async function ${name}(`)
+		assert.ok(start > 0, `write.js 找不到 ${name} 声明`)
+		// 函数体从声明切到下一个顶层 export：够覆盖它内部定义的一切，又不误伤同文件
+		// 的 delete/lint 两族（那两族按设计留在 node:fs）
+		const next = source.indexOf('\nexport ', start + 1)
+		const body = source.slice(start, next === -1 ? undefined : next)
+		const direct = body.match(/\b(?:writeFileSync|appendFileSync|mkdirSync|readFileSync|existsSync|rmSync|unlinkSync|renameSync|statSync|readdirSync|copyFileSync)\s*\(/)
+		assert.equal(direct, null, `${name} 函数体内出现 node:fs 直连 ${direct?.[0]}——写入侧 I/O 只能走 fs 端口`)
 	}
 })

@@ -9,6 +9,15 @@
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
 
+## memory 写侧的文件策略边界
+
+memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏；而记忆文件按设计住在
+工作目录之外（`~/.dsh/memory`），所以写记忆要求 `danger-full-access`（本 profile 的
+`permission-presets.defaultPreset` 即如此）。若把权限切到 `workspace-write`，写记忆
+会被宿主判成越界而拒——设计后果，不是故障。delete 与 lint 两族因宿主 fs 契约没有
+删除能力而留在 node:fs，不受该围栏约束，但 delete 同样受只读策略前检（只读会话
+一律拒写）。
+
 ## see_image 通道说明
 
 走**宿主自己的 llm 通道**（不自带 HTTP、不存任何 key）：默认
@@ -63,7 +72,7 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 
 ```text
 lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，configShape 并集
-lib/memory/             记忆工具：index.js 装配 + core.js/write.js 纯函数
+lib/memory/             记忆工具：index.js 装配 + core.js/write.js 纯函数 + fs-port.js 端口
 lib/see-image/          识图工具：index.js 装配 + vision.js 纯函数（嗅探/终态映射）
 test/                   node:test 单测（纯函数直测 + 接线静态解析）
 ```
