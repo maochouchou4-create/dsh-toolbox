@@ -245,9 +245,29 @@ test('createHostFsPort：策略按会话解析（agent 缺席交后端默认解�
 	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent }).assertWritable(), undefined)
 	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent: undefined }).assertWritable(), undefined, '无会话上下文＝resolve({})')
 	// 策略洞位被删（如宿主本地后端的 4 形参 writeText）或压根不是 fs 服务：策略会被
-	// 静默丢弃，越界写入得逞——这种错必须在构造期炸，不能等第一次记忆写入
-	assert.throws(() => createHostFsPort({ fs: { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) } }), /契约版本不匹配/)
-	assert.throws(() => createHostFsPort({ fs: {} }), /契约版本不匹配/)
+	// 静默丢弃，越界写入将得逞——这种错必须在构造期炸，不能等第一次记忆写入
+	assert.throws(() => createHostFsPort({ fs: { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) } }), /不带 sandboxPolicy 洞位/)
+	assert.throws(() => createHostFsPort({ fs: {} }), /不带 sandboxPolicy 洞位/)
+})
+
+test('createHostFsPort：缺策略洞位的宿主报「不带 sandboxPolicy 洞位」，缺方法的才报「契约版本不匹配」（文案指错方向即排查从错处岔开）', () => {
+	// writeText.length === 4 就是宿主本地后端那一版：它没挂 dsh-fs-sandbox，压根没有策略
+	// 洞位。报「契约版本不匹配」会把人引去查宿主版本与升级，而正确处置是给这个 profile 挂上
+	// dsh-fs-sandbox 后端——两种根因两种处置，文案必须落在真实的那一个上
+	const fourArg = { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) }
+	assert.throws(
+		() => createHostFsPort({ fs: fourArg }),
+		(error) => {
+			assert.match(error.message, /不带 sandboxPolicy 洞位/)
+			assert.match(error.message, /dsh-fs-sandbox/, '须点出该挂哪个后端，否则读者无从处置')
+			assert.doesNotMatch(error.message, /契约版本不匹配/, '缺洞位与缺方法是两回事，文案不得混用')
+			return true
+		},
+	)
+	// 缺方法那两条才是真的契约版本不匹配：文案归它们，不许被这次改动一并带走
+	const fiveArg = async (target, content, intent, signal, sandboxPolicy) => ({})
+	assert.throws(() => createHostFsPort({ fs: { writeText: fiveArg } }), /契约版本不匹配：缺 listDir/, '缺 listDir 仍是契约版本不匹配')
+	assert.throws(() => createHostFsPort({ fs: { writeText: fiveArg, listDir: async () => [] } }), /契约版本不匹配：缺 readByteRange/, '缺 readByteRange 仍是契约版本不匹配')
 })
 
 test('createHostFsPort：listDir 只透 name+type 并按位传 signal，缺失目录的 FS_NOT_FOUND 归一为 []', async () => {
