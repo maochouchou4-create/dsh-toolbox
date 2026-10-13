@@ -169,7 +169,7 @@ test('upsertEntry：frontmatter 契约不合规一律抛错且不落盘', async 
 	assert.equal(existsSync(join(root, 'profile', 'ok.md')), false, '拦截分支不得落盘')
 })
 
-test('upsertEntry：层内同名拦截且不落盘（先 delete 再改名）', async () => {
+test('upsertEntry：层内同名拦截且不落盘（处置是改 title 不 delete，且点名全部撞上的条目）', async () => {
 	const root = join(base, 'write-dup')
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'first.md', content: entry('同一个标题', '触发词') })
 	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'second.md', content: entry('同一个标题', '另一词') }), /同名/)
@@ -177,6 +177,21 @@ test('upsertEntry：层内同名拦截且不落盘（先 delete 再改名）', a
 	// 同名但就是它自己（重写同一条目）不拦
 	const again = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'first.md', content: entry('同一个标题', '触发词改') })
 	assert.equal(again.indexLine, '- [同一个标题](first.md) — 触发词改')
+	// 报错点名全部撞上的条目而不只是第一条：读者照着改要一次改对，撞一个改一个得来回几趟。
+	// 绕过写侧直接落盘（跨机合流的等价物）造出第二条撞名，报错须两个名字都给全
+	writeFileSync(join(root, 'profile', 'third.md'), entry('同一个标题', '第三词'), 'utf8')
+	await assert.rejects(
+		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'second.md', content: entry('同一个标题', '另一词') }),
+		(error) => {
+			assert.match(error.message, /first\.md/)
+			assert.match(error.message, /third\.md/)
+			// 处置口径与体检那份同向：撞上的不是待写这条的旧版本，照着「先 delete 再改名」丢的是真条目
+			assert.match(error.message, /edit/)
+			assert.ok(!error.message.includes('先 delete 再改名'), error.message)
+			return true
+		},
+		'报错须点名全部撞名条目并给出无损的处置',
+	)
 })
 
 test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语料体检干净，绕过写侧合流出的撞名被点名且写侧同拦）', async () => {
