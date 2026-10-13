@@ -23,7 +23,7 @@ import {
 	resolveRoot,
 	workspaceSlug,
 } from '../lib/memory/core.js'
-import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
+import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
 
 /**
@@ -78,7 +78,7 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 	})
 	// 写侧纪律的字符数读不到即记一条 issue：静默归 0 会让整块变小、block-chars 随之达标，
 	// 脚本印「全部达标」，而规则块在运行期是被 warn 掉的——规则被静默丢掉比超预算更难查
-	const rulesPath = join(root.profile, 'WRITING.md')
+	const rulesPath = join(root.profile, WRITING_FILE)
 	let rulesChars = 0
 	try {
 		rulesChars = readFileSync(rulesPath, 'utf8').length
