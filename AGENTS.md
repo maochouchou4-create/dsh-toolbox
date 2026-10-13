@@ -50,7 +50,11 @@ npm run check:memory -- <记忆根> <工作区 cwd>   # 记忆索引预算与 fr
 - `lib/memory/fs-port.js` 的端口是写侧（`upsertEntry`/`editEntry`）唯一的 I/O 通道：
   契约、守卫、错误码（`FS_SANDBOX_DENIED`/`FS_STALE_VERSION`）、原子发布都不许为图省事
   削弱或绕过。要在写侧读目录就用端口的 `listDir`，别在 upsert/edit 里调 `node:fs`。
-- 纯函数文件（`core.js`/`write.js`/`frontmatter.js`/`vision.js`）零宿主依赖，
-  可直接单测；`test/imports.test.js` 静态解析钉住装配文件的导入面，搬家断链会红。
+  这条边界的口径是**整个本地导入闭包**：给 `write.js` 的下游模块加一行 `import node:fs`
+  同样算绕门（`test/imports.test.js` 的闭包断言就为此存在，逐文件定性表管不到那一跳）。
+- `lib/memory/` 下除装配层（`index.js`）与端口（`fs-port.js`）外一律零宿主依赖，
+  可直接单测；`lib/see-image/vision.js` 同。新增文件按这条规则就位，不要维护枚举清单。
+  `test/imports.test.js` 静态解析钉住导入面与 node:fs 直连的定性表，搬家断链、
+  新模块漏定性都会红。
 - 版本号随契约走：工具参数面、注入块结构、frontmatter 契约任一变更都算破坏性变更，
   0.x 的 minor 位就是破坏位（0.1.1 → 0.2.0），并与 README 的描述同批改。

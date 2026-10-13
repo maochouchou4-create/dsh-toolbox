@@ -26,7 +26,10 @@
 frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
 就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
 故层内同名条目会被写侧拦下（先 delete 再改名）；同层某条目 frontmatter 不合规时同名
-判定不可信，写侧直接报错而不是放行。
+判定不可信，写侧直接报错而不是放行，并列出层内全部不合规条目。**拦的只是别的条目**：
+不合规的那条本身被扫描跳过，层内只有它一条时可以用 edit 改它（oldString 先用宿主
+read 工具取现文）；两条以上时 edit 改任一条都会被另一条挡住，须先 delete 掉多余的，
+剩最后一条再 edit。修好之后该层立即恢复。
 
 ## memory 写侧的文件策略边界
 
@@ -99,8 +102,8 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 
 ```text
 lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，configShape 并集
-lib/memory/             记忆工具：index.js 装配 + core.js/write.js/frontmatter.js 纯函数 + fs-port.js 端口
-lib/see-image/          识图工具：index.js 装配 + vision.js 纯函数（嗅探/终态映射）
+lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
+lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋接线静态解析）
 scripts/                check-memory-index.mjs：注入块离线自检（不依赖宿主启动）
 ```
