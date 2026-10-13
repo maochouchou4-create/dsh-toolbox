@@ -250,7 +250,7 @@ test('同名判定：同一条目体检整篇读、写侧头读 64KB 封顶，�
 })
 
 test('groupTitlesByTitle：按 title 字段分组、不合群的另列一份（两份消费方拿不同那一面）', () => {
-	const { byTitle, unparsable } = groupTitlesByTitle([
+	const { byTitle, dups, unparsable } = groupTitlesByTitle([
 		{ name: 'a.md', text: entry('标题一', '触发词') },
 		{ name: 'b.md', text: entry('标题一', '另一词') },
 		{ name: 'c.md', text: entry('标题二', '触发词') },
@@ -258,6 +258,9 @@ test('groupTitlesByTitle：按 title 字段分组、不合群的另列一份（�
 	])
 	assert.deepEqual(byTitle.get('标题一'), ['a.md', 'b.md'], '同 title 的按喂入顺序聚成一组')
 	assert.deepEqual(byTitle.get('标题二'), ['c.md'], '各占一个 title 的单列一组')
+	// dups 是「组长 > 1」那道门槛的唯一定义处：扫描器与体检都直接取它。门槛留在各自
+	// 调用方的话，下一个同类需求（title 归一后撞、跨层撞）要改两个文件
+	assert.deepEqual(dups, [{ title: '标题一', names: ['a.md', 'b.md'] }], '只有撞上的组进 dups，单条组不进')
 	assert.deepEqual(unparsable, [{ name: 'bad.md', error: '条目开头缺 frontmatter（首行须为 ---）' }], '不合群的随值返回，带病因供写侧拼报错')
 	// 不合群的既不进分组也不占一个空 title——空串会被当成真实存在的 title
 	assert.equal(byTitle.has(''), false)
