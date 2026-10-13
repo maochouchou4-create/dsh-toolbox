@@ -1,12 +1,12 @@
 /**
- * see_image 内缝纯函数单测（node:test，零宿主依赖）：魔数嗅探＋流终态映射
- * ＋附件占位符解析（标识归一／存区根解析／前缀定位对象）。
+ * see_image 内缝单测（node:test，零宿主依赖）：魔数嗅探＋流终态映射＋附件占位符解析
+ * （标识归一／存区根解析／前缀定位对象）＋两个编排函数（入口定位、转写取正文）。
  * 端到端识图质量不在此层（需活宿主＋视觉模型，验收口径见 README）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, resolveTarget, sniffImageMediaType, transcribe } from '../lib/see-image/vision.js'
 
@@ -62,11 +62,16 @@ test('parseAttachmentId：过短／非法字符／空标识显式拒绝', () => 
 	assert.throws(() => parseAttachmentId(`${HEX64}ff`), /无效的附件标识/, '超过 64 位拒绝')
 })
 
-test('resolveAttachmentRoot：DSH_HOME 优先于默认 ~/.dsh，空白视同未设', () => {
-	const fakeHome = join(tmpdir(), 'fake-home')
-	assert.equal(resolveAttachmentRoot({}, () => fakeHome), join(fakeHome, '.dsh', 'attachments', 'v1', 'objects'))
-	assert.equal(resolveAttachmentRoot({ DSH_HOME: '/custom/dsh' }, () => fakeHome), join('/custom/dsh', 'attachments', 'v1', 'objects'))
-	assert.equal(resolveAttachmentRoot({ DSH_HOME: '   ' }, () => fakeHome), join(fakeHome, '.dsh', 'attachments', 'v1', 'objects'), '空白 DSH_HOME 视同未设')
+test('resolveAttachmentRoot：DSH home 由胶水层注入，~ 展开／带尾斜杠都归一，为空显式拒绝', () => {
+	// 求根语义（$DSH_HOME、~ 展开）归宿主 resolveDshHome 那一份，本仓不复刻：
+	// 旧实现自己推时漏了 ~ 展开，DSH_HOME='~/.dsh' 那种写法会算出字面量相对路径，
+	// 与宿主实际写入分家——症状是「宿主存了图，这里却查不到桶」
+	assert.equal(resolveAttachmentRoot(join(tmpdir(), 'dsh-home')), join(tmpdir(), 'dsh-home', 'attachments', 'v1', 'objects'))
+	assert.equal(resolveAttachmentRoot('~/.dsh'), join(homedir(), '.dsh', 'attachments', 'v1', 'objects'), '注入值带 ~ 时展开，不产出相对路径')
+	assert.equal(resolveAttachmentRoot('/custom/dsh/'), join('/custom/dsh', 'attachments', 'v1', 'objects'), '带尾斜杠归一，不多出一层空目录名')
+	assert.throws(() => resolveAttachmentRoot(''), /DSH home/, '空值显式拒绝，不静默退回某个默认目录')
+	assert.throws(() => resolveAttachmentRoot('   '), /DSH home/, '空白视同未设，同样显式拒绝')
+	assert.throws(() => resolveAttachmentRoot(undefined), /DSH home/)
 })
 
 test('resolveAttachmentObject：前缀与全量均唯一命中，返回完整路径与 id', () => {
@@ -103,6 +108,11 @@ test('resolveAttachmentObject：零命中／歧义／缺桶均显式报错', () 
 	}
 })
 
+/** 存区根取用函数：只有占位符分支会问它（求根失败不许拖垮磁盘路径入口）。 */
+const 取根 = () => {
+	throw new Error('磁盘路径入口不该问存区根')
+}
+
 /** ctx 替身：只实现 resolveTarget 问得到的服务成员，记下每次调用便于断言。 */
 const 假Ctx = ({ cwd = '/work/live' } = {}) => {
 	const calls = []
@@ -135,14 +145,14 @@ const 假流 = async function* (chunks) {
 
 test('resolveTarget：path 分支按会话活目录解析，sourceName 取 basename、attachmentId 空', async () => {
 	const ctx = 假Ctx()
-	const r = await resolveTarget(ctx, { path: 'shots/a.png' }, { agent: { session: { id: 's1' } }, signal: 'SIG' }, '/objects')
+	const r = await resolveTarget(ctx, { path: 'shots/a.png' }, { agent: { session: { id: 's1' } }, signal: 'SIG' }, 取根)
 	assert.equal(r.target.displayPath, 'shots/a.png')
 	assert.equal(r.sourceName, 'a.png', '存附件时的文件名取 basename，不是整条路径')
 	assert.equal(r.attachmentId, undefined, 'path 分支没有 sha256 可回显')
 	assert.deepEqual(ctx.calls, [
 		{ method: 'workingDirectory.ensure' },
 		{ method: 'fs.resolve', path: 'shots/a.png', cwd: '/work/live' },
-	])
+	], '磁盘路径入口不碰存区根（取根函数被问就会抛）')
 })
 
 test('resolveTarget：非 agent 调用不问活目录（cwd 交由 fs 服务默认解析）', async () => {
@@ -150,7 +160,7 @@ test('resolveTarget：非 agent 调用不问活目录（cwd 交由 fs 服务默�
 	ctx.workingDirectory.ensure = async () => {
 		throw new Error('无会话上下文时不该问活目录')
 	}
-	const r = await resolveTarget(ctx, { path: '/abs/b.png' }, { agent: undefined, signal: undefined }, '/objects')
+	const r = await resolveTarget(ctx, { path: '/abs/b.png' }, { agent: undefined, signal: undefined }, 取根)
 	assert.equal(r.sourceName, 'b.png')
 	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: '/abs/b.png', cwd: undefined }])
 })
@@ -161,11 +171,11 @@ test('resolveTarget：attachment 分支按前缀定位对象，sourceName 与 at
 		mkdirSync(join(root, HEX64.slice(0, 2)))
 		writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
 		const ctx = 假Ctx()
-		const r = await resolveTarget(ctx, { attachment: `SHA256:053eb17e` }, { agent: undefined, signal: undefined }, root)
+		const r = await resolveTarget(ctx, { attachment: `SHA256:053eb17e` }, { agent: undefined, signal: undefined }, () => root)
 		assert.equal(r.target.displayPath, join(root, HEX64.slice(0, 2), HEX64))
 		assert.equal(r.sourceName, HEX64)
 		assert.equal(r.attachmentId, HEX64, '占位符分支回显完整 id，调用方据此拼 sha256: 前缀')
-		assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: join(root, HEX64.slice(0, 2), HEX64), cwd: undefined }])
+		assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: join(root, HEX64.slice(0, 2), HEX64), cwd: undefined }], '占位符入口同样不问会话活目录')
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
@@ -173,8 +183,8 @@ test('resolveTarget：attachment 分支按前缀定位对象，sourceName 与 at
 
 test('resolveTarget：path 与 attachment 都给或都不给即拦（两条入口互斥）', async () => {
 	const ctx = 假Ctx()
-	await assert.rejects(() => resolveTarget(ctx, {}, { agent: undefined, signal: undefined }, '/objects'), /二选一/)
-	await assert.rejects(() => resolveTarget(ctx, { path: 'a.png', attachment: '053eb17e' }, { agent: undefined, signal: undefined }, '/objects'), /二选一/)
+	await assert.rejects(() => resolveTarget(ctx, {}, { agent: undefined, signal: undefined }, 取根), /二选一/)
+	await assert.rejects(() => resolveTarget(ctx, { path: 'a.png', attachment: '053eb17e' }, { agent: undefined, signal: undefined }, 取根), /二选一/)
 	assert.deepEqual(ctx.calls, [], '互斥校验在碰 I/O 之前')
 })
 

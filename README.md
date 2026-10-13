@@ -66,8 +66,10 @@ pi-ai openai-completions 的 zai thinking 映射）。换路由＝profile 层覆
 
 会话里已落存的图片以占位符形态出现时——`[image omitted because this model
 accepts text only; attachment sha256:053eb17e]`——`see_image(attachment="053eb17e")`
-（也收 `sha256:…` 前缀或完整 64 位）在存区 `~/.dsh/attachments/v1/objects/`
-（$DSH_HOME 可移）按前缀定位唯一对象、转述回会话。前缀歧义（同头多对象）与
+（也收 `sha256:…` 前缀或完整 64 位）在宿主附件存区
+`<DSH_HOME>/attachments/v1/objects/` 按前缀定位唯一对象、转述回会话——DSH home 取自宿主
+`profileContext.home`（宿主自己算的那份，含 `$DSH_HOME` 与 `~` 展开），本仓不自行推算。
+前缀歧义（同头多对象）与
 零命中都显式报错，不做静默兜底。占位符的真实出现场景＝会话先用视觉模型
 收过图、中途切到纯文本模型后的**历史图回放**（适配层逐图替换）。
 
