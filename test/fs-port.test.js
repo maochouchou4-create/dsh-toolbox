@@ -345,4 +345,3 @@ test('createHostFsPort：readHead 走 readByteRange 的 offset 0 与给定 lengt
 	assert.equal(head, '宿主字节', '字节按 UTF-8 解码成字符串交给消费方')
 	assert.equal(stub.calls.some((item) => item.method === 'readText'), false, '头读不得绕道 readText')
 })
-
