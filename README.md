@@ -25,10 +25,12 @@
 **没有索引文件**，`write`/`edit` 也不碰索引；`delete` 只删条目文件，它那一行随文件消失。
 frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
 就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
-故层内同名条目会被写侧拦下（先 delete 再改名）；写侧那道拦截只在进程内拦得住自己，
-而习惯层是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，所以 `lint`
-也会点名同层撞名的条目，处置是 edit 改其中一条的 frontmatter title（delete 丢的是
-正文，title 与文件名本就是两回事）。同层某条目 frontmatter 不合规时同名
+故层内同名条目会被写侧拦下（改 frontmatter 的 title 行，用 `edit`）；写侧那道拦截只在
+进程内拦得住自己，而习惯层是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，
+所以 `lint` 也会点名同层撞名的条目。**写侧报错**＝你正要写的那条与另一条撞名了，
+**体检 warning**＝盘上已经存在撞名对；两种口径处置同向，都不是 `delete`——撞上的每一
+条都是各自带正文的现存条目（title 与文件名本就是两回事），要改的是那一组里的某一条。
+同层某条目 frontmatter 不合规时同名
 判定不可信，写侧直接报错而不是放行，并列出层内全部不合规条目。**拦的只是别的条目**：
 不合规的那条本身被扫描跳过，层内只有它一条时可以用 edit 改它（oldString 先用宿主
 read 工具取现文）；两条以上时 edit 改任一条都会被另一条挡住，须先 delete 掉多余的，
@@ -100,8 +102,8 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
   定档只量得到习惯层——扫到多少就量多少，扫不到层时接线那项也不许拿「全绿」收场）。
   本机正确形态：
   `npm run check:memory -- /home/nvse/.dsh/memory /home/nvse/code`
-  （扫两层目录，按注入侧同一份判定验预算与 frontmatter 契约；接参 `[记忆根] [工作区 cwd]`；
-  覆盖项见命令末尾自报名单）。
+  （扫两层目录，按注入侧同一份判定验预算、frontmatter 契约与层内 title 重名；接参
+  `[记忆根] [工作区 cwd]`；覆盖项见命令末尾自报名单）。
 - 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
   将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply`——落盘前先
   把待改文件的改前原文备份到记忆根同级的 `memory-migrate-backups/<时间戳>/`，脚本可反复跑

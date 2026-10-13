@@ -29,7 +29,7 @@ schema 与实现不同步＝子代理照 schema 传参撞上「参数不存在�
 
 ```text
 npm test            # exit 0 且 pass 数不低于改前
-npm run check:memory -- <记忆根> <工作区 cwd>   # 记忆索引预算与 frontmatter 契约（改记忆侧才跑）
+npm run check:memory -- <记忆根> <工作区 cwd>   # 记忆索引预算、frontmatter 契约与层内 title 重名（改记忆侧才跑）
 ```
 
 `npm run check:memory` 判绿＝**exit 0 且输出末尾有自报名单**：它自己以顶层脚本形态
