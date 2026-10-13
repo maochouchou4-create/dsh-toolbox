@@ -15,9 +15,10 @@
  * 换成一段编的文本，而 description 的失效没有任何症状。title 缺失时才从正文派生。
  *
  * 判据不重写：层清点问 layers.js，条目命名与保留名（含「哪个是已退役的索引」）问
- * frontmatter.js，行归一与围栏定位也问它，转换结果是否合规问 assertEntryFrontmatter。
- * 本脚本只做「删死字段 + 补缺失的 title」这一层行级机械替换，不自扫目录、不自写一套
- * frontmatter 解析——那两样一旦分家，迁移就会按另一套契约判「迁好了」。
+ * frontmatter.js，行归一与围栏定位也问它，转换结果是否合规问 assertEntryFrontmatter，
+ * 转换结果按层是否撞名问那份共享的重名判定。本脚本只做「删死字段 + 补缺失的 title」
+ * 这一层行级机械替换，不自扫目录、不自写一套 frontmatter 解析——那两样一旦分家，
+ * 迁移就会按另一套契约判「迁好了」。
  *
  * 两条不打算实现的行为，先说清免得被当成疏漏：
  * ① **行尾会被整篇归一为 LF**（行归一在前，转换在其后）。这是刻意与写侧同口径：write.js 的
@@ -41,6 +42,7 @@ import {
 	assertEntryFrontmatter,
 	findFenceEnd,
 	frontmatterLines,
+	groupTitlesByTitle,
 	isEntryName,
 	isRetiredIndexFile,
 	stemOf,
@@ -111,18 +113,22 @@ function convertEntry(text, file) {
 	return { text: ['---', ...kept, '---', ...lines.slice(close + 1)].join('\n'), reason: null }
 }
 
-/** 采集：列出将要改的文件（改写与删除）与读不动／转换后仍不合规而被跳过的文件。 */
+/** 采集：列出将要改的文件（改写与删除）与读不动／转换后仍不合规／转换后与同层撞名而被跳过的文件。 */
 function plan(root) {
 	const changes = []
 	const skipped = []
 	let compliantEntries = 0
 	let crlfFiles = 0
 	for (const { kind, dir } of listLayerDirs(root)) {
+		// 先按层攒齐再比对：撞名是「这一层」的性质，攒齐前判只能看见已走过的那几条，
+		// 报出来的组会随遍历顺序变化
+		const layerChanges = []
+		const titled = []
 		for (const name of readdirSync(dir).sort()) {
 			const path = join(dir, name)
 			const rel = relative(root.root, path)
 			if (isRetiredIndexFile(name)) {
-				changes.push({ layer: kind, rel, path, kindOfChange: '删除', text: null })
+				layerChanges.push({ layer: kind, rel, path, kindOfChange: '删除', text: null })
 				continue
 			}
 			if (!isEntryName(name)) continue
@@ -136,9 +142,11 @@ function plan(root) {
 				continue
 			}
 			// 已合规的条目不动、不进备份、不报：迁移脚本被反复跑是常态（每次契约变更跑一次），
-			// 每次都去重写一遍已合规的条目只会平白制造 diff 与备份
+			// 每次都去重写一遍已合规的条目只会平白制造 diff 与备份。它仍参与撞名比对——
+			// 它占着这个 title，转换结果撞上来就是真的撞名
 			if (isCompliant(text, name)) {
 				compliantEntries += 1
+				titled.push({ name, text })
 				continue
 			}
 			if (text.includes('\r\n')) crlfFiles += 1
@@ -153,8 +161,27 @@ function plan(root) {
 				skipped.push({ rel, reason: error.message })
 				continue
 			}
-			changes.push({ layer: kind, rel, path, kindOfChange: '改写', text: converted.text })
+			layerChanges.push({ layer: kind, rel, path, kindOfChange: '改写', text: converted.text })
+			titled.push({ name, text: converted.text })
 		}
+		// 迁移不得造出它要躲的那个问题：title 缺失时从正文 H1 派生，派生结果没有层内去重，
+		// 而本脚本按设计不过 assertTitleFree。静默兜底的后果是三条 H1 同名的条目迁移完
+		// 退出码 0、而落盘后 memory lint 立刻报层内重名——这个脚本的存在理由恰恰是
+		// 「契约一改全层写不了时先跑它」，把病灶留给下游等于给退路本身再添一条退路。
+		// 只把**将被改写**的那几条推进 skipped：已合规的那条不动，它由 lint 那侧照常报出来
+		for (const { title, names } of groupTitlesByTitle(titled).dups) {
+			for (const name of names) {
+				const change = layerChanges.find((item) => item.path === join(dir, name))
+				if (change === undefined) continue
+				const others = names.filter((other) => other !== name).join('、')
+				skipped.push({
+					rel: change.rel,
+					reason: `转换结果与同层的 ${others} 撞 title「${title}」——改其中一条的 frontmatter title，不要 delete 那一条（两条各带正文）`,
+				})
+				layerChanges.splice(layerChanges.indexOf(change), 1)
+			}
+		}
+		changes.push(...layerChanges)
 	}
 	return { changes, skipped, compliantEntries, crlfFiles }
 }

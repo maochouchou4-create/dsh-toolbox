@@ -190,6 +190,35 @@ test('条目名被同名目录占住：逐条降级成「跳过」，不让异�
 	)
 })
 
+test('迁移不得造出它要躲的那个问题：转换结果层内撞名的条目推进跳过，落盘后以非 0 退出', () => {
+	withCorpus(
+		(root) => {
+			// 三条老布局条目从同一个 H1 派生 title：撞名是转换这一刻才出现的，而本脚本按设计
+			// 不经写侧 assertTitleFree（那个拦截只管 write/edit 这条链路）
+			for (const file of ['dup-a.md', 'dup-b.md', 'dup-c.md']) {
+				writeEntry(root, file, `---\nname: ${file.replace('.md', '')}\ndescription: 触发词\n---\n\n# 同题条目\n\n正文。\n`)
+			}
+			writeEntry(root, 'ok.md', '---\nname: ok\ndescription: 触发词\n---\n\n# 独一份\n\n正文。\n')
+		},
+		(root) => {
+			const dry = runOn(root, [])
+			assert.match(dry.stdout, /跳过 profile\/dup-a\.md：转换结果与同层的 dup-b\.md、dup-c\.md 撞 title「同题条目」/, dry.stdout)
+			assert.match(dry.stdout, /待迁 1 条、跳过 3 条/, dry.stdout)
+
+			const applied = runOn(root, ['--apply'])
+			assert.equal(applied.code, 1, '落盘后有跳过条目须以非 0 退出，否则没人看得见要人工处理')
+			for (const file of ['dup-a.md', 'dup-b.md', 'dup-c.md']) {
+				assert.match(
+					readFileSync(join(root, 'profile', file), 'utf8'),
+					/^name:/m,
+					`${file} 撞名就不该落盘——带着判红落下去，这个退路本身就成了新的退路`,
+				)
+			}
+			assert.equal(readKeys(root, 'ok.md').title, '独一份', '不撞名的那条照常迁，撞名不许把整层封死')
+		},
+	)
+})
+
 test('记忆根不存在或根下没有层：退出 1 并说明没接线（不是「无需迁移」）', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'dsh-memory-migrate-root-'))
 	try {
