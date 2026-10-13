@@ -8,7 +8,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { composeMemory } from '../lib/memory/assemble.js'
@@ -85,6 +85,20 @@ test('deleteEntry：引用扫描逐文件降级（病态文件只废自己那份
 	assert.ok(r.scanError.includes(join('profile', 'x.md')), `降级文件名要进 scanError，实际 ${r.scanError}`)
 	assert.equal(r.references.length, 1, '病态文件之后的层仍须扫完')
 	assert.ok(r.references[0].includes(join('stays.md:6')))
+})
+
+test('deleteEntry：层目录清点抛错时主操作照常成功、整份引用报告降级进 scanError', async () => {
+	const root = join(base, 'delete-layer-enum-fail')
+	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md', content: entry('被删条目', '触发词') })
+	// workspaces 放文件而不是目录：层目录清点（existsSync 判在场、readdirSync 列桶）在这里
+	// 抛 ENOTDIR——确定性触发。这是与「逐文件降级」并列的另一条出口：它一失败就整份报告拿不到，
+	// 而半份报告比「没扫到」更难发现，故不许拿它充数，得整份降级说清
+	writeFileSync(join(root, 'workspaces'), '不是目录\n', 'utf8')
+	const r = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md' })
+	assert.equal(existsSync(join(r.dir, 'gone.md')), false, '主操作照常成功，降级只作用于附属报告')
+	assert.deepEqual(r.references, [], '层清点失败＝整份报告拿不到，不得拿半份充数')
+	assert.match(r.scanError, /^引用扫描失败（层目录清点）：/, `须说清是层目录清点这一步失败，实际 ${r.scanError}`)
+	assert.ok(r.scanError.length > '引用扫描失败（层目录清点）：'.length, '降级须带上底层错误信息')
 })
 
 test('deleteEntry：被删条目的索引行随之退场（索引是派生的，无文件即无行）', async () => {

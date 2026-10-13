@@ -6,7 +6,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
@@ -223,6 +223,54 @@ test('composeMemory：memoryRoot 支持 ~ 展开（真造目录，不靠「不�
 	} finally {
 		rmSync(absolute, { recursive: true, force: true })
 	}
+})
+
+test('composeMemory：条目头跨 2KB 分块边界且边界劈开三字节汉字，派生行仍逐字正确', () => {
+	const { root, profile } = fixture('compose-head-chunk')
+	// 围栏要落在第二个 2KB 块里（头长到 2KB 开外），并把一个三字节汉字压在块边界上：
+	// 前段用 ASCII 铺到 2046 字节，那之后第一个字符就是那个字，占 2046–2048 号字节。
+	// 两件事同时被考——跨块累积，以及末尾那半个字不是坏字节
+	const prefix = '---\ntitle: 长条目\ndescription: '
+	const description = `${'x'.repeat(2046 - Buffer.byteLength(prefix, 'utf8'))}${'汉'.repeat(64)}`
+	writeFileSync(join(profile, 'long.md'), entry('长条目', description), 'utf8')
+	const bytes = readFileSync(join(profile, 'long.md'))
+	assert.deepEqual(bytes.subarray(2046, 2049), Buffer.from('汉', 'utf8'), '夹具自证：那个字确实被 2048 字节的块边界劈开（否则这条只是普通用例）')
+	assert.ok(bytes.length > 2048, '头部确实跨过第一块')
+	const issues = []
+	const text = composeMemory({ memoryRoot: root, onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
+	// 头读若只取一块就收工，围栏在窗外，解析会判不合规并报 entry-frontmatter
+	assert.deepEqual(issues, [], `跨块头读出问题会报 issue，实际 ${JSON.stringify(issues)}`)
+	assert.ok(text.includes(`- [长条目](long.md) — ${description}`), '派生行须与 description 逐字相同')
+	assert.ok(!text.includes('�'), '半个字不许变成替换符')
+})
+
+test('composeMemory：写侧纪律块读不动 → onIssue 报 read-error、纪律块缺席但不牵连索引块', () => {
+	const { root, profile } = fixture('compose-writing-read-error')
+	// WRITING.md 是目录：existsSync 为真、readFileSync 抛 EISDIR——纪律块读失败与条目读
+	// 失败是同一个出口的另一次触发，纪律被静默丢掉比超预算更难查，故这一格必须报出来
+	mkdirSync(join(profile, 'WRITING.md'), { recursive: true })
+	writeFileSync(join(profile, 'topic.md'), entry('好条目', '触发词'), 'utf8')
+	const issues = []
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
+	assert.deepEqual(issues.map(([kind, path]) => [kind, path.endsWith('WRITING.md')]), [['read-error', true]], `须报到纪律块的文件名，实际 ${JSON.stringify(issues)}`)
+	assert.ok(issues[0][2].length > 0, 'detail 携带错误信息')
+	assert.ok(!text.includes('## 记忆书写'), '读不动的纪律块不进注入块')
+	assert.ok(text.includes('- [好条目](topic.md) — 触发词'), '纪律块读失败不得牵连索引块')
+})
+
+test('composeMemory：条目名被悬空软链占位 → statSync 抛错走 read-error（与同名目录那格分开）', () => {
+	const { root, profile } = fixture('compose-stat-error')
+	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
+	// 悬空软链：readdir 列出它，statSync 跟随到不存在的目标抛 ENOENT。这与「同名目录占位」
+	// 同为 read-error，却走的是另一条支路（statSync 抛错 vs 判出非普通文件），分开钉
+	symlinkSync(join(profile, 'gone.md'), join(profile, 'x.md'))
+	const issues = []
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
+	assert.deepEqual(issues.map(([kind]) => kind), ['read-error'], `只有一个 issue，实际 ${JSON.stringify(issues)}`)
+	assert.ok(issues[0][1].endsWith('x.md'))
+	assert.match(issues[0][2], /ENOENT/, 'detail 是 statSync 的原样错误，不是「非普通文件」那句固定文案（两支路别混成一条）')
+	assert.ok(!text.includes('x.md'), '读不动的条目不进索引')
+	assert.ok(text.includes('- [好条目](good.md) — 触发词'), '邻近病态条目不得牵连好条目')
 })
 
 test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、该条目不进索引', () => {

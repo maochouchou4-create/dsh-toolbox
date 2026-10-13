@@ -164,6 +164,45 @@ test('lintMemory：有 title 判不了的条目而本层不撞名，覆盖面缺
 	assert.ok(coverage[0].includes('broken.md') && coverage[0].includes('重名结论只覆盖其余条目'), coverage[0])
 })
 
+test('lintMemory：层目录清点抛错即中止并点名（workspaces 是文件＝确定性触发）', () => {
+	const root = join(base, 'lint-layer-enum-fail')
+	mkdirSync(join(root, 'profile'), { recursive: true })
+	writeFileSync(join(root, 'profile', 'only.md'), entry('唯一条目', '触发词'), 'utf8')
+	// workspaces 放文件而不是目录：层清点那一步只判存在性，于是它「在场」而 readdirSync 抛
+	// ENOTDIR。清点失败与逐处降级不同——层目录清单都没有，逐层体检无从谈起，只能中止
+	writeFileSync(join(root, 'workspaces'), '不是目录\n', 'utf8')
+	const report = lintMemory({ memoryRoot: root })
+	assert.equal(report.ok, false)
+	assert.deepEqual(report.warnings.map((w) => w.split('：')[0]), ['层清点失败（体检中止）'], '中止型失败须单独立一条，且不得再往下报别的')
+	assert.ok(report.warnings[0].includes('ENOTDIR'), '须带上底层错误信息，否则读者无从判断是自己没接线还是盘坏了')
+})
+
+test('lintMemory：条目清点失败退回保留 stem 集（死链判定降级），同一次里目录读取失败各报一条', () => {
+	// 先钉对照：接线正常时，同层在场的条目不是死链（否则后面那条误报证明不了降级生效）
+	const healthy = join(base, 'lint-stems-healthy')
+	const healthyBucket = join(healthy, 'workspaces', 'home-nvse-code')
+	mkdirSync(healthyBucket, { recursive: true })
+	writeFileSync(join(healthyBucket, 'present.md'), entry('在场条目', '触发词'), 'utf8')
+	writeFileSync(join(healthyBucket, 'linker.md'), entry('引用条目', '触发词', '见 [[present]] 一处'), 'utf8')
+	assert.equal(lintMemory({ memoryRoot: healthy }).warnings.filter((w) => w.includes('死 wikilink')).length, 0, '对照：stem 集完整时在场条目不判死链')
+
+	const root = join(base, 'lint-stems-degraded')
+	const bucket = join(root, 'workspaces', 'home-nvse-code')
+	mkdirSync(bucket, { recursive: true })
+	writeFileSync(join(bucket, 'present.md'), entry('在场条目', '触发词'), 'utf8')
+	writeFileSync(join(bucket, 'linker.md'), entry('引用条目', '触发词', '见 [[present]] 一处'), 'utf8')
+	// 习惯层是文件：全库 stem 清点与逐层列目录读的都是它，同一个病态输入一次点着两条出口
+	// （层清点那一步不抛——它只判 profile 存在，而文件也算存在）
+	writeFileSync(join(root, 'profile'), '不是目录\n', 'utf8')
+	const report = lintMemory({ memoryRoot: root })
+	assert.ok(report.warnings.some((w) => w.includes('条目清点失败') && w.includes('死链判定降级')), 'stem 清点失败须点名它降级到哪一步')
+	assert.ok(report.warnings.some((w) => w.includes('目录读取失败') && w.includes(join(root, 'profile'))), '层目录读不动须报到层与路径')
+	// 降级真的生效：stems 退回保留集，于是同层在场的条目被误报成死链。这条误报不是缺陷而是
+	// 症状——「覆盖面已经不可知」若一点声音都没有，降级就等于静默
+	assert.ok(report.warnings.some((w) => w.includes('死 wikilink [[present]]')), 'stems 不可知时，在场条目被判死链＝降级生效的可见症状')
+	assert.ok(!report.warnings.some((w) => w.includes('条目读取失败')), '读文件那一步没病，别混报')
+})
+
 test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
 	const root = join(base, 'lint-degraded')
 	const profile = join(root, 'profile')

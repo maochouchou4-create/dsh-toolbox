@@ -9,7 +9,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, resolveRoot } from '../lib/memory/core.js'
@@ -488,6 +488,31 @@ test('editEntry：命中拦截（不命中/多处未声明 replaceAll）与前�
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: null }), /newString/)
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '独', replaceAll: 1 }), /replaceAll/)
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '独', replaceAll: 'true' }), /replaceAll/)
+})
+
+test('editEntry：条目名被同名目录占用时按宿主词表拒改，与 upsert／delete 同一 name＋code', async () => {
+	const root = join(base, 'edit-not-regular')
+	const dir = join(root, 'profile')
+	mkdirSync(join(dir, 'topic.md'), { recursive: true })
+	const 捕获 = async (fn) => {
+		try {
+			await fn()
+		} catch (error) {
+			return error
+		}
+		return undefined
+	}
+	// 这道门在 edit 上是独立的一道：edit 是「判类型 → 读现文 → 内存里替换 → 交 upsert 落盘」，
+	// 少了它就拿着一个目录去 readText，炸成裸 node 的 EISDIR（调用方按 code 断会断不到）
+	const 编辑错误 = await 捕获(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'x', newString: 'y' }))
+	assert.equal(编辑错误?.code, 'FS_NOT_REGULAR_FILE', '拒改须报宿主那个码')
+	assert.equal(编辑错误?.name, 'FsPortError')
+	// 同一个故障在 upsert 与 edit 上是同一个错误对象形状：判定与错误工厂走 fs-guard.js
+	// 那一份（delete 路径上与 upsert 的对照在 memory-delete.test.js），三处必须一致
+	const 写错误 = await 捕获(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词') }))
+	assert.equal(写错误?.code, 编辑错误?.code)
+	assert.equal(写错误?.name, 编辑错误?.name)
+	assert.equal(statSync(join(dir, 'topic.md')).isDirectory(), true, '被拒的编辑不得动那个目录')
 })
 
 test('editEntry：全等替换（newString===oldString）命中≠改动，replacements=0 且正文不变', async () => {
