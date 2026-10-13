@@ -214,7 +214,9 @@ test('层内 title 重名：只由那一项判红，且跨层同名不算（撞�
 	seedLayer(root, 'habit', [deriveIndexLine({ title: '同题条目', description: '习惯层触发词', file: 'h.md' })])
 	const { code, stdout } = runScript([root, cwd])
 	assert.equal(code, 1, `层内重名须以 1 退出：\n${stdout}`)
-	assert.deepEqual(violationIds(stdout), ['layer-title-dup'], `只该由这一项判红：\n${stdout}`)
+	// 按去重后的 id 断言：证明的是「只有这一项判红」，不是「这一项只列一行」——同一语料
+	// 在逐层清点与注入块装配两次扫描里各报一次（两种 kind 前缀），是本脚本的既有形态
+	assert.deepEqual([...new Set(violationIds(stdout))], ['layer-title-dup'], `只该由这一项判红：\n${stdout}`)
 	assert.ok(stdout.includes('同题条目') && stdout.includes('topic-0.md') && stdout.includes('topic-1.md'), stdout)
 	// 处置指向 edit 而不是 delete：报出来的两条是各自带正文的现存条目，照着删丢的是内容
 	assert.ok(stdout.includes('不要 delete'), stdout)
@@ -234,6 +236,8 @@ test('层内重名结论的覆盖面：title 判不了的条目一并说出来�
 	const { code, stdout } = runScript([root, cwd])
 	assert.equal(code, 1, `层内重名须以 1 退出：\n${stdout}`)
 	assert.ok(violationIds(stdout).includes('layer-title-dup'), stdout)
+	// 覆盖面缺口单独立项认领：拼在撞名那条尾巴上时，三组撞名会印三遍、不撞名时一个字都不说
+	assert.ok(violationIds(stdout).includes('layer-title-coverage'), `覆盖面缺口要有自己的检查项：\n${stdout}`)
 	assert.ok(stdout.includes('1 条 title 判不了'), `覆盖面缺口要一并说出来：\n${stdout}`)
 	assert.ok(violationIds(stdout).includes('entry-frontmatter'), stdout)
 })
