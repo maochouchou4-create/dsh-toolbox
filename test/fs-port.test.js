@@ -244,17 +244,21 @@ test('createHostFsPort：策略按会话解析（agent 缺席交后端默认解�
 	const agent = { session: { id: 'session-7' } }
 	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent }).assertWritable(), undefined)
 	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent: undefined }).assertWritable(), undefined, '无会话上下文＝resolve({})')
-	// 策略洞位被删（如宿主本地后端的 4 形参 writeText）或压根不是 fs 服务：策略会被
-	// 静默丢弃，越界写入将得逞——这种错必须在构造期炸，不能等第一次记忆写入
-	assert.throws(() => createHostFsPort({ fs: { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) } }), /不带 sandboxPolicy 洞位/)
-	assert.throws(() => createHostFsPort({ fs: {} }), /不带 sandboxPolicy 洞位/)
+	// 形状齐备、只是 writeText 少一位形参（宿主本地后端那一版）：策略会被静默丢弃，
+	// 越界写入将得逞——这种错必须在构造期炸，不能等第一次记忆写入。替身补齐 listDir 与
+	// readByteRange 是为了过形状那道关、单独考语义门（缺方法是另一种根因，另有用例）
+	assert.throws(() => createHostFsPort({ fs: { ...makeHostFsStub(), writeText: async (target, content, intent, signal) => ({}) } }), /不带 sandboxPolicy 洞位/)
+	// 压根不是 fs 服务（writeText 不在场）是另一种根因：装沙箱 bundle 对它毫无用处，
+	// 该查的是 fs 服务注入/改名/换后端，所以钉的是缺方法那一条而不是上一条
+	assert.throws(() => createHostFsPort({ fs: {} }), /契约版本不匹配：缺 writeText 方法/)
 })
 
 test('createHostFsPort：缺策略洞位的宿主报「不带 sandboxPolicy 洞位」，缺方法的才报「契约版本不匹配」（文案指错方向即排查从错处岔开）', () => {
 	// writeText.length === 4 就是宿主本地后端那一版：它没挂 dsh-fs-sandbox，压根没有策略
 	// 洞位。报「契约版本不匹配」会把人引去查宿主版本与升级，而正确处置是给这个 profile 挂上
-	// dsh-fs-sandbox 后端——两种根因两种处置，文案必须落在真实的那一个上
-	const fourArg = { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) }
+	// dsh-fs-sandbox 后端——两种根因两种处置，文案必须落在真实的那一个上。替身补齐另两个
+	// 方法是为了过形状关、单独考语义门
+	const fourArg = { ...makeHostFsStub(), writeText: async (target, content, intent, signal) => ({}) }
 	assert.throws(
 		() => createHostFsPort({ fs: fourArg }),
 		(error) => {
@@ -264,8 +268,12 @@ test('createHostFsPort：缺策略洞位的宿主报「不带 sandboxPolicy 洞�
 			return true
 		},
 	)
-	// 缺方法那两条才是真的契约版本不匹配：文案归它们，不许被这次改动一并带走
+	// 缺方法那三条才是真的契约版本不匹配：文案归它们，不许被这次改动一并带走。
+	// writeText 也在其中——它在就不谈洞位，不在就是 fs 服务本身不对
 	const fiveArg = async (target, content, intent, signal, sandboxPolicy) => ({})
+	assert.throws(() => createHostFsPort({ fs: {} }), /契约版本不匹配：缺 writeText 方法/, '缺 writeText 报 fs 服务缺失，不得混进沙箱洞位那条')
+	// 方法在、只是少形参：走语义门那条，报的是洞位不在而不是缺方法
+	assert.throws(() => createHostFsPort({ fs: { ...makeHostFsStub(), writeText: () => ({}) } }), /不带 sandboxPolicy 洞位/, '0 形参 writeText 仍在场，报洞位而非缺方法')
 	assert.throws(() => createHostFsPort({ fs: { writeText: fiveArg } }), /契约版本不匹配：缺 listDir/, '缺 listDir 仍是契约版本不匹配')
 	assert.throws(() => createHostFsPort({ fs: { writeText: fiveArg, listDir: async () => [] } }), /契约版本不匹配：缺 readByteRange/, '缺 readByteRange 仍是契约版本不匹配')
 })
