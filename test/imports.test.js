@@ -83,9 +83,12 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 test('memory 工具参数面与写侧函数签名一致（action→入参字段逐一对齐）', async () => {
 	const source = readLib('memory/index.js')
 	const parameters = [...source.matchAll(/^\s{3}(\w+):\s*\{\s*type:/gm)].map((m) => m[1])
-	for (const expected of ['action', 'layer', 'file', 'content', 'oldString', 'newString', 'replaceAll', 'indexLine']) {
+	for (const expected of ['action', 'layer', 'file', 'content', 'oldString', 'newString', 'replaceAll']) {
 		assert.ok(parameters.includes(expected), `工具 parameters 缺 "${expected}"`)
 	}
+	// 索引行是 frontmatter 的派生产物：schema 里留着 indexLine 而实现已不接它，
+	// 子代理照 schema 传参就会撞上「参数不存在」——schema 与实现必须同退同进
+	assert.ok(!parameters.includes('indexLine'), 'indexLine 已退场，工具 parameters 不得再列它')
 	const executeBody = source.slice(source.indexOf('async execute'), source.indexOf('function renderToolResult'))
 	const write = await loadModule('memory/write.js')
 	for (const fn of ['upsertEntry', 'editEntry', 'deleteEntry', 'lintMemory']) {
@@ -120,16 +123,35 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	}
 })
 
+/** 顶层函数的原文窗口（声明处到下一个顶格右花括号）；顶格＝非嵌套，这是本仓的写法约定。 */
+function spanOf(source, name) {
+	const start = source.search(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${name}\\(`, 'm'))
+	if (start < 0) return null
+	const end = source.indexOf('\n}', start)
+	return { start, end: end === -1 ? source.length : end }
+}
+
+/** 按设计允许直连 node:fs 的族：delete 的 I/O、体检，以及这两族共用的目录遍历 helper。 */
+const NODE_FS_FAMILIES = ['listLayerDirs', 'knownStems', 'deleteEntry', 'lintMemory']
+
 test('写侧 upsert/edit 不直连 node:fs（防回退到端口化之前）', () => {
 	const source = readLib('memory/write.js')
+	const windows = NODE_FS_FAMILIES.map((name) => {
+		const span = spanOf(source, name)
+		assert.ok(span !== null, `write.js 找不到 ${name} 声明——放行名单与实际函数对不上，这条用例就成空转`)
+		return span
+	})
+	// 按「每处直连都必须落在放行族的窗口内」反向判定，而不是只扫 upsert/edit 两个函数体：
+	// 写路径上的模块级 helper（如同名拦截那段目录遍历）同样承载真实 I/O，只切 export
+	// 之间的窗口会把它漏在扫描外，回退了测试也不会红
+	for (const match of source.matchAll(/\b(?:writeFileSync|appendFileSync|mkdirSync|readFileSync|existsSync|rmSync|unlinkSync|renameSync|statSync|readdirSync|copyFileSync)\s*\(/g)) {
+		const inAllowed = windows.some((span) => match.index >= span.start && match.index < span.end)
+		if (inAllowed) continue
+		const enclosing = [...source.slice(0, match.index).matchAll(/^(?:export\s+)?(?:async\s+)?function (\w+)\(/gm)].pop()?.[1] ?? '模块顶层'
+		assert.fail(`${enclosing} 里出现 node:fs 直连 ${match[0].trim()}——写入侧（upsert/edit 及其 helper）I/O 只能走 fs 端口`)
+	}
+	// 反向钉住放行名单本身：上一步全空时，空转与「确实没有直连」长得一模一样
 	for (const name of ['upsertEntry', 'editEntry']) {
-		const start = source.indexOf(`export async function ${name}(`)
-		assert.ok(start > 0, `write.js 找不到 ${name} 声明`)
-		// 函数体从声明切到下一个顶层 export：够覆盖它内部定义的一切，又不误伤同文件
-		// 的 delete/lint 两族（那两族按设计留在 node:fs）
-		const next = source.indexOf('\nexport ', start + 1)
-		const body = source.slice(start, next === -1 ? undefined : next)
-		const direct = body.match(/\b(?:writeFileSync|appendFileSync|mkdirSync|readFileSync|existsSync|rmSync|unlinkSync|renameSync|statSync|readdirSync|copyFileSync)\s*\(/)
-		assert.equal(direct, null, `${name} 函数体内出现 node:fs 直连 ${direct?.[0]}——写入侧 I/O 只能走 fs 端口`)
+		assert.ok(spanOf(source, name) !== null, `write.js 找不到 ${name} 声明`)
 	}
 })

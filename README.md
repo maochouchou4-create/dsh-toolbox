@@ -4,10 +4,27 @@
 单个工具初始化失败只丢那一件，不连坐整包。当前两件：
 
 - **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
-  附会话 systemPrompt 索引注入（`memory:index`，order 200）。
+  附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
+  frontmatter（恰好 `title`＋`description` 两键）现场派生，不落盘、不手写。
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
+
+## memory 的索引与条目契约
+
+索引块每轮上下文都装一份，所以它有三重预算：层内索引的 **行数与字符数**、单条派生行的
+**字符数**（数值以 `lib/memory/core.js` 的常量为准，改档后跑 `npm run check:memory` 看
+它打印的当前定档与实测，别照抄本文档里的数字）。超预算时注入串带显式截断标注
+（不静默丢），`memory` 工具的 `lint` 与 `npm run check:memory` 逐条报病灶。
+
+索引不是数据：条目文件是唯一事实源，注入时按文件名排序扫目录、用
+`frontmatter.title`＋`description` 重建每一行（读侧不做跨调用缓存，故同长度改写也
+立刻可见）。因此
+**没有索引文件**，`write`/`edit` 也不碰索引；`delete` 只删条目文件，它那一行随文件消失。
+frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
+就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
+故层内同名条目会被写侧拦下（先 delete 再改名）；同层某条目 frontmatter 不合规时同名
+判定不可信，写侧直接报错而不是放行。
 
 ## memory 写侧的文件策略边界
 
@@ -65,6 +82,8 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 ## 验收口径
 
 - 单测：`npm test`（node --test；零宿主依赖的纯函数层＋接线静态解析）。
+- 记忆注入块：`npm run check:memory`（扫两层目录，按注入侧同一份判定验预算与
+  frontmatter 契约；接参 `[记忆根] [工作区 cwd]`）。
 - 识图质量端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，
   答案与图吻合才留——不测易分辨的图，测「像素真喂进去了」。
 
@@ -72,9 +91,10 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 
 ```text
 lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，configShape 并集
-lib/memory/             记忆工具：index.js 装配 + core.js/write.js 纯函数 + fs-port.js 端口
+lib/memory/             记忆工具：index.js 装配 + core.js/write.js/frontmatter.js 纯函数 + fs-port.js 端口
 lib/see-image/          识图工具：index.js 装配 + vision.js 纯函数（嗅探/终态映射）
 test/                   node:test 单测（纯函数直测 + 接线静态解析）
+scripts/                check-memory-index.mjs：注入块离线自检（不依赖宿主启动）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`。

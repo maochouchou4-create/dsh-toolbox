@@ -1,6 +1,8 @@
 /**
- * dsh-memory 读侧单测（node:test，零宿主依赖）：slug、读取状态、索引预算、组装。
- * 夹具在临时目录搭建，测后清理；写侧（upsert/delete/lint）在 write.test.js。
+ * dsh-memory 读侧单测（node:test，零宿主依赖）：slug、读取状态、索引预算、
+ * 扫目录派生索引与缓存失效、注入块组装。
+ * 夹具在临时目录搭建，测后清理；写侧（upsert/edit/delete/lint）在 write.test.js。
+ * 每个用例独占一个根目录——索引派生缓存按目录键入，共用根会让用例互相污染。
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -30,6 +32,17 @@ after(() => {
 	rmSync(base, { recursive: true, force: true })
 })
 
+/** 条目夹具：frontmatter 两键＋正文。 */
+const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
+
+/** 独立根目录：建 habit 层，可选建工作桶；返回根与各目录。 */
+const fixture = (name) => {
+	const root = join(base, name)
+	const profile = join(root, 'profile')
+	mkdirSync(profile, { recursive: true })
+	return { root, profile }
+}
+
 test('workspaceSlug：分隔符归一、折叠、去首尾、不小写', () => {
 	assert.equal(workspaceSlug('/home/nvse/code'), 'home-nvse-code')
 	assert.equal(workspaceSlug('D:\\code'), 'D-code')
@@ -40,7 +53,7 @@ test('workspaceSlug：分隔符归一、折叠、去首尾、不小写', () => {
 
 test('workspaceSlug：全分隔符路径归化为空串（调用方省略该层）', () => {
 	assert.equal(workspaceSlug('///'), '')
-	assert.equal(workspaceSlug('\\/:'), '')
+	assert.equal(workspaceSlug('\\/'), '')
 })
 
 test('workspaceSlug：空串与非字符串抛 TypeError（Fail Fast）', () => {
@@ -84,93 +97,170 @@ test('readCapped：文件在但读失败返回 read-error（目录当文件喂�
 })
 
 test('composeMemory：空树返回空串（不注入）', () => {
-	assert.equal(composeMemory({ memoryRoot, cwd: '/home/nvse/code' }), '')
+	assert.equal(composeMemory({ memoryRoot: join(base, 'empty-tree'), cwd: '/home/nvse/code' }), '')
 })
 
 test('composeMemory：三层齐备时单串含头＋规则＋习惯层＋工作层，块序正确', () => {
-	const profile = join(memoryRoot, 'profile')
-	const bucket = join(memoryRoot, 'workspaces', 'home-nvse-code')
-	mkdirSync(profile, { recursive: true })
+	const { root, profile } = fixture('compose-full')
+	const bucket = join(root, 'workspaces', 'home-nvse-code')
 	mkdirSync(bucket, { recursive: true })
 	writeFileSync(join(profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
-	writeFileSync(join(profile, 'MEMORY.md'), '习惯层索引正文', 'utf8')
-	writeFileSync(join(bucket, 'MEMORY.md'), '工作层索引正文', 'utf8')
+	writeFileSync(join(profile, 'a-topic.md'), entry('习惯条目', '触发词／召回词'), 'utf8')
+	writeFileSync(join(bucket, 'b-topic.md'), entry('工作条目', '另一组触发词'), 'utf8')
 
-	const text = composeMemory({ memoryRoot, cwd: '/home/nvse/code' })
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
 	const headerAt = text.indexOf('[记忆索引]')
 	const rulesAt = text.indexOf('## 记忆书写（写侧纪律）')
 	const profileAt = text.indexOf('## 习惯层（跨机同步）')
 	const workspaceAt = text.indexOf('## 工作层（本工作区·本机专属）')
 	assert.ok(headerAt !== -1 && rulesAt !== -1 && profileAt !== -1 && workspaceAt !== -1)
 	assert.ok(headerAt < rulesAt && rulesAt < profileAt && profileAt < workspaceAt, '块序：头→规则→习惯→工作')
-	assert.ok(text.includes('写侧纪律正文') && text.includes('习惯层索引正文') && text.includes('工作层索引正文'))
+	assert.ok(text.includes('写侧纪律正文'))
 	assert.ok(text.includes(`基目录：${profile}`) && text.includes(`基目录：${bucket}`))
+	assert.ok(text.includes('- [习惯条目](a-topic.md) — 触发词／召回词'), '索引行由 frontmatter 派生')
+	assert.ok(text.includes('- [工作条目](b-topic.md) — 另一组触发词'))
 })
 
 test('composeMemory：cwd 对应桶不存在时无工作层块、其余照常', () => {
-	const text = composeMemory({ memoryRoot, cwd: '/home/nvse/other' })
+	const { root, profile } = fixture('compose-no-bucket')
+	writeFileSync(join(profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
+	writeFileSync(join(profile, 'a-topic.md'), entry('习惯条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/other' })
 	assert.ok(text.includes('## 习惯层（跨机同步）'))
 	assert.ok(!text.includes('## 工作层'))
 })
 
 test('composeMemory：cwd 缺失（全局预览装配）时无工作层块、其余照常', () => {
-	const text = composeMemory({ memoryRoot })
+	const { root, profile } = fixture('compose-no-cwd')
+	writeFileSync(join(profile, 'a-topic.md'), entry('习惯条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root })
 	assert.ok(text.includes('## 习惯层（跨机同步）'))
 	assert.ok(!text.includes('## 工作层'))
 })
 
 test('composeMemory：slug 归化为空的 cwd 时无工作层块', () => {
-	const text = composeMemory({ memoryRoot, cwd: '///' })
+	const { root, profile } = fixture('compose-empty-slug')
+	writeFileSync(join(profile, 'a-topic.md'), entry('习惯条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root, cwd: '///' })
 	assert.ok(!text.includes('## 工作层'))
 })
 
 test('composeMemory：缺 WRITING.md 时规则块省略、习惯层照常（互不牵连）', () => {
-	rmSync(join(memoryRoot, 'profile', 'WRITING.md'), { force: true })
-	const text = composeMemory({ memoryRoot, cwd: '/home/nvse/code' })
+	const { root, profile } = fixture('compose-no-writing')
+	writeFileSync(join(profile, 'a-topic.md'), entry('习惯条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
 	assert.ok(!text.includes('记忆书写'))
-	assert.ok(text.includes('习惯层索引正文'))
+	assert.ok(text.includes('- [习惯条目](a-topic.md) — 触发词'))
 })
 
-test('composeMemory：桶存在但缺 MEMORY.md → onIssue 报 bucket-without-index、无工作层块', () => {
-	const bucket = join(memoryRoot, 'workspaces', 'home-nvse-bare')
-	mkdirSync(bucket, { recursive: true })
+test('composeMemory：桶存在但无条目 → 无工作层块（索引是派生的，空桶即空层）', () => {
+	const { root } = fixture('compose-empty-bucket')
+	mkdirSync(join(root, 'workspaces', 'home-nvse-bare'), { recursive: true })
 	const issues = []
-	const text = composeMemory({ memoryRoot, cwd: '/home/nvse/bare', onIssue: (kind, path) => issues.push([kind, path]) })
-	assert.deepEqual(issues.filter(([kind]) => kind === 'bucket-without-index').length, 1)
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/bare', onIssue: (kind) => issues.push(kind) })
 	assert.ok(!text.includes('home-nvse-bare'))
+	assert.deepEqual(issues, [], '空桶是常态不是病灶，不该报 issue')
 })
 
-test('composeMemory：读失败 → onIssue 报 read-error、该层省略其余照常', () => {
-	// 习惯层 MEMORY.md 用目录顶替文件＝确定性 EISDIR
-	const profile = join(memoryRoot, 'profile')
-	rmSync(join(profile, 'MEMORY.md'), { force: true })
-	mkdirSync(join(profile, 'MEMORY.md'))
+test('composeMemory：条目名被目录占用 → onIssue 报 read-error、好条目照常', () => {
+	// x.md 名字的目录：readdir 列出它、stat 判出非普通文件——确定性病态输入
+	const { root, profile } = fixture('compose-read-error')
+	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
+	mkdirSync(join(profile, 'x.md'))
 	const issues = []
-	const text = composeMemory({ memoryRoot, cwd: '/home/nvse/code', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
 	const readErrors = issues.filter(([kind]) => kind === 'read-error')
 	assert.equal(readErrors.length, 1)
+	assert.ok(readErrors[0][1].endsWith('x.md'))
 	assert.ok(readErrors[0][2].length > 0, 'detail 携带错误信息')
-	assert.ok(!text.includes('习惯层索引正文'))
-	// 清理：把目录换回文件供后续用例
-	rmSync(join(profile, 'MEMORY.md'), { recursive: true })
-	writeFileSync(join(profile, 'MEMORY.md'), '习惯层索引正文', 'utf8')
+	assert.ok(text.includes('- [好条目](good.md) — 触发词'), '邻近病态条目不得牵连好条目')
 })
 
 test('composeMemory：onIssue 缺省时不抛（旁路诊断可选）', () => {
-	assert.doesNotThrow(() => composeMemory({ memoryRoot, cwd: '/home/nvse/bare' }))
+	assert.doesNotThrow(() => composeMemory({ memoryRoot: join(base, 'compose-no-onissue'), cwd: '/home/nvse/bare' }))
 })
 
 test('composeMemory：memoryRoot 支持 ~ 展开', () => {
 	assert.equal(composeMemory({ memoryRoot: '~/.dsh-memory-test-nonexistent' }), '')
 })
 
+test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、该条目不进索引', () => {
+	const { root, profile } = fixture('compose-bad-fm')
+	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
+	writeFileSync(join(profile, 'bare.md'), '# 光有标题\n\n没有 frontmatter\n', 'utf8')
+	writeFileSync(join(profile, 'extra.md'), '---\nname: extra\ntitle: 多余键\ndescription: 触发词\n---\n\n正文\n', 'utf8')
+	const issues = []
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
+	const frontmatterIssues = issues.filter(([kind]) => kind === 'entry-frontmatter')
+	assert.equal(frontmatterIssues.length, 2, '缺 frontmatter 与多余键都要报到文件名')
+	assert.ok(frontmatterIssues.some(([, path, detail]) => path.endsWith('extra.md') && detail.includes('多余键')))
+	assert.ok(text.includes('- [好条目](good.md) — 触发词'))
+	assert.ok(!text.includes('bare.md') && !text.includes('extra.md'), '不合规条目不占索引行')
+})
+
+test('composeMemory：改 frontmatter 后下一次装配就是新行（读侧无跨调用缓存，同长度改写也立刻可见）', () => {
+	const { root, profile } = fixture('compose-refresh')
+	const path = join(profile, 'cached.md')
+	writeFileSync(path, entry('旧标题', '旧触发词'), 'utf8')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [旧标题](cached.md) — 旧触发词'))
+	// 同长度改写：任何以「键含 size」的缓存都会漏掉这种改动，读侧不做缓存就没有这个面
+	writeFileSync(path, entry('新标题', '新触发词'), 'utf8')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](cached.md) — 新触发词'), '改过 frontmatter 必须重扫')
+	assert.ok(!composeMemory({ memoryRoot: root }).includes('旧标题'), '旧派生行不得残留')
+})
+
+test('composeMemory：CRLF 条目照样派生（家机 git checkout 的换行不得让围栏判空）', () => {
+	const { root, profile } = fixture('compose-crlf')
+	writeFileSync(join(profile, 'crlf.md'), entry('窗口条目', '触发词／召回').replace(/\n/g, '\r\n'), 'utf8')
+	const text = composeMemory({ memoryRoot: root })
+	assert.ok(text.includes('- [窗口条目](crlf.md) — 触发词／召回'), 'CRLF 下 frontmatter 围栏必须仍判为闭合')
+})
+
+test('composeMemory：条目被删后索引行随之退场（readdir 不再列它）', () => {
+	const { root, profile } = fixture('compose-deleted')
+	writeFileSync(join(profile, 'stay.md'), entry('留下', '触发词'), 'utf8')
+	writeFileSync(join(profile, 'gone.md'), entry('删掉', '触发词'), 'utf8')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [删掉](gone.md)'))
+	rmSync(join(profile, 'gone.md'))
+	const text = composeMemory({ memoryRoot: root })
+	assert.ok(!text.includes('gone.md'), '删掉的条目不得继续出现在索引里')
+	assert.ok(text.includes('- [留下](stay.md) — 触发词'))
+})
+
+test('composeMemory：索引行按文件名排序（readdir 顺序不作数，逐次装配须可比）', () => {
+	const { root, profile } = fixture('compose-order')
+	for (const name of ['zebra.md', 'alpha.md', 'middle.md']) writeFileSync(join(profile, name), entry(name.slice(0, 5), '触发词'), 'utf8')
+	const order = [...composeMemory({ memoryRoot: root }).matchAll(/^- \[[^\]]+\]\(([^)]+)\)/gm)].map((m) => m[1])
+	assert.deepEqual(order, ['alpha.md', 'middle.md', 'zebra.md'])
+})
+
+test('composeMemory：残留的 MEMORY.md 不进索引（它不是条目，也不是保留名的理由之外的东西）', () => {
+	const { root, profile } = fixture('compose-legacy-index')
+	writeFileSync(join(profile, 'MEMORY.md'), '# 老索引\n- [手写](x.md) — 旧行\n', 'utf8')
+	writeFileSync(join(profile, 'real.md'), entry('真条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root })
+	assert.ok(text.includes('- [真条目](real.md) — 触发词'))
+	assert.ok(!text.includes('手写'), 'MEMORY.md 的内容一律不读')
+})
+
+test('composeMemory：层内只有保留文件时该层安静省略（不注入 header-only 噪声块）', () => {
+	const { root, profile } = fixture('compose-only-reserved')
+	mkdirSync(join(root, 'workspaces', 'home-nvse-empty'), { recursive: true })
+	writeFileSync(join(profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
+	writeFileSync(join(profile, 'MEMORY.md'), '# 习惯层索引（使用习惯，跨机同步）\n', 'utf8')
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/empty' })
+	assert.ok(text.includes('写侧纪律正文'), '规则块照常')
+	assert.ok(!text.includes('## 习惯层（跨机同步）'), '无条目的习惯层省略')
+	assert.ok(!text.includes('## 工作层'), '无条目的工作层省略')
+})
+
 /* ===================== 索引预算 ===================== */
 
 test('applyIndexBudget：预算内原样返回', () => {
-	const r = applyIndexBudget('# 索引\n- [a](a.md) — **x→查此条**')
+	const r = applyIndexBudget('- [a](a.md) — **x**')
 	assert.equal(r.truncated, false)
-	assert.equal(r.text, '# 索引\n- [a](a.md) — **x→查此条**')
-	assert.equal(r.origLines, 2)
+	assert.equal(r.text, '- [a](a.md) — **x**')
+	assert.equal(r.origLines, 1)
 })
 
 test('applyIndexBudget：超行预算截断并显式标注', () => {
@@ -179,47 +269,36 @@ test('applyIndexBudget：超行预算截断并显式标注', () => {
 	assert.equal(r.truncated, true)
 	assert.ok(r.text.includes(`原文 ${INDEX_LINE_BUDGET + 5} 行`))
 	assert.ok(r.text.includes(`仅注入前 ${INDEX_LINE_BUDGET} 行`))
-	assert.ok(!r.text.includes(`line-${INDEX_LINE_BUDGET}`), '截断后不含第 201 行')
+	assert.ok(!r.text.includes(`line-${INDEX_LINE_BUDGET}`), '截断后不含超预算的第一行')
 })
 
 test('applyIndexBudget：行数达标但超字符预算走字符截断', () => {
-	// 100 行 × 每行 300 字符 = 30000 字符 > INDEX_CHAR_BUDGET，行数 100 ≤ 200
-	const text = Array.from({ length: 100 }, () => '字'.repeat(300)).join('\n')
+	// 行数取满预算内、每行长度使总量越字符预算：行/字符两条分支必须各自可达，
+	// 只测其中一条会让另一条退化成永远不走的死分支
+	const perLine = Math.ceil(INDEX_CHAR_BUDGET / INDEX_LINE_BUDGET) + 20
+	const text = Array.from({ length: INDEX_LINE_BUDGET }, () => '字'.repeat(perLine)).join('\n')
 	const r = applyIndexBudget(text)
 	assert.equal(r.truncated, true)
 	assert.ok(r.text.includes('仅注入前'))
 	assert.ok(r.text.length > INDEX_CHAR_BUDGET && r.text.length < INDEX_CHAR_BUDGET + 200)
 })
 
-test('applyIndexBudget：恰 200 行＋尾换行不误报（upsert 产物形态）', () => {
-	const text = `${Array.from({ length: INDEX_LINE_BUDGET }, (_, i) => `- [e${i}](e${i}.md) — **x→查此条**`).join('\n')}\n`
+test('applyIndexBudget：恰满行数＋尾换行不误报（生成器产物形态）', () => {
+	const text = `${Array.from({ length: INDEX_LINE_BUDGET }, (_, i) => `- [e${i}](e${i}.md) — x`).join('\n')}\n`
 	const r = applyIndexBudget(text)
 	assert.equal(r.truncated, false)
 	assert.equal(r.origLines, INDEX_LINE_BUDGET)
 })
 
-test('composeMemory：header-only 空索引的层安静省略（不注入噪声块）', () => {
-	const root = join(base, 'empty-index-case')
-	const profile = join(root, 'profile')
-	const bucket = join(root, 'workspaces', 'home-nvse-empty')
-	mkdirSync(profile, { recursive: true })
-	mkdirSync(bucket, { recursive: true })
-	writeFileSync(join(profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
-	writeFileSync(join(profile, 'MEMORY.md'), '# 习惯层索引（使用习惯，跨机同步）\n', 'utf8')
-	writeFileSync(join(bucket, 'MEMORY.md'), '# 工作层索引（本机专属，不跨机）\n\n', 'utf8')
-	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/empty' })
-	assert.ok(text.includes('写侧纪律正文'), '规则块照常')
-	assert.ok(!text.includes('## 习惯层（跨机同步）'), 'header-only 习惯层省略')
-	assert.ok(!text.includes('## 工作层'), 'header-only 工作层省略')
-})
-
-test('composeMemory：索引超预算时注入块带截断标注（预算走索引不走失控保护）', () => {
-	const root = join(base, 'budget-case')
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
-	writeFileSync(join(profile, 'MEMORY.md'), Array.from({ length: INDEX_LINE_BUDGET + 10 }, (_, i) => `- [e${i}](e${i}.md) — **x→查此条**`).join('\n'), 'utf8')
+test('composeMemory：派生索引超预算时注入块带截断标注（预算走索引不走失控保护）', () => {
+	const { root, profile } = fixture('compose-budget')
+	// 文件名补零：注入块按名字排序（字符串序），不补零则 e10 排在 e2 前面，截断点不可预期
+	for (let i = 0; i < INDEX_LINE_BUDGET + 10; i += 1) {
+		writeFileSync(join(profile, `e${String(i).padStart(3, '0')}.md`), entry(`条目${i}`, '触发词'), 'utf8')
+	}
 	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/none' })
 	assert.ok(text.includes('索引超预算截断'))
-	assert.ok(!text.includes(`[e${INDEX_LINE_BUDGET}]`), '第 201 条索引行不注入')
-	assert.ok(existsSync(join(profile, 'MEMORY.md')), '预算只作用于注入串，不动磁盘')
+	assert.ok(!text.includes(`[条目${INDEX_LINE_BUDGET}]`), '超预算的第一条不注入')
+	assert.ok(text.includes(`[条目${INDEX_LINE_BUDGET - 1}]`), '预算内的最后一条照常注入')
+	assert.ok(existsSync(join(profile, `e${String(INDEX_LINE_BUDGET + 9).padStart(3, '0')}.md`)), '预算只作用于注入串，不动磁盘')
 })

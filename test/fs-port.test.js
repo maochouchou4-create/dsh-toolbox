@@ -8,7 +8,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHostFsPort, createNodeFsPort, versionOf } from '../lib/memory/fs-port.js'
@@ -110,6 +110,21 @@ test('createNodeFsPort：目标是目录时写抛 FS_NOT_REGULAR_FILE（与宿�
 	assert.deepEqual(readdirSync(dir), [], '被拒的写不得动目录内容')
 })
 
+test('createNodeFsPort：listDir 映射 file/directory/other 三种 type，目录不存在归一为 []', async () => {
+	const port = createNodeFsPort()
+	const dir = join(base, 'listdir')
+	mkdirSync(join(dir, 'sub'), { recursive: true })
+	writeFileSync(join(dir, 'entry.md'), 'x\n', 'utf8')
+	symlinkSync(join(dir, 'entry.md'), join(dir, 'link.md'))
+	const entries = await port.listDir(await port.resolve(dir))
+	assert.deepEqual(
+		entries.sort((a, b) => a.name.localeCompare(b.name)),
+		[{ name: 'entry.md', type: 'file' }, { name: 'link.md', type: 'other' }, { name: 'sub', type: 'directory' }],
+		'三种 type 都要映出来：消费方靠 type 滤掉目录，少映一种就把它当条目读',
+	)
+	assert.deepEqual(await port.listDir(await port.resolve(join(base, 'no-such-dir'))), [], '缺失目录按无子项归一，与 stat 的 absent 同口径')
+})
+
 test('versionOf：五段纳秒级版本串（少一段守卫就漏），且与端口 stat 同一算法', async () => {
 	const path = writeFixture('version-shape', '甲\n')
 	const stats = statSync(path, { bigint: true })
@@ -153,6 +168,11 @@ function makeHostFsStub() {
 		async readText(target, signal) {
 			calls.push({ method: 'readText', args: [target, signal] })
 			return '宿主内容'
+		},
+		async listDir(target, signal) {
+			calls.push({ method: 'listDir', args: [target, signal] })
+			// 宿主 FsDirEntry 带 target/version/size，端口只该透出 name+type
+			return [{ name: 'a.md', type: 'file', target: { targetKey: 'key:/x/a.md' }, version: 'v-1', size: 12 }]
 		},
 		async writeText(target, content, intent, signal, policy) {
 			calls.push({ method: 'writeText', args: [target, content, intent, signal, policy] })
@@ -220,3 +240,27 @@ test('createHostFsPort：策略按会话解析（agent 缺席交后端默认解�
 	assert.throws(() => createHostFsPort({ fs: { resolve: async () => ({}), writeText: async (target, content, intent, signal) => ({}) } }), /契约版本不匹配/)
 	assert.throws(() => createHostFsPort({ fs: {} }), /契约版本不匹配/)
 })
+
+test('createHostFsPort：listDir 只透 name+type 并按位传 signal，缺失目录的 FS_NOT_FOUND 归一为 []', async () => {
+	const stub = makeHostFsStub()
+	const port = createHostFsPort({ fs: stub })
+	const abort = new AbortController().signal
+	assert.deepEqual(await port.listDir(await port.resolve('/x'), abort), [{ name: 'a.md', type: 'file' }], 'target/version/size 是宿主契约细节，端口不替消费方决定 target')
+	assert.equal(stub.calls.find((call) => call.method === 'listDir').args[1], abort, 'listDir 的 signal 同样按位透传')
+	// 契约写着「目录不存在返回 []」，宿主后端对缺失目录抛 FS_NOT_FOUND：不归一的话
+	// 下一个照契约写的消费方在宿主通道上会拿到一个契约里根本没有的错误码
+	const throwCode = (code) => async () => {
+		throw Object.assign(new Error(`cannot list: ${code}`), { code })
+	}
+	const missing = createHostFsPort({ fs: { ...stub, listDir: throwCode('FS_NOT_FOUND') } })
+	assert.deepEqual(await missing.listDir(await missing.resolve('/nope')), [])
+	const other = createHostFsPort({ fs: { ...stub, listDir: throwCode('EACCES') } })
+	const denied = await other.resolve('/x')
+	await assert.rejects(() => other.listDir(denied), (error) => error.code === 'EACCES', '非缺失类错误原样上抛，不得一并吞成空目录')
+})
+
+test('createHostFsPort：宿主缺 listDir 在构造期就炸（拦截静默失效不得等到第一次写入）', () => {
+	// writeText 形参给足五个，好让这条只考 listDir 那道关（形参不足会先撞上 arity 检查）
+	assert.throws(() => createHostFsPort({ fs: { writeText: async (target, content, intent, signal, sandboxPolicy) => ({}) } }), /listDir/)
+})
+
