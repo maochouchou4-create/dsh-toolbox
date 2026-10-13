@@ -3,14 +3,15 @@
  * import，接线正确性分三层钉——
  * ① 胶水→工具模块：导入名须在目标模块 export 语句里（目标含宿主 import 只能
  *    静态验证；搬家断链的历史实锤见 dsh-memory 0.2 core→write 搬家事故）；
- * ② 工具模块→纯函数文件（memory/core.js、memory/write.js、see-image/vision.js
- *    零宿主依赖）：动态 import 验导出面；
+ * ② 工具模块→下游模块：动态 import 验导出面（纯模块的清单不在这里枚举——枚举随搬家
+ *    漂移，而「某模块算不算纯模块」由下面的 node:fs 判定表与闭包断言回答）；
  * ③ inject 声明与模块内 ctx.* 服务消费双向对齐（少声明＝cordis DOA，多声明＝
- *    噪音），以及工具参数面→写侧函数签名一致性。
+ *    噪音），以及工具参数面→写侧函数签名一致性、memory 各模块的 node:fs 直连面
+ *    （write.js 传递闭包零直连＝写入侧 I/O 只经 fs 端口）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -36,13 +37,18 @@ function parseExportNames(source) {
 	return names
 }
 
+/** 去块注释与行注释后扫：注释里的提及不算数（文件头散文常提到 node:fs，不能当导入面）。 */
+function stripComments(source) {
+	return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+}
+
 /** 去注释后扫服务消费（注释里的提及不算数）。
  * 覆盖的是**注入面消费**（ctx.<service>）外加按需取用（ctx.get('<service>')）——后者
  * 不在 inject 面是设计（工具族不需要它必然在场），收集起来只为识别、不参与下面的
  * 双向对齐；本函数因此看不见任何其它形式的服务引用（如解构注入、插件闭包取用）。 */
 const SERVICES = ['systemPrompt', 'tools', 'llm', 'attachments', 'workingDirectory', 'fs']
 function consumedServices(source) {
-	const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+	const code = stripComments(source)
 	const used = new Set()
 	for (const service of SERVICES) {
 		if (new RegExp(`ctx\\.${service}\\b`).test(code)) used.add(service)
@@ -90,9 +96,15 @@ test('memory 工具参数面与写侧函数签名一致（action→入参字段�
 	// 子代理照 schema 传参就会撞上「参数不存在」——schema 与实现必须同退同进
 	assert.ok(!parameters.includes('indexLine'), 'indexLine 已退场，工具 parameters 不得再列它')
 	const executeBody = source.slice(source.indexOf('async execute'), source.indexOf('function renderToolResult'))
-	const write = await loadModule('memory/write.js')
+	// 写侧三个动作各成一文件（write.js 是端口写侧，delete/lint 刻意直连 node:fs），
+	// execute 的分派面按模块归属一起核。动作模块的集合现场扫出来而不是手写枚举：枚举
+	// 漏登记一个文件时不会红，而分派面恰恰靠「全部动作模块导出面的并集」才查得全
+	const memoryDir = join(libDir, 'memory')
+	const actionFiles = readdirSync(memoryDir).filter((file) => file.endsWith('.js') && file !== 'index.js' && file !== 'fs-port.js')
+	const writeSide = {}
+	for (const file of actionFiles) Object.assign(writeSide, await loadModule(join('memory', file)))
 	for (const fn of ['upsertEntry', 'editEntry', 'deleteEntry', 'lintMemory']) {
-		assert.ok(typeof write[fn] === 'function', `execute 分派的 "${fn}" 不是 write.js 导出函数`)
+		assert.ok(typeof writeSide[fn] === 'function', `execute 分派的 "${fn}" 不在写侧任一动作模块的导出面`)
 		assert.ok(executeBody.includes(fn), `execute 未分派 "${fn}"`)
 	}
 	assert.ok(executeBody.includes('未知 action'), '未知 action 须显式 throw（不得静默成功）')
@@ -123,35 +135,139 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	}
 })
 
-/** 顶层函数的原文窗口（声明处到下一个顶格右花括号）；顶格＝非嵌套，这是本仓的写法约定。 */
-function spanOf(source, name) {
-	const start = source.search(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function ${name}\\(`, 'm'))
-	if (start < 0) return null
-	const end = source.indexOf('\n}', start)
-	return { start, end: end === -1 ? source.length : end }
+/**
+ * node:fs 直连的判定表（按文件，不按函数窗口）：false＝该文件零直连，true＝按设计
+ * 直连且必须直连。取舍的理由写在各文件头，不写在测试里，测试只钉「直不直」。
+ *
+ * 判据的落点是**导入面**。窗口式放行名单有两个洞：一是名单跟着结构漂移（改个函数名
+ * 就得改名单，而改名单的人不会重读它对不对），二是名单只圈得住已列名的函数——模块级
+ * helper 的调用点落在任何窗口外时，这条判定对它就成了空转，回退了也不红。按文件判
+ * 则两者都不存在：模块里任何一处（含模块级 helper）想摸 node:fs，都得先在这张面上
+ * 登记，而登记是有人看着的显式动作。
+ *
+ * 表只回答「每个文件各自直不直」。写侧那条硬边界（upsert/edit 的 I/O 只经 fs 端口）问的
+ * 是另一个量：write.js 的**传递闭包**里有没有直连模块——写侧与全部下游都登记为零直连时，
+ * 一个共享件直连 node:fs 照样能让写侧绕过端口，而这张表全绿。闭包断言在表之后。
+ */
+const NODE_FS_DIRECT = new Map([
+	['memory/write.js', false],
+	['memory/frontmatter.js', false],
+	['memory/core.js', false],
+	['memory/patterns.js', false],
+	['memory/delete.js', true],
+	['memory/lint.js', true],
+	['memory/assemble.js', true],
+	['memory/layers.js', true],
+	['memory/fs-port.js', true],
+	['memory/index.js', true],
+	['see-image/vision.js', true],
+	['see-image/index.js', false],
+	['index.js', false],
+])
+
+/**
+ * 定性表必须覆盖到的模块域：lib/ 根与两个子目录。每个域下的 .js 都要在表上定性过——
+ * 覆盖只到一部分时，「新增文件漏定性」就只在那部分成立，文档承诺比机器口径宽，
+ * 读到的人会以为全仓都有牙。
+ */
+const NODE_FS_SCOPES = ['.', 'memory', 'see-image']
+
+/**
+ * node:fs 的同步调用面：全量符号集（fs 同步 API，含 openSync/readSync/closeSync 这类
+ * 低层句柄调用）。这份集子必须是全量而非「本仓用到的几个」——漏一个符号就是一类调用
+ * 漏扫，而漏扫的那类在判定为零直连的文件里会被读成合规。
+ */
+const NODE_FS_SYNC_API = [
+	'accessSync', 'appendFileSync', 'chmodSync', 'chownSync', 'closeSync', 'copyFileSync', 'cpSync', 'existsSync', 'fchmodSync',
+	'fchownSync', 'fdatasyncSync', 'fstatSync', 'fsyncSync', 'ftruncateSync', 'futimesSync', 'globSync', 'lchmodSync', 'lchownSync',
+	'linkSync', 'lstatSync', 'lutimesSync', 'mkdirSync', 'mkdtempSync', 'openSync', 'opendirSync', 'readdirSync', 'readFileSync',
+	'readSync', 'readlinkSync', 'readvSync', 'realpathSync', 'renameSync', 'rmSync', 'rmdirSync', 'statSync', 'statfsSync',
+	'symlinkSync', 'truncateSync', 'unlinkSync', 'utimesSync', 'watchSync', 'writeFileSync', 'writeSync', 'writevSync',
+]
+
+const NODE_FS_CALL_RE = new RegExp(`\\b(?:${NODE_FS_SYNC_API.join('|')})\\s*\\(`, 'g')
+
+/**
+ * 导入面里的 node:fs 条数：按 import 语句取源名，覆盖具名／默认／命名空间／裸副作用四种
+ * 形态（`from` 可省——`import 'node:fs'` 是合法写法）。
+ * 子路径一起算：node:fs/promises 的 readFile/writeFile 不在下面的同步符号集里，放过它
+ * 等于放过 Node 里最自然的异步 fs 写法，而那正是这条保证最该堵的那个口子。
+ */
+function nodeFsImports(source) {
+	let count = 0
+	for (const match of stripComments(source).matchAll(/import\s*(?:\{[^}]*\}|\*\s*as\s+\w+|\w+(?:\s*,\s*\{[^}]*\})?)?\s*(?:from\s*)?'([^']+)'/g)) {
+		if (/^node:fs(\/|$)/.test(match[1])) count += 1
+	}
+	return count
 }
 
-/** 按设计允许直连 node:fs 的族：delete 的 I/O、体检，以及这两族共用的目录遍历 helper。 */
-const NODE_FS_FAMILIES = ['listLayerDirs', 'knownStems', 'deleteEntry', 'lintMemory']
+// 已知边界：stripComments 只剥注释不剥字符串，故字符串字面量里贴一段完整 import 语句
+// （如文档示例）会被当成真导入而误红。方向是噪音不是漏网——真出现时是误报，删掉那段
+// 示例即恢复，代价远小于为剥字符串再写一套会出错的词法扫描。
+const nodeFsCalls = (source) => [...stripComments(source).matchAll(NODE_FS_CALL_RE)].length
 
-test('写侧 upsert/edit 不直连 node:fs（防回退到端口化之前）', () => {
-	const source = readLib('memory/write.js')
-	const windows = NODE_FS_FAMILIES.map((name) => {
-		const span = spanOf(source, name)
-		assert.ok(span !== null, `write.js 找不到 ${name} 声明——放行名单与实际函数对不上，这条用例就成空转`)
-		return span
-	})
-	// 按「每处直连都必须落在放行族的窗口内」反向判定，而不是只扫 upsert/edit 两个函数体：
-	// 写路径上的模块级 helper（如同名拦截那段目录遍历）同样承载真实 I/O，只切 export
-	// 之间的窗口会把它漏在扫描外，回退了测试也不会红
-	for (const match of source.matchAll(/\b(?:writeFileSync|appendFileSync|mkdirSync|readFileSync|existsSync|rmSync|unlinkSync|renameSync|statSync|readdirSync|copyFileSync)\s*\(/g)) {
-		const inAllowed = windows.some((span) => match.index >= span.start && match.index < span.end)
-		if (inAllowed) continue
-		const enclosing = [...source.slice(0, match.index).matchAll(/^(?:export\s+)?(?:async\s+)?function (\w+)\(/gm)].pop()?.[1] ?? '模块顶层'
-		assert.fail(`${enclosing} 里出现 node:fs 直连 ${match[0].trim()}——写入侧（upsert/edit 及其 helper）I/O 只能走 fs 端口`)
+test('lib/ 各模块的 node:fs 直连按文件判定（端口写侧与装配层零直连，其余必须显式直连）', () => {
+	// 名单即覆盖：每个域下的每个模块都要在表上定性过。新模块漏登记＝这条判定对它空转，
+	// 而「漏登记」恰好就是放行名单腐化的起点
+	for (const scope of NODE_FS_SCOPES) {
+		for (const name of readdirSync(join(libDir, scope)).filter((file) => file.endsWith('.js'))) {
+			const key = scope === '.' ? name : `${scope}/${name}`
+			assert.ok(NODE_FS_DIRECT.has(key), `${key} 未在 node:fs 判定表上定性——直不直是设计取舍，没登记就等于没判定`)
+		}
 	}
-	// 反向钉住放行名单本身：上一步全空时，空转与「确实没有直连」长得一模一样
-	for (const name of ['upsertEntry', 'editEntry']) {
-		assert.ok(spanOf(source, name) !== null, `write.js 找不到 ${name} 声明`)
+	for (const [file, direct] of NODE_FS_DIRECT) {
+		// 文件不在即 ENOENT 抛错：搬家或改名会红，不必再单独钉一条存在性
+		const source = readLib(file)
+		const imports = nodeFsImports(source)
+		const calls = nodeFsCalls(source)
+		if (direct) {
+			// 「必须」是反方向的那一半：只有它，文件哪天悄悄改走端口（或多出第五个直连模块）
+			// 才会红；没有它，单向禁令分不出「设计变更」与「漏改」
+			assert.ok(imports > 0, `${file} 按设计直连 node:fs（宿主 fs 契约无删除能力／读侧枚举与体检遍历不经端口），导入面却没有登记`)
+			assert.ok(calls > 0, `${file} 登记了 node:fs 直连却一个调用也没有——导入面与实际用法脱节，这条判定对它空转`)
+		} else {
+			assert.equal(imports, 0, `${file} 出现 node:fs 导入——它登记为零直连（端口写侧 I/O 只经 fs-port.js，装配层由宿主能力代劳）`)
+			assert.equal(calls, 0, `${file} 出现 node:fs 直连调用——它登记为零直连，模块级 helper 同样算`)
+		}
+	}
+})
+
+/**
+ * 本地 import 的目标（任意形态：具名/默认/命名空间/副作用/`export *` 从句/动态 import）。
+ * 要的是「依赖到谁」，故不按花括号形态过滤；动态 `import('./x.js')` 也是一条边——
+ * 漏了它，闭包就停在调用点那一层，而那个文件照样能摸 node:fs。
+ */
+function localImportTargets(source) {
+	const code = stripComments(source)
+	return [
+		...code.matchAll(/\bfrom\s+'(\.[^']+)'/g),
+		...code.matchAll(/\bimport\s+'(\.[^']+)'/g),
+		...code.matchAll(/\bimport\s*\(\s*'(\.[^']+)'\s*\)/g),
+	].map((match) => match[1])
+}
+
+/** 从入口沿本地 import 递归求传递闭包（lib 内相对路径集合，含入口自己）。 */
+function localClosure(entry) {
+	const seen = new Set()
+	const queue = [entry]
+	while (queue.length > 0) {
+		const file = queue.pop()
+		if (seen.has(file)) continue
+		seen.add(file)
+		for (const specifier of localImportTargets(readLib(file))) queue.push(join(dirname(file), specifier))
+	}
+	return seen
+}
+
+test('memory/write.js 的本地导入闭包零 node:fs（端口写侧 I/O 只经 fs 端口的真实保证）', () => {
+	// 逐文件判定只证「本文件零直连」，一进一跳就空转：下游模块里加一行 import node:fs，
+	// upsert/edit 的 I/O 立刻能绕过端口，而判定表与行为测试照样全绿。逐跳递归才够到那一层
+	const closure = localClosure('memory/write.js')
+	// 闭包只剩入口自己时下面那些断言恒真：先把「扫描退化成空转」本身判红，免得闭包断言成假绿
+	assert.ok(closure.size > 1, `write.js 的本地导入闭包只有入口自己（${[...closure].join('、')}）——本地 import 扫描退化成空转`)
+	for (const file of closure) {
+		const source = readLib(file)
+		assert.equal(nodeFsImports(source), 0, `${file} 在 write.js 的传递闭包内且 import node:fs——upsert/edit 的 I/O 须只经 fs 端口`)
+		assert.equal(nodeFsCalls(source), 0, `${file} 在 write.js 的传递闭包内且直连 node:fs 调用——同上`)
 	}
 })

@@ -1,9 +1,10 @@
 /**
- * dsh-memory 写侧单测（node:test，零宿主依赖）：frontmatter 契约、索引行派生、
- * 层路由、upsert（建/拦截/风格告警）、edit（字面替换/版本守卫/命中拦截）、
- * delete（删文＋引用报告）、lint 体检。
- * upsert/edit 走 fs 端口（createNodeFsPort 构造一次、逐用例复用），故是 async；
- * delete 与 lint 的 I/O 留在 node:fs 保持同步（delete 接端口只为问一句能不能写）。
+ * dsh-memory 端口写侧单测（node:test，零宿主依赖）：frontmatter 契约、索引行派生、
+ * 层路由、upsert（建/拦截/风格告警）、edit（字面替换/版本守卫/命中拦截）。
+ * upsert/edit 走 fs 端口（createNodeFsPort 构造一次、逐用例复用），故是 async。
+ * delete 与 lint 各有自己的文件（memory-delete.test.js／memory-lint.test.js，I/O 按
+ * 设计留在 node:fs 保持同步）；本文件仍留一条横跨三个动作的会话策略用例——那条断言
+ * 证的是「四个 action 同一口径」，拆到三个文件里就散成三条各自为政的断言。
  * 每个用例独立临时根，互不共享状态。
  */
 import { after, before, test } from 'node:test'
@@ -11,10 +12,12 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot, composeMemory } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot } from '../lib/memory/core.js'
+import { deleteEntry } from '../lib/memory/delete.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import { assertEntryFrontmatter, deriveIndexLine, parseFrontmatter } from '../lib/memory/frontmatter.js'
-import { deleteEntry, editEntry, lintMemory, upsertEntry } from '../lib/memory/write.js'
+import { lintMemory } from '../lib/memory/lint.js'
+import { editEntry, upsertEntry } from '../lib/memory/write.js'
 
 let base
 const port = createNodeFsPort()
@@ -135,6 +138,53 @@ test('upsertEntry：层内同名拦截且不落盘（先 delete 再改名）', a
 	// 同名但就是它自己（重写同一条目）不拦
 	const again = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'first.md', content: entry('同一个标题', '触发词改') })
 	assert.equal(again.indexLine, '- [同一个标题](first.md) — 触发词改')
+})
+
+test('upsertEntry：层内 frontmatter 不合规的条目逐条列全（报错要给出脱困路径，修完即解锁）', async () => {
+	const root = join(base, 'write-broken-peer')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	// 老布局条目：name:/metadata: 而非 title:/description:——迁移期与手改坏文件都是这个形态
+	writeFileSync(join(dir, 'legacy.md'), '---\nname: 老条目\nmetadata:\n  type: user\n---\n\n老正文。\n', 'utf8')
+	writeFileSync(join(dir, 'legacy-two.md'), '---\ntitle: 另一个老条目\nmetadata:\n  type: user\n---\n\n老正文二。\n', 'utf8')
+	// 坏条目一次列全：只报撞到的那一条时，读到的人修完它会撞上下一条，来回几趟才撞得完
+	await assert.rejects(
+		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		(error) => {
+			assert.match(error.message, /层内 2 条 frontmatter 不合规/)
+			assert.match(error.message, /legacy\.md/)
+			assert.match(error.message, /legacy-two\.md/)
+			// 两条并存时 edit 改任一条都会被另一条挡住，文案不许说「edit 是唯一还能写的路径」
+			assert.match(error.message, /先 delete 掉其中多余的坏条目/)
+			return true
+		},
+		'拦截文案必须自带脱困路径与全部坏条目，否则读到的人会以为整层锁死，转而绕过工具裸编辑文件',
+	)
+	assert.equal(existsSync(join(dir, 'other.md')), false, '拦截不得留孤儿条目')
+	await assert.rejects(
+		() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy.md', oldString: 'name: 老条目\nmetadata:\n  type: user', newString: 'title: 老条目\ndescription: 触发词' }),
+		/层内 1 条/,
+		'edit 只跳过自己：另一条坏条目在场时它同样写不了（文案因此不给「逐条 edit」这条路）',
+	)
+	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8').includes('metadata'), true, '被拦的 edit 不得留下半截改动')
+	// 脱困姿势：先 delete 掉一条，剩最后一条时 edit 就是层内唯一还能写的路径
+	const deleted = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy-two.md' })
+	assert.equal(existsSync(join(dir, 'legacy-two.md')), false)
+	assert.deepEqual(deleted.references, [])
+	await assert.rejects(
+		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		(error) => {
+			assert.match(error.message, /层内 1 条 frontmatter 不合规/)
+			assert.match(error.message, /legacy\.md/)
+			assert.match(error.message, /在同名扫描里被跳过，是层内唯一还能写的路径/)
+			return true
+		},
+	)
+	const fixed = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy.md', oldString: 'name: 老条目\nmetadata:\n  type: user', newString: 'title: 老条目\ndescription: 触发词' })
+	assert.equal(fixed.indexLine, '- [老条目](legacy.md) — 触发词')
+	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8'), entry('老条目', '触发词', '老正文。'))
+	const other = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') })
+	assert.equal(other.indexLine, '- [别的条目](other.md) — 触发词', '修好之后层立即解锁')
 })
 
 test('upsertEntry：前置拦截（未知层/空桶名/空 content/超限/非 kebab/保留名）', async () => {
@@ -318,133 +368,4 @@ test('editEntry：编辑后正文为空与超失控保护走同一条拦截链�
 	const big = join(base, 'edit-big')
 	await upsertEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', content: entry('大条目', '触发词', 'x'.repeat(RUNAWAY_CEILING - 200)) })
 	await assert.rejects(() => editEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', oldString: 'x', newString: 'yy', replaceAll: true }), /失控保护/)
-})
-
-/* ===================== delete ===================== */
-
-test('deleteEntry：删文＋跨层 wikilink 引用报告（delete 族同步走 node:fs）', async () => {
-	const root = join(base, 'delete-case')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md', content: entry('被删条目', '触发词') })
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'stays.md', content: entry('留下条目', '触发词', '引用 [[gone]] 一处，另有 [[toolkit]] 不可计作别条引用') })
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'tool.md', content: entry('工具条目', '触发词') })
-	const r = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md' })
-	assert.equal(existsSync(join(r.dir, 'gone.md')), false)
-	assert.equal(r.references.length, 1)
-	assert.ok(r.references[0].includes(join('stays.md:6')))
-	assert.equal(r.scanError, '')
-	assert.throws(() => deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md' }), /不存在/)
-	assert.throws(() => deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'Bad_Name.md' }), /kebab/)
-	assert.throws(() => deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'memory.md' }), /保留名/)
-	// 前缀子串不误报：[[toolkit]] 不构成对 tool.md 的引用
-	const rt = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'tool.md' })
-	assert.equal(rt.references.length, 0, '[[toolkit]] 是另一个 stem，不得计作 [[tool]] 的引用')
-})
-
-test('deleteEntry：被删条目的索引行随之退场（索引是派生的，无文件即无行）', async () => {
-	const root = join(base, 'delete-derived')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md', content: entry('被删条目', '触发词') })
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'stays.md', content: entry('留下条目', '触发词') })
-	assert.ok(composeMemory({ memoryRoot: root }).includes('- [被删条目](gone.md)'))
-	deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md' })
-	const text = composeMemory({ memoryRoot: root })
-	assert.ok(!text.includes('gone.md'), '删条目后派生索引行必须消失')
-	assert.ok(text.includes('- [留下条目](stays.md) — 触发词'))
-})
-
-/* ===================== lint ===================== */
-
-test('lintMemory：frontmatter 契约/超长/日期戳/死链/超预算全覆盖，干净夹具 ok', () => {
-	const root = join(base, 'lint-case')
-	const profile = join(root, 'profile')
-	const bucket = join(root, 'workspaces', 'D-code')
-	mkdirSync(bucket, { recursive: true })
-	mkdirSync(profile, { recursive: true })
-	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词', 'x 引 [[missing]]'), 'utf8')
-	writeFileSync(join(profile, 'bare.md'), '没有 frontmatter\n', 'utf8')
-	writeFileSync(join(profile, 'extra.md'), '---\nname: extra\ntitle: 多余键\ndescription: 触发词\n---\n\n正文\n', 'utf8')
-	// 工作层：超预算索引（条目数超行预算）
-	for (let i = 0; i < INDEX_LINE_BUDGET + 3; i += 1) writeFileSync(join(bucket, `f${String(i).padStart(3, '0')}.md`), entry(`条目${i}`, '触发词'), 'utf8')
-	const report = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
-	assert.equal(report.ok, false)
-	assert.ok(report.warnings.some((w) => w.includes('frontmatter 不合规') && w.includes('bare.md')))
-	assert.ok(report.warnings.some((w) => w.includes('frontmatter 不合规') && w.includes('extra.md') && w.includes('多余键')))
-	assert.ok(report.warnings.some((w) => w.includes('死 wikilink [[missing]]')))
-	assert.ok(report.warnings.some((w) => w.includes('派生索引超预算')))
-	assert.ok(!report.warnings.some((w) => w.includes('孤儿条目') || w.includes('死索引行')), '索引是派生的，这两类检查已退役')
-
-	const cleanRoot = join(base, 'lint-clean')
-	mkdirSync(join(cleanRoot, 'profile'), { recursive: true })
-	writeFileSync(join(cleanRoot, 'profile', 'only.md'), entry('唯一条目', '触发词'), 'utf8')
-	const clean = lintMemory({ memoryRoot: cleanRoot })
-	assert.equal(clean.ok, true)
-	assert.deepEqual(clean.warnings, [])
-})
-
-test('lintMemory：恰满行/恰满字符预算都不误报超预算（边界只拦超出侧）', () => {
-	// 判定是 `>`（write.js:319），差一个字符就是误报；两个预算各钉一次边界
-	const lineRoot = join(base, 'lint-edge-lines')
-	const lineDir = join(lineRoot, 'profile')
-	mkdirSync(lineDir, { recursive: true })
-	for (let i = 0; i < INDEX_LINE_BUDGET; i += 1) {
-		writeFileSync(join(lineDir, `f${String(i).padStart(3, '0')}.md`), entry(`条目${i}`, '触发词'), 'utf8')
-	}
-	const atLine = lintMemory({ memoryRoot: lineRoot })
-	assert.ok(!atLine.warnings.some((w) => w.includes('派生索引超预算')), `恰 ${INDEX_LINE_BUDGET} 行不误报`)
-	writeFileSync(join(lineDir, 'overflow.md'), entry('溢出一条', '触发词'), 'utf8')
-	assert.ok(lintMemory({ memoryRoot: lineRoot }).warnings.some((w) => w.includes('派生索引超预算')), `第 ${INDEX_LINE_BUDGET + 1} 行即报`)
-
-	// 字符预算用单条打满：派生行 ＝ 固定前缀 ＋ description，每多一字索引总长恰好多一字符
-	const charRoot = join(base, 'lint-edge-chars')
-	const charDir = join(charRoot, 'profile')
-	mkdirSync(charDir, { recursive: true })
-	const prefixLength = '- [长条目](long.md) — '.length
-	const atBudget = '词'.repeat(INDEX_CHAR_BUDGET - prefixLength)
-	writeFileSync(join(charDir, 'long.md'), entry('长条目', atBudget), 'utf8')
-	const atChar = lintMemory({ memoryRoot: charRoot })
-	assert.ok(!atChar.warnings.some((w) => w.includes('派生索引超预算')), `派生行恰 ${INDEX_CHAR_BUDGET} 字符不误报`)
-	writeFileSync(join(charDir, 'long.md'), entry('长条目', `${atBudget}词`), 'utf8')
-	assert.ok(lintMemory({ memoryRoot: charRoot }).warnings.some((w) => w.includes('派生索引超预算')), '多一字符即报')
-})
-
-test('lintMemory：派生索引行超长与 description 日期戳各报一项（warning 不阻断）', () => {
-	const root = join(base, 'lint-long')
-	const dir = join(root, 'profile')
-	mkdirSync(dir, { recursive: true })
-	const long = '词'.repeat(INDEX_LINE_CHAR_BUDGET)
-	writeFileSync(join(dir, 'long.md'), entry('长条目', long), 'utf8')
-	writeFileSync(join(dir, 'dated.md'), entry('带日期戳的条目', '2026-01-02 记'), 'utf8')
-	const report = lintMemory({ memoryRoot: root })
-	assert.equal(report.ok, false)
-	assert.ok(report.warnings.some((w) => w.includes('超') && w.includes(String(INDEX_LINE_CHAR_BUDGET)) && w.includes('long.md')))
-	assert.ok(report.warnings.some((w) => w.includes('日期戳') && w.includes('dated.md')))
-})
-
-test('lintMemory：缺习惯层接线/日期戳/失控保护/无桶提示', () => {
-	const root = join(base, 'lint-wire')
-	mkdirSync(join(root, 'workspaces', 'D-code'), { recursive: true })
-	writeFileSync(join(root, 'workspaces', 'D-code', 'loose.md'), entry('散条目', '触发词'), 'utf8')
-	const report = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
-	assert.ok(report.warnings.some((w) => w.includes('习惯层接线缺失')), '根无 profile 目录')
-	const noBucket = lintMemory({ memoryRoot: root, cwd: 'D:\\other' })
-	assert.ok(noBucket.warnings.some((w) => w.includes('尚无桶')), '新工作区常态提示')
-	// 条目超失控保护：lint 唯一体检项断言（写侧另有拦截测试）
-	const hugeRoot = join(base, 'lint-huge')
-	const hugeDir = join(hugeRoot, 'profile')
-	mkdirSync(hugeDir, { recursive: true })
-	writeFileSync(join(hugeDir, 'big.md'), `${entry('大条目', '触发词')}${'x'.repeat(RUNAWAY_CEILING)}\n`, 'utf8')
-	const huge = lintMemory({ memoryRoot: hugeRoot })
-	assert.ok(huge.warnings.some((w) => w.includes('失控保护') && w.includes('big.md')))
-})
-
-test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
-	const root = join(base, 'lint-degraded')
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
-	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
-	// x.md 名字的目录：readdirSync 列出它，readFileSync 抛 EISDIR——确定性病态输入
-	mkdirSync(join(profile, 'x.md'))
-	const report = lintMemory({ memoryRoot: root })
-	assert.equal(report.ok, false)
-	assert.ok(report.warnings.some((w) => w.includes('条目读取失败') && w.includes('x.md')))
-	assert.ok(!report.warnings.some((w) => w.includes('frontmatter 不合规') && w.includes('good.md')), '好条目不受邻近病态牵连')
 })

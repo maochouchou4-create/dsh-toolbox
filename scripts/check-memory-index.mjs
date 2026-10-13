@@ -18,18 +18,18 @@
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildIndexBlock, composeMemory } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
 	DEFAULT_MEMORY_ROOT,
 	INDEX_CHAR_BUDGET,
 	INDEX_LINE_BUDGET,
 	INDEX_LINE_CHAR_BUDGET,
-	buildIndexBlock,
-	composeMemory,
 	resolveRoot,
 	workspaceSlug,
 } from '../lib/memory/core.js'
 import { isEntryName, isReservedFile } from '../lib/memory/frontmatter.js'
+import { listLayerDirs } from '../lib/memory/layers.js'
 
 // 用 `||` 不用 `??`：显式传空串（想只跑默认值）不该被当成「记忆根就是当前目录」，
 // 那会让脚本在一片空地上报「全部达标」
@@ -40,13 +40,9 @@ const argsGiven = process.argv.length > 2
 const root = resolveRoot(memoryRoot)
 
 const violations = []
-const layers = []
-if (existsSync(root.profile)) layers.push({ kind: 'habit', dir: root.profile })
-if (existsSync(root.workspaces)) {
-	for (const entry of readdirSync(root.workspaces, { withFileTypes: true })) {
-		if (entry.isDirectory()) layers.push({ kind: `workspace:${entry.name}`, dir: join(root.workspaces, entry.name) })
-	}
-}
+// 层清点问注入侧同一份（core.js 里 buildIndexBlock 的注释就是这份理由）：脚本自己再扫一遍
+// 目录就是用另一套尺子量这把尺子，判定与组装不一致时报告仍会印「全部达标」
+const layers = listLayerDirs(root)
 
 console.log(`习惯层：${root.profile}`)
 console.log(`工作区 cwd（决定装配哪一层）：${cwd}\n`)

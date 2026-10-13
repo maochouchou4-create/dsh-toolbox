@@ -9,15 +9,8 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-	INDEX_CHAR_BUDGET,
-	INDEX_LINE_BUDGET,
-	RUNAWAY_CEILING,
-	applyIndexBudget,
-	composeMemory,
-	readCapped,
-	workspaceSlug,
-} from '../lib/memory/core.js'
+import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, workspaceSlug } from '../lib/memory/core.js'
+import { composeMemory, readCapped } from '../lib/memory/assemble.js'
 
 let base
 let memoryRoot
