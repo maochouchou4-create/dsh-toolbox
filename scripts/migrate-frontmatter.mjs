@@ -51,9 +51,7 @@ import { listLayerDirs } from '../lib/memory/layers.js'
 
 const args = process.argv.slice(2)
 const apply = args.includes('--apply')
-// 记忆根实参原样留着，缺省兜底与绝对化交给 resolveRoot（core.js 归一的唯一出口）。此前这里
-// 自己 expandHome 一次又自己判一次缺省，是半归一：只展开 ~、不解析成绝对路径，而「空串按
-// 没给算」那时用的是 ?? 而不是 nonEmptyOrDefault——两套口径就差在空串上
+// 记忆根实参原样留着，缺省兜底与绝对化由 resolveRoot 收（core.js 归一的唯一出口）
 const rawMemoryRoot = args.find((arg) => !arg.startsWith('--'))
 
 /** 是否已合规（幂等判据就走契约本身，不另定一份「像不像合规」）。 */
