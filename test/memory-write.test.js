@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, resolveRoot } from '../lib/memory/core.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
@@ -36,13 +36,15 @@ const entry = (title, description, body = '正文') => `---\ntitle: ${title}\nde
 
 /* ===================== frontmatter 契约 ===================== */
 
-test('absoluteMemoryRoot：记忆根归一成绝对路径（相对路径不按两套基目录分家）', () => {
-	assert.equal(absoluteMemoryRoot(DEFAULT_MEMORY_ROOT), join(homedir(), '.dsh', 'memory'), '默认根的 ~ 要展开')
-	assert.equal(absoluteMemoryRoot('~/tilde'), join(homedir(), 'tilde'))
+test('resolveRoot：记忆根归一成绝对路径（相对路径不按两套基目录分家）', () => {
+	// 断言走 resolveRoot 的 root 字段：absoluteMemoryRoot 已收为 core.js 模块私有（唯一出口
+	// 是 resolveRoot，它自带缺省兜底），「不许漏兜底」从此不靠注释维持
+	assert.equal(resolveRoot(DEFAULT_MEMORY_ROOT).root, join(homedir(), '.dsh', 'memory'), '默认根的 ~ 要展开')
+	assert.equal(resolveRoot('~/tilde').root, join(homedir(), 'tilde'))
 	// 相对根按 process.cwd() 定死：否则写侧走宿主 fs 后端基目录、读侧走 cwd，两套语义
-	assert.equal(absoluteMemoryRoot('相对根'), resolve('相对根'))
-	assert.equal(absoluteMemoryRoot('./a/../b'), resolve('b'))
-	assert.equal(absoluteMemoryRoot('/abs/root'), '/abs/root', '绝对路径原样透传')
+	assert.equal(resolveRoot('相对根').root, resolve('相对根'))
+	assert.equal(resolveRoot('./a/../b').root, resolve('b'))
+	assert.equal(resolveRoot('/abs/root').root, '/abs/root', '绝对路径原样透传')
 })
 
 test('parseFrontmatter：两键齐备解析成功，CRLF 形态同解（git checkout 归一收在单点）', () => {

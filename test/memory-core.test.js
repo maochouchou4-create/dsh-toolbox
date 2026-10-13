@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
 
 let base
@@ -57,7 +57,7 @@ test('workspaceSlug：空串与非字符串抛 TypeError（Fail Fast）', () => 
 })
 
 test('resolveRoot：缺省兜底与绝对化一步做完，对已绝对化的入参幂等（注册期归一过再传进来不变形）', () => {
-	assert.deepEqual(resolveRoot(DEFAULT_MEMORY_ROOT), { profile: join(homedir(), '.dsh', 'memory', 'profile'), workspaces: join(homedir(), '.dsh', 'memory', 'workspaces') }, '默认根的 ~ 要展开')
+	assert.deepEqual(resolveRoot(DEFAULT_MEMORY_ROOT), { root: join(homedir(), '.dsh', 'memory'), profile: join(homedir(), '.dsh', 'memory', 'profile'), workspaces: join(homedir(), '.dsh', 'memory', 'workspaces') }, '默认根的 ~ 要展开')
 	// 兜底收在这一步：空值与非字符串一律按没给算，调用方不再各自拼回退形态
 	for (const blank of [undefined, null, '', '   ', 42]) {
 		assert.deepEqual(resolveRoot(blank), resolveRoot(DEFAULT_MEMORY_ROOT), `${JSON.stringify(blank)} 应当作没给`)
@@ -66,10 +66,13 @@ test('resolveRoot：缺省兜底与绝对化一步做完，对已绝对化的入
 	const relative = resolveRoot('./memory')
 	assert.deepEqual(relative, resolveRoot(resolve('./memory')), '相对根按 cwd 解析')
 	assert.ok(isAbsolute(relative.profile) && isAbsolute(relative.workspaces), '两个子位置都得是绝对路径')
-	// 幂等是「一次归一」这句话成立的前提：注册期已绝对化过的值再传进来结果不变
-	assert.deepEqual(resolveRoot('/abs/memory'), resolveRoot(absoluteMemoryRoot('/abs/memory')), '对已绝对化的入参幂等')
-	assert.deepEqual(resolveRoot(relative.profile), { profile: join(relative.profile, 'profile'), workspaces: join(relative.profile, 'workspaces') }, '上一层算出的子位置再解一次不塌')
-	assert.equal(absoluteMemoryRoot('/abs/memory'), '/abs/memory', 'absoluteMemoryRoot 自身也幂等')
+	// 幂等是「一次归一」这句话成立的前提：已归一过的值再传进来结果不变，故注册期归一过
+	// 的根、以及 resolveRoot 自己的产物，都不会二次变形
+	assert.deepEqual(resolveRoot(resolveRoot('./memory').root), resolveRoot('./memory'), '对已绝对化的入参幂等')
+	assert.equal(resolveRoot('/abs/memory').root, '/abs/memory', '绝对根原样透传')
+	// 这格钉的是「空串不许静默变成进程 cwd」：expandHome 对空串原样透传，而 resolve('') 返回
+	// cwd——归一链路一旦漏掉兜底，记忆根就悄悄变成当前工作目录，读写当场分家且不报错
+	assert.notEqual(resolveRoot('').root, process.cwd(), '空串必须取默认根而不是进程 cwd')
 })
 
 test('readCapped：文件不存在返回 missing（常态，非错误）', () => {
