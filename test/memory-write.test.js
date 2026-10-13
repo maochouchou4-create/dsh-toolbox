@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, absoluteMemoryRoot } from '../lib/memory/core.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
-import { assertEntryFrontmatter, deriveIndexLine, parseFrontmatter } from '../lib/memory/frontmatter.js'
+import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
 import { editEntry, upsertEntry } from '../lib/memory/write.js'
 
@@ -86,6 +86,40 @@ test('parseFrontmatter：键位越界各自报错（多余键/重复键/缺键/�
 test('parseFrontmatter：title 含方括号即拒（派生行会不是合法链接行，症状要到注入面才显形）', () => {
 	assert.match(parseFrontmatter(entry('[坏标题]', '触发词')).error, /方括号/)
 	assert.match(parseFrontmatter(entry('坏]标题[', '触发词')).error, /方括号/)
+})
+
+test('hasClosedFence：真值表（它决定「头读完了没有」，读侧早退与写侧升窗都问它）', () => {
+	// 表驱动而不是逐个 if：漏一格（尤其 CRLF 与正文里的 ---）时，红的是表而不是某个
+	// 分支的断言，后者读起来像「这一格过了」，看不出还有没有没写的格子
+	const cases = [
+		['首行不是围栏', '# 标题\n', false],
+		['空串', '', false],
+		['只有开场围栏', '---\ntitle: A\n', false],
+		['闭合在第二行', '---\n---\ntitle: A\n', true],
+		['闭合在块尾', entry('标题', '触发词'), true],
+		['CRLF 同样闭合', '---\r\ntitle: A\r\ndescription: B\r\n---\r\n\r\n正文\r\n', true],
+		['空行也不构成闭合围栏', '---\ntitle: A\n\n\n', false],
+		['尾随空白挡在围栏前（它就不是围栏行）', '---\ntitle: A\n--- \n', false],
+		// 围栏不认语义：正文里孤零零一个 --- 就是闭合围栏。解析器随后会因块内非键行报错，
+		// 但「头读完了没有」这件事只问形状——把语义判据混进来，读侧就会为一个坏条目
+		// 一路读到兜底上限
+		['正文里的 --- 就是闭合围栏', '---\ntitle: A\n\n正文\n---\n', true],
+	]
+	for (const [label, text, expected] of cases) {
+		assert.equal(hasClosedFence(text), expected, `${label}：hasClosedFence 应为 ${expected}`)
+	}
+})
+
+test('说「头闭合」的规范形条目一定解析得出来（头读早退与解析器不许对同一段文本各说各话）', () => {
+	// 两处问的是同一个事实：读侧拿闭合判据决定不再往下读，写侧拿它决定不用升窗。判据说
+	// 闭合而解析器拒绝的症状是「索引里有它、写侧却报不合规」，而那正是要从现场反推半天的
+	// 问题。真值表钉形状，这里钉它与解析器的相容性
+	const texts = [entry('标题', '触发词'), '---\r\ntitle: A\r\ndescription: B\r\n---\r\n\r\n正文\r\n', '---\ntitle: 长标题\ndescription: 触发词／召回词／斜杠词簇\n---\n']
+	for (const text of texts) {
+		assert.equal(hasClosedFence(text), true, `规范形条目须判为闭合：${JSON.stringify(text)}`)
+		assert.equal(parseFrontmatter(text).ok, true, `说闭合却解析失败：${JSON.stringify(text)}`)
+		assert.equal(findFenceEnd(frontmatterLines(text)), frontmatterLines(text).indexOf('---', 1), '围栏定位由 frontmatterLines/findFenceEnd 这一份回答')
+	}
 })
 
 test('deriveIndexLine：格式固定为「- [title](file) — description」', () => {
@@ -185,6 +219,62 @@ test('upsertEntry：层内 frontmatter 不合规的条目逐条列全（报错�
 	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8'), entry('老条目', '触发词', '老正文。'))
 	const other = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') })
 	assert.equal(other.indexLine, '- [别的条目](other.md) — 触发词', '修好之后层立即解锁')
+})
+
+test('upsertEntry：同名判定只读文件头（探一次、闭合即停），正文里的 title 字样不参与判定', async () => {
+	const root = join(base, 'write-head-only')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	// 头部两键几百字节就闭合，正文远远排在探测块之外；正文里摆一条完整形态的 title:
+	// 行，它既不该被读进来，也不该被算成这条条目的 frontmatter
+	const body = `${'填充段落。'.repeat(1000)}\ntitle: 撞名标题\n`
+	writeFileSync(join(dir, 'peer.md'), entry('本条目自己的标题', '触发词', body), 'utf8')
+	const reads = []
+	const spy = {
+		...port,
+		readText(target) {
+			reads.push({ method: 'readText', path: target.displayPath })
+			return port.readText(target)
+		},
+		readHead(target, maxBytes, signal) {
+			reads.push({ method: 'readHead', path: target.displayPath, maxBytes })
+			return port.readHead(target, maxBytes, signal)
+		},
+	}
+	const r = await upsertEntry({ port: spy, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('撞名标题', '另一词') })
+	assert.equal(readFileSync(join(dir, 'other.md'), 'utf8'), entry('撞名标题', '另一词'), '正文里出现的同名字样不撞名：判定只看头部那份 frontmatter')
+	assert.equal(r.indexLine, '- [撞名标题](other.md) — 另一词')
+	// 这条用例真正钉的是读法而不只是结论：整篇读一次都不该出现，围栏闭合即停不必付兜底往返
+	assert.deepEqual(reads, [{ method: 'readHead', path: join(dir, 'peer.md'), maxBytes: FRONTMATTER_HEAD_PROBE_BYTES }])
+})
+
+test('upsertEntry：头部未闭合的病态条目升到兜底上限读一次，随后判为不合规（不静默当作无同名）', async () => {
+	const root = join(base, 'write-unclosed-head')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	// 单行超长正文顶在围栏之前：探测块与兜底上限都读不到闭合围栏，两次往返都只拿到半截
+	const filler = '填'.repeat(Math.ceil(FRONTMATTER_HEAD_MAX_BYTES / 3) + 16)
+	writeFileSync(join(dir, 'unclosed.md'), `---\ntitle: 未闭合条目\ndescription: 触发词\n${filler}\n`, 'utf8')
+	const probes = []
+	const spy = {
+		...port,
+		readHead(target, maxBytes, signal) {
+			probes.push(maxBytes)
+			return port.readHead(target, maxBytes, signal)
+		},
+	}
+	await assert.rejects(
+		() => upsertEntry({ port: spy, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		(error) => {
+			assert.match(error.message, /层内 1 条 frontmatter 不合规/)
+			assert.match(error.message, /unclosed\.md/)
+			assert.match(error.message, /未闭合/)
+			return true
+		},
+		'兜底往返只影响成本，不改变判定：读不满头就判不合规，与整篇读时同一结论',
+	)
+	assert.deepEqual(probes, [FRONTMATTER_HEAD_PROBE_BYTES, FRONTMATTER_HEAD_MAX_BYTES], '探测未命中围栏即升到兜底上限')
+	assert.equal(existsSync(join(dir, 'other.md')), false, '拦截不得留孤儿条目')
 })
 
 test('upsertEntry：前置拦截（未知层/空桶名/空 content/超限/非 kebab/保留名）', async () => {

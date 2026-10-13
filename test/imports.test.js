@@ -148,6 +148,10 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
  * 表只回答「每个文件各自直不直」。写侧那条硬边界（upsert/edit 的 I/O 只经 fs 端口）问的
  * 是另一个量：write.js 的**传递闭包**里有没有直连模块——写侧与全部下游都登记为零直连时，
  * 一个共享件直连 node:fs 照样能让写侧绕过端口，而这张表全绿。闭包断言在表之后。
+ *
+ * 共享机制也算一张表里的行：head-read.js 由端口的 node 适配器与读侧共用，它直连不等于
+ * 写侧直连——端口适配器本来就是本仓的 node 实现，而它不在 write.js 的闭包内（下面那条
+ * 闭包断言正是替这件事兜底）。
  */
 const NODE_FS_DIRECT = new Map([
 	['memory/write.js', false],
@@ -159,6 +163,7 @@ const NODE_FS_DIRECT = new Map([
 	['memory/assemble.js', true],
 	['memory/layers.js', true],
 	['memory/fs-port.js', true],
+	['memory/head-read.js', true],
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],

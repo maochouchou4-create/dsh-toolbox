@@ -28,7 +28,8 @@ after(() => {
 const pathFor = (name) => join(base, `${name}.md`)
 const writeFixture = (name, content) => {
 	const path = pathFor(name)
-	writeFileSync(path, content, 'utf8')
+	// 传 Buffer 时按字节落盘（造非法 UTF-8 用），传字符串时 Node 照常按 utf8 编码
+	writeFileSync(path, content)
 	return path
 }
 
@@ -169,6 +170,11 @@ function makeHostFsStub() {
 			calls.push({ method: 'readText', args: [target, signal] })
 			return '宿主内容'
 		},
+		// 字节窗口：宿主只认「取哪一段」，越界返回空，不按文件大小报错
+		async readByteRange(target, range, signal) {
+			calls.push({ method: 'readByteRange', args: [target, range, signal] })
+			return new TextEncoder().encode('宿主字节').subarray(0, range.length)
+		},
 		async listDir(target, signal) {
 			calls.push({ method: 'listDir', args: [target, signal] })
 			// 宿主 FsDirEntry 带 target/version/size，端口只该透出 name+type
@@ -262,5 +268,78 @@ test('createHostFsPort：listDir 只透 name+type 并按位传 signal，缺失�
 test('createHostFsPort：宿主缺 listDir 在构造期就炸（拦截静默失效不得等到第一次写入）', () => {
 	// writeText 形参给足五个，好让这条只考 listDir 那道关（形参不足会先撞上 arity 检查）
 	assert.throws(() => createHostFsPort({ fs: { writeText: async (target, content, intent, signal, sandboxPolicy) => ({}) } }), /listDir/)
+})
+
+test('createHostFsPort：宿主缺 readByteRange 在构造期就炸（端口构造失败＝整个写侧不可用，不许是「慢一点」）', () => {
+	// 形参给足五个、listDir 也在场，好让这条只考 readByteRange 那道关
+	const base = { writeText: async (target, content, intent, signal, sandboxPolicy) => ({}), listDir: async () => [] }
+	assert.throws(() => createHostFsPort({ fs: base }), /readByteRange/)
+})
+
+test('createNodeFsPort：readHead 至多取 maxBytes 字节，文件更短就返回全长（端口不做带领域知识的早退）', async () => {
+	const port = createNodeFsPort()
+	const short = writeFixture('head-short', '短文件全文\n')
+	assert.equal(await port.readHead(await port.resolve(short), 4096), '短文件全文\n', '短于上限时返回全长，不因为上限大就报错或截断')
+	const long = writeFixture('head-long', `${'头'.repeat(20)}\n正文\n`)
+	const head = await port.readHead(await port.resolve(long), 24)
+	assert.equal(head, '头'.repeat(8), '只取前 maxBytes 字节')
+	assert.ok(!head.includes('正文'), '上限之外的正文字节不进结果')
+})
+
+test('createNodeFsPort：readHead 跨块边界的中文不产生替换符（只在末尾解码这一条口径的立身之本）', async () => {
+	const port = createNodeFsPort()
+	// 每个汉字 3 字节：分块 2048 落在第 682 个字之后，那个字必然被劈在两块之间
+	const content = '中'.repeat(4000)
+	const path = writeFixture('head-chunk-boundary', content)
+	const head = await port.readHead(await port.resolve(path), content.length * 3)
+	assert.equal(head, content, '分块读到的字节先合并、后解码')
+	assert.ok(!head.includes('�'), '按块解码会把跨块字符劈成替换符，而这份字符串直接进注入材料')
+})
+
+test('createNodeFsPort：readHead 的窗口切在多字节字符中间时剪掉那半个字（不是宽容，是常态）', async () => {
+	const port = createNodeFsPort()
+	// 窗口以块为界，块边界落进汉字中间的概率约 3/4——几乎每次头读都会遇到。剪掉的是
+	// 窗口边而不是内容：半个字既不是合法 UTF-8，也不该以替换符的形式进注入材料
+	const content = '中'.repeat(4000)
+	const path = writeFixture('head-cut-inside-char', content)
+	for (const maxBytes of [2049, 2050, 2051, 2052, 2999]) {
+		const head = await port.readHead(await port.resolve(path), maxBytes)
+		assert.ok(!head.includes('�'), `maxBytes=${maxBytes} 切进字符中间时不得产出替换符`)
+		assert.equal(head, content.slice(0, Math.floor(maxBytes / 3)), `maxBytes=${maxBytes} 的头应是完整的那些字`)
+	}
+})
+
+test('createNodeFsPort：readHead 遇到非法 UTF-8 按 FS_NOT_TEXT 抛（不静默产出 U+FFFD）', async () => {
+	const port = createNodeFsPort()
+	// 头读的下游是同名判定：变形后的 title 会让它拿一个谁也没写过的串去比，而同一文件
+	// 走 readText 当场就报非文本——两条路径对同一个坏文件的答案必须一致
+	const path = writeFixture('head-bad-utf8', Buffer.concat([Buffer.from('title: 标题\n', 'utf8'), Buffer.from([0xff, 0xfe])]))
+	const target = await port.resolve(path)
+	await assert.rejects(() => port.readHead(target, 4096), (error) => {
+		assert.equal(error.code, 'FS_NOT_TEXT')
+		assert.match(error.message, /head-bad-utf8/, '报错要指名是哪个文件，否则只能靠读全文定位')
+		return true
+	})
+})
+
+test('createNodeFsPort：readHead 对缺失文件原样上抛（不得把 ENOENT 吞成空串谎报「头已闭合」）', async () => {
+	const port = createNodeFsPort()
+	const missing = await port.resolve(pathFor('never-created'))
+	await assert.rejects(() => port.readHead(missing, 2048), (error) => {
+		assert.equal(error.code, 'ENOENT')
+		return true
+	})
+})
+
+test('createHostFsPort：readHead 走 readByteRange 的 offset 0 与给定 length，signal 按位透传', async () => {
+	const stub = makeHostFsStub()
+	const port = createHostFsPort({ fs: stub })
+	const abort = new AbortController().signal
+	const head = await port.readHead(await port.resolve('/x/a.md'), 2048, abort)
+	const call = stub.calls.find((item) => item.method === 'readByteRange')
+	assert.deepEqual(call.args[1], { offset: 0, length: 2048 }, '头读就是第 0 字节起的窗口；长度按消费方给的原样传')
+	assert.equal(call.args[2], abort, 'signal 与 readText/listDir 同款按位透传（插洞位不会被探到）')
+	assert.equal(head, '宿主字节', '字节按 UTF-8 解码成字符串交给消费方')
+	assert.equal(stub.calls.some((item) => item.method === 'readText'), false, '头读不得绕道 readText')
 })
 
