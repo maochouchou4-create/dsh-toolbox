@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, resolveRoot } from '../lib/memory/core.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
-import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
+import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, groupTitlesByTitle, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
 import { editEntry, upsertEntry } from '../lib/memory/write.js'
 
@@ -204,6 +204,49 @@ test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语
 	const afterWrite = dupWarnings()
 	assert.equal(afterWrite.length, 1, '新写的条目不并入撞名组')
 	assert.ok(afterWrite[0].includes('one.md') && afterWrite[0].includes('three.md'), '撞名组仍是原来那两条')
+})
+
+test('同名判定：同一条目体检整篇读、写侧头读 64KB 封顶，围栏闭合在窗口之外的存量条目两侧答案不同', async () => {
+	const root = join(base, 'dup-title-head-window')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	// frontmatter 本身合法，但收尾围栏被推到 FRONTMATTER_HEAD_MAX_BYTES 之外：description 是
+	// 一整行超长值（单行形态、不折行，所以照样合规），这是「值写太长把围栏顶出窗口」的真实形态
+	const wide = entry('宽条目', '词'.repeat(FRONTMATTER_HEAD_MAX_BYTES), '正文')
+	writeFileSync(join(dir, 'wide.md'), wide, 'utf8')
+	writeFileSync(join(dir, 'narrow.md'), entry('宽条目', '触发词'), 'utf8')
+
+	// 写侧只读到 64KB，看不见收尾围栏 → 判成不合规 → 整层封死，连别的条目也写不了
+	await assert.rejects(
+		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'third.md', content: entry('第三个条目', '触发词') }),
+		(error) => {
+			assert.match(error.message, /frontmatter 不合规/)
+			assert.match(error.message, /wide\.md/)
+			return true
+		},
+		'写侧头读窗口看不到收尾围栏，该条目判成不合规',
+	)
+	// 体检整篇读，围栏闭合 → 判合规，于是看见重名并点名两条。两侧答案不同是既成事实：
+	// 判定本身已下沉到同一份函数，分叉来自两侧的读法不同（头读有窗口、整篇读没有），
+	// 这条用例把这个分叉钉住，免得哪天读法变了却没人发现
+	const dup = lintMemory({ memoryRoot: root }).warnings.filter((w) => w.includes('层内 title 重名'))
+	assert.equal(dup.length, 1, '体检读得到围栏，于是看见重名')
+	assert.ok(dup[0].includes('wide.md') && dup[0].includes('narrow.md'), '点名撞上的两条')
+})
+
+test('groupTitlesByTitle：按 title 字段分组、不合群的另列一份（两份消费方拿不同那一面）', () => {
+	const { byTitle, unparsable } = groupTitlesByTitle([
+		{ name: 'a.md', text: entry('标题一', '触发词') },
+		{ name: 'b.md', text: entry('标题一', '另一词') },
+		{ name: 'c.md', text: entry('标题二', '触发词') },
+		{ name: 'bad.md', text: '没有 frontmatter\n' },
+	])
+	assert.deepEqual(byTitle.get('标题一'), ['a.md', 'b.md'], '同 title 的按喂入顺序聚成一组')
+	assert.deepEqual(byTitle.get('标题二'), ['c.md'], '各占一个 title 的单列一组')
+	assert.deepEqual(unparsable, [{ name: 'bad.md', error: '条目开头缺 frontmatter（首行须为 ---）' }], '不合群的随值返回，带病因供写侧拼报错')
+	// 不合群的既不进分组也不占一个空 title——空串会被当成真实存在的 title
+	assert.equal(byTitle.has(''), false)
+	assert.equal(byTitle.size, 2)
 })
 
 test('upsertEntry：层内 frontmatter 不合规的条目逐条列全（报错要给出脱困路径，修完即解锁）', async () => {

@@ -141,8 +141,11 @@ test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算
 	assert.ok(!dup[0].includes('先 delete 再改名'), '不得复刻写侧那句先删——那条只在写侧语境成立')
 	// frontmatter 不合规的条目 title 不可知，不占坑也不被当成无同名（写侧对它是另一条专门口径）
 	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
-	const withBroken = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
-	assert.equal(withBroken.warnings.filter((w) => w.includes('层内 title 重名')).length, 1, '坏条目不改变撞名判定')
+	const after = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
+	const afterDup = after.warnings.filter((w) => w.includes('层内 title 重名'))
+	assert.equal(afterDup.length, 1, '坏条目不改变撞名判定')
+	// 但要说得出「这条的 title 一次都没被比较过」：重名结论只覆盖其余条目，别让读者以为覆盖了整层
+	assert.ok(afterDup[0].includes('另有 1 条 title 判不了'), '重名结论须声明覆盖面，坏条目的 title 压根没参与比较')
 })
 
 test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
