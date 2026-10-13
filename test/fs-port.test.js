@@ -278,6 +278,35 @@ test('createHostFsPort：缺策略洞位的宿主报「不带 sandboxPolicy 洞�
 	assert.throws(() => createHostFsPort({ fs: { writeText: fiveArg, listDir: async () => [] } }), /契约版本不匹配：缺 readByteRange/, '缺 readByteRange 仍是契约版本不匹配')
 })
 
+test('createHostFsPort：缺 resolve/stat/readText 同样在构造期就报（此前包装函数照样建得起来，缺席要到第一个用点才炸裸 TypeError）', () => {
+	// 缺这三个方法时端口构造得出来，upsertEntry 的第一个动作 port.resolve(entry) 就撞上裸
+	// TypeError「hostFs.resolve is not a function」——既不是带 code 的 FsError，也不带契约口径，
+	// 读的人无从知道是宿主形状不对
+	for (const method of ['resolve', 'stat', 'readText']) {
+		assert.throws(
+			() => createHostFsPort({ fs: without(makeHostFsStub(), method) }),
+			(error) => {
+				assert.match(error.message, new RegExp(`契约版本不匹配：缺 ${method} 方法`), error.message)
+				// 抛的是带契约口径的 Error，不是调用点上的裸 TypeError（那条文案里恰好引用了
+				// 裸 TypeError 的原文，故只能按错误类型判）
+				assert.equal(error.constructor.name, 'Error', '构造期报的是契约口径，不是那个裸 TypeError')
+				return true
+			},
+			`缺 ${method} 必须构造期就炸`,
+		)
+	}
+	// 报错还要指出它会在哪一步炸：读者据此知道去查哪个调用点，不必先复现一遍裸 TypeError
+	assert.throws(() => createHostFsPort({ fs: without(makeHostFsStub(), 'resolve') }), /upsertEntry 的第一个动作/)
+	assert.throws(() => createHostFsPort({ fs: without(makeHostFsStub(), 'readText') }), /editEntry 读条目现文/)
+})
+
+/** 替身去掉一个方法：缺方法必须整条构造期报，故这里走「不在表里」而不是留个 undefined。 */
+function without(stub, method) {
+	const copy = { ...stub }
+	delete copy[method]
+	return copy
+}
+
 test('createHostFsPort：listDir 只透 name+type 并按位传 signal，缺失目录的 FS_NOT_FOUND 归一为 []', async () => {
 	const stub = makeHostFsStub()
 	const port = createHostFsPort({ fs: stub })
