@@ -134,18 +134,34 @@ test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算
 	assert.ok(dup[0].includes('alpha.md') && dup[0].includes('beta.md'), '告警须点名撞上的两条')
 	assert.ok(!dup[0].includes('delta.md'), '跨层同名不进这一组')
 	assert.ok(!dup[0].includes('gamma.md'), '未撞名的条目不牵进来')
-	// 处置给 edit 不给 delete：写侧那句「先 delete 再改名」在这里是有害的——报出来的两条
-	// 是各自带正文的现存条目，title 与文件名本就是两回事，照着删就是丢正文
+	// 处置给 edit 不给 delete：报出来的两条是各自带正文的现存条目，title 与文件名本就是
+	// 两回事，照着「先删」做丢的是正文（写侧报错同一口径，两边由同一处渲染）
 	assert.ok(dup[0].includes(profile), '告警须带层目录路径，否则跨桶同名无从定位到文件')
 	assert.ok(dup[0].includes('edit'), '须给出无损的处置：edit 改 frontmatter 的 title 行')
-	assert.ok(!dup[0].includes('先 delete 再改名'), '不得复刻写侧那句先删——那条只在写侧语境成立')
+	assert.ok(!dup[0].includes('先 delete 再改名'), '不得复刻「先 delete 再改名」——撞上的不是待写那条的旧版本')
 	// frontmatter 不合规的条目 title 不可知，不占坑也不被当成无同名（写侧对它是另一条专门口径）
 	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
 	const after = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
 	const afterDup = after.warnings.filter((w) => w.includes('层内 title 重名'))
 	assert.equal(afterDup.length, 1, '坏条目不改变撞名判定')
-	// 但要说得出「这条的 title 一次都没被比较过」：重名结论只覆盖其余条目，别让读者以为覆盖了整层
-	assert.ok(afterDup[0].includes('另有 1 条 title 判不了'), '重名结论须声明覆盖面，坏条目的 title 压根没参与比较')
+	// 但要说得出「这条的 title 一次都没被比较过」：重名结论只覆盖其余条目，别让读者以为覆盖了整层。
+	// 覆盖面缺口独立成条（不挂在撞名那条尾巴上），故在这里查它自己那一条
+	const coverage = after.warnings.filter((w) => w.includes('title 判不了'))
+	assert.equal(coverage.length, 1, '覆盖面缺口独立成一条，不随撞名组数增减')
+	assert.ok(coverage[0].includes('1 条 title 判不了') && coverage[0].includes('broken.md'), '须说得出有几条判不了、是哪些：坏条目的 title 压根没参与比较')
+})
+
+test('lintMemory：有 title 判不了的条目而本层不撞名，覆盖面缺口照样单独立一条（挂在撞名尾巴上时不撞名就一个字都不说）', () => {
+	const root = join(base, 'lint-coverage-alone')
+	const profile = join(root, 'profile')
+	mkdirSync(profile, { recursive: true })
+	writeFileSync(join(profile, 'good.md'), entry('独一份', '触发词'), 'utf8')
+	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
+	const report = lintMemory({ memoryRoot: root })
+	assert.equal(report.warnings.filter((w) => w.includes('层内 title 重名')).length, 0, '本层不撞名就不该报撞名')
+	const coverage = report.warnings.filter((w) => w.includes('title 判不了'))
+	assert.equal(coverage.length, 1, '覆盖面缺口与有无撞名无关，各说各的')
+	assert.ok(coverage[0].includes('broken.md') && coverage[0].includes('重名结论只覆盖其余条目'), coverage[0])
 })
 
 test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
