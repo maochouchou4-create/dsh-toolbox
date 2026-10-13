@@ -163,6 +163,7 @@ const NODE_FS_DIRECT = new Map([
 	['memory/assemble.js', true],
 	['memory/layers.js', true],
 	['memory/fs-port.js', true],
+	['memory/fs-guard.js', false],
 	['memory/head-read.js', true],
 	['memory/index.js', true],
 	['see-image/vision.js', true],

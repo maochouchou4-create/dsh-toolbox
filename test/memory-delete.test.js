@@ -8,7 +8,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { composeMemory } from '../lib/memory/assemble.js'
@@ -31,6 +31,16 @@ after(() => {
 /** 条目正文夹具：frontmatter 两键＋正文。 */
 const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
+/** 收错误而不是让它抛出：断言要比 name 与 code，得先拿到那个对象。 */
+const 捕获 = async (fn) => {
+	try {
+		await fn()
+	} catch (error) {
+		return error
+	}
+	return undefined
+}
+
 test('deleteEntry：删文＋跨层 wikilink 引用报告（delete 族同步走 node:fs）', async () => {
 	const root = join(base, 'delete-case')
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'gone.md', content: entry('被删条目', '触发词') })
@@ -47,6 +57,20 @@ test('deleteEntry：删文＋跨层 wikilink 引用报告（delete 族同步走 
 	// 前缀子串不误报：[[toolkit]] 不构成对 tool.md 的引用
 	const rt = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'tool.md' })
 	assert.equal(rt.references.length, 0, '[[toolkit]] 是另一个 stem，不得计作 [[tool]] 的引用')
+})
+
+test('deleteEntry：条目名被同名目录占用时按宿主词表拒删，与 write 路径同一 name＋code', async () => {
+	const root = join(base, 'delete-not-regular')
+	const dir = join(root, 'profile')
+	mkdirSync(join(dir, 'topic.md'), { recursive: true })
+	const 删除错误 = await 捕获(() => deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md' }))
+	assert.equal(删除错误?.code, 'FS_NOT_REGULAR_FILE', '拒删须报宿主那个码，不得放裸 node 的 EISDIR 出去')
+	// 本路径直连 node:fs，判定与错误工厂走 fs-guard.js 那一份：同一个故障在 write 路径与
+	// delete 路径上的 name 与 code 完全一致，调用方按任一个断都得到同一答案
+	const 写错误 = await 捕获(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词') }))
+	assert.equal(写错误?.code, 删除错误.code)
+	assert.equal(写错误?.name, 删除错误.name)
+	assert.equal(statSync(join(dir, 'topic.md')).isDirectory(), true, '被拒的删除不得动那个目录')
 })
 
 test('deleteEntry：引用扫描逐文件降级（病态文件只废自己那份，余下目录照扫）', async () => {

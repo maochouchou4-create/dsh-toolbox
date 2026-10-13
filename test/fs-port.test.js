@@ -105,6 +105,9 @@ test('createNodeFsPort：目标是目录时写抛 FS_NOT_REGULAR_FILE（与宿�
 	for (const intent of [undefined, { kind: 'createIfAbsent' }, { kind: 'replaceIfVersion', version: 'v-1' }]) {
 		await assert.rejects(() => port.writeText(target, 'x\n', intent), (error) => {
 			assert.equal(error.code, 'FS_NOT_REGULAR_FILE', `守卫 ${intent?.kind ?? '无'} 下也须给宿主那个码`)
+			// name 与 code 同源：写侧 edit/upsert 与直连 node:fs 的 delete 共用 fs-guard.js
+			// 那一份，同一个故障在四条路径上的错误面才谈得上「一致」
+			assert.equal(error.name, 'FsPortError')
 			return true
 		})
 	}
