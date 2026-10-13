@@ -134,6 +134,11 @@ test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算
 	assert.ok(dup[0].includes('alpha.md') && dup[0].includes('beta.md'), '告警须点名撞上的两条')
 	assert.ok(!dup[0].includes('delta.md'), '跨层同名不进这一组')
 	assert.ok(!dup[0].includes('gamma.md'), '未撞名的条目不牵进来')
+	// 处置给 edit 不给 delete：写侧那句「先 delete 再改名」在这里是有害的——报出来的两条
+	// 是各自带正文的现存条目，title 与文件名本就是两回事，照着删就是丢正文
+	assert.ok(dup[0].includes(profile), '告警须带层目录路径，否则跨桶同名无从定位到文件')
+	assert.ok(dup[0].includes('edit'), '须给出无损的处置：edit 改 frontmatter 的 title 行')
+	assert.ok(!dup[0].includes('先 delete 再改名'), '不得复刻写侧那句先删——那条只在写侧语境成立')
 	// frontmatter 不合规的条目 title 不可知，不占坑也不被当成无同名（写侧对它是另一条专门口径）
 	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
 	const withBroken = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
