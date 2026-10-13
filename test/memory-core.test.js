@@ -1,8 +1,8 @@
 /**
  * dsh-memory 读侧单测（node:test，零宿主依赖）：slug、读取状态、索引预算、
- * 扫目录派生索引与缓存失效、注入块组装。
+ * 扫目录派生索引、注入块组装。
  * 夹具在临时目录搭建，测后清理；写侧（upsert/edit/delete/lint）在 write.test.js。
- * 每个用例独占一个根目录——索引派生缓存按目录键入，共用根会让用例互相污染。
+ * 每个用例独占一个根目录——避免目录内容互相牵连。
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -200,12 +200,12 @@ test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、
 
 test('composeMemory：改 frontmatter 后下一次装配就是新行（读侧无跨调用缓存，同长度改写也立刻可见）', () => {
 	const { root, profile } = fixture('compose-refresh')
-	const path = join(profile, 'cached.md')
+	const path = join(profile, 'refreshed.md')
 	writeFileSync(path, entry('旧标题', '旧触发词'), 'utf8')
-	assert.ok(composeMemory({ memoryRoot: root }).includes('- [旧标题](cached.md) — 旧触发词'))
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [旧标题](refreshed.md) — 旧触发词'))
 	// 同长度改写：任何以「键含 size」的缓存都会漏掉这种改动，读侧不做缓存就没有这个面
 	writeFileSync(path, entry('新标题', '新触发词'), 'utf8')
-	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](cached.md) — 新触发词'), '改过 frontmatter 必须重扫')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](refreshed.md) — 新触发词'), '改过 frontmatter 必须重扫')
 	assert.ok(!composeMemory({ memoryRoot: root }).includes('旧标题'), '旧派生行不得残留')
 })
 

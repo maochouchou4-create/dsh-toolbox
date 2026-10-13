@@ -163,7 +163,7 @@ test('upsertEntry/editEntry/deleteEntry：会话策略不许写时三个动作�
 	assert.equal(existsSync(join(root, 'profile')), false, '被拒的写入不得建桶落盘')
 	await upsertEntry(args)
 	await assert.rejects(() => editEntry({ port: readOnly, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '正文', newString: '正文改' }), /不允许写记忆/)
-	assert.ok(readFileSync(join(root, 'profile', 'topic.md'), 'utf8').includes('正文\n'), '被拒的编辑不得落盘')
+	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词'), '被拒的编辑不得落盘')
 	// delete 的 I/O 虽留在 node:fs（宿主契约无删除能力），照样接端口问能不能写：
 	// 四个 action 同一口径。它是同步函数（I/O 无 await），故用 throws 而非 rejects
 	assert.throws(() => deleteEntry({ port: readOnly, memoryRoot: root, layer: 'habit', file: 'topic.md' }), /不允许写记忆/)
@@ -179,7 +179,7 @@ test('upsertEntry：write 路径不带版本守卫（语义是「以我这份为
 	const root = join(base, 'write-no-guard')
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('条目', '触发词', 'v1') })
 	const r = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('条目', '触发词', 'v2') })
-	assert.ok(readFileSync(join(r.dir, 'one.md'), 'utf8').includes('v2'))
+	assert.equal(readFileSync(join(r.dir, 'one.md'), 'utf8'), entry('条目', '触发词', 'v2'), 'write 无版本守卫：后者整份覆盖前者')
 })
 
 test('editEntry：并发两次改同一条目，后到者抛 FS_STALE_VERSION 且先到者正文完好', async () => {
@@ -232,7 +232,7 @@ test('editEntry：replaceAll 全替换并计处数', async () => {
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '甲旧\n乙旧\n丙新') })
 	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '旧', newString: '新', replaceAll: true })
 	assert.equal(r.replacements, 2)
-	assert.ok(readFileSync(join(r.dir, 'topic.md'), 'utf8').endsWith('甲新\n乙新\n丙新\n'))
+	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', '甲新\n乙新\n丙新'))
 })
 
 test('editEntry：改出不合规 frontmatter 走同一条拦截链（先算后写，不留半截改动）', async () => {
@@ -240,7 +240,7 @@ test('editEntry：改出不合规 frontmatter 走同一条拦截链（先算后�
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '正文行') })
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'title: 主题条目', newString: 'title: [带括号]' }), /方括号/)
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '---\ntitle: 主题条目', newString: '---\nname: 多余\ntitle: 主题条目' }), /多余键/)
-	assert.ok(readFileSync(join(root, 'profile', 'topic.md'), 'utf8').includes('title: 主题条目'), '被拦后正文保持原样')
+	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词', '正文行'), '被拦后整份保持原样')
 })
 
 test('editEntry：命中拦截（不命中/多处未声明 replaceAll）与前置拦截（非 kebab/条目不存在/参数类型）', async () => {
@@ -262,7 +262,7 @@ test('editEntry：全等替换（newString===oldString）命中≠改动，repla
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '重复\n重复') })
 	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '重复', replaceAll: true })
 	assert.equal(r.replacements, 0, '全等替换＝零改动，不得按命中处数谎报')
-	assert.ok(readFileSync(join(r.dir, 'topic.md'), 'utf8').endsWith('重复\n重复\n'))
+	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', '重复\n重复'))
 })
 
 test('editEntry：newString 里的 $ 模式（$` / $\' / $& / $$）按字面落盘，不得插回匹配前后文', async () => {
@@ -272,7 +272,7 @@ test('editEntry：newString 里的 $ 模式（$` / $\' / $& / $$）按字面落�
 	const replacement = "JS 正则无 m 标志时 `$` 只认串尾；$' $& $$ 一律按字面"
 	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行', newString: replacement })
 	assert.equal(r.replacements, 1)
-	assert.ok(readFileSync(join(r.dir, 'topic.md'), 'utf8').endsWith(`${replacement}\n丙行\n`))
+	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', `${replacement}\n丙行`))
 })
 
 test('editEntry：CRLF 正文照常工作，落盘归一 LF、尾部空行保真（git checkout 形态）', async () => {
@@ -283,10 +283,9 @@ test('editEntry：CRLF 正文照常工作，落盘归一 LF、尾部空行保真
 	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行', newString: '乙行' })
 	assert.equal(r.replacements, 1)
 	assert.equal(r.indexLine, '- [主题条目](topic.md) — 触发词', 'CRLF frontmatter 照样派生出索引行')
-	const text = readFileSync(join(dir, 'topic.md'), 'utf8')
-	assert.ok(text.includes('乙行'), 'CRLF 正文下替换生效')
-	assert.ok(!text.includes('\r'), '落盘统一 LF')
-	assert.ok(text.endsWith('乙行\n\n'), '尾部空行原样保留')
+	// 一条全等钉住三件事：替换生效、落盘统一 LF、尾部空行保真；拆成子串断言时
+	// 「frontmatter 被顺带改坏」这类回归照样绿灯通过
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: 主题条目\ndescription: 触发词\n---\n\n乙行\n\n', 'CRLF 正文替换后整文正确（LF 归一＋尾空行保真）')
 })
 
 test('editEntry：跨行 oldString 在 CRLF 正文下可达（归一后按 \\n 匹配）', async () => {
@@ -295,7 +294,9 @@ test('editEntry：跨行 oldString 在 CRLF 正文下可达（归一后按 \\n �
 	mkdirSync(dir, { recursive: true })
 	writeFileSync(join(dir, 'topic.md'), `${entry('主题条目', '触发词', 'line1\r\nline2')}`, 'utf8')
 	await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'line1\nline2', newString: 'L' })
-	assert.ok(readFileSync(join(dir, 'topic.md'), 'utf8').includes('L\n'), '跨行替换按 LF 口径命中')
+	// 整文全等而非 includes：跨行替换只许动 oldString 那两行，frontmatter 与其后的
+	// 空行形态一并钉死——子串断言会让「顺带把条目头部写坏了」这类回归绿灯通过
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', 'L'), '跨行替换按 LF 口径命中，条目头部未被挪动')
 })
 
 test('editEntry：LF 正文多尾空行保真（替换不动作者行尾形态）', async () => {
@@ -304,7 +305,7 @@ test('editEntry：LF 正文多尾空行保真（替换不动作者行尾形态�
 	mkdirSync(dir, { recursive: true })
 	writeFileSync(join(dir, 'topic.md'), '---\ntitle: A\ndescription: B\n---\n\na\n\n\n', 'utf8')
 	await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '\n\na', newString: '\n\nA' })
-	assert.ok(readFileSync(join(dir, 'topic.md'), 'utf8').endsWith('A\n\n\n'), '两个尾空行原样保留')
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\nA\n\n\n', '两个尾空行原样保留')
 })
 
 test('editEntry：编辑后正文为空与超失控保护走同一条拦截链（结果仍过 upsert 校验）', async () => {
