@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, sniffImageMediaType } from '../lib/see-image/vision.js'
+import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, resolveTarget, sniffImageMediaType, transcribe } from '../lib/see-image/vision.js'
 
 test('sniffImageMediaType 按魔数识别四种受支持图型', () => {
 	assert.equal(sniffImageMediaType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'image/png')
@@ -101,4 +101,99 @@ test('resolveAttachmentObject：零命中／歧义／缺桶均显式报错', () 
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
+})
+
+/** ctx 替身：只实现 resolveTarget 问得到的服务成员，记下每次调用便于断言。 */
+const 假Ctx = ({ cwd = '/work/live' } = {}) => {
+	const calls = []
+	return {
+		calls,
+		fs: {
+			async resolve(path, options) {
+				calls.push({ method: 'fs.resolve', path, cwd: options?.cwd })
+				return { targetKey: path, displayPath: path }
+			},
+		},
+		workingDirectory: {
+			async ensure() {
+				calls.push({ method: 'workingDirectory.ensure' })
+				return cwd
+			},
+		},
+	}
+}
+
+/** assembler 替身：只实现 transcribe 用到的三个成员（宿主 BlockAssembler 裸仓不可 import）。 */
+const 假Assembler = (blocks, finish = { kind: 'stop' }) => {
+	const pushed = []
+	return { pushed, finish, blocks: () => blocks, push: (chunk) => pushed.push(chunk) }
+}
+
+const 假流 = async function* (chunks) {
+	for (const chunk of chunks) yield chunk
+}
+
+test('resolveTarget：path 分支按会话活目录解析，sourceName 取 basename、attachmentId 空', async () => {
+	const ctx = 假Ctx()
+	const r = await resolveTarget(ctx, { path: 'shots/a.png' }, { agent: { session: { id: 's1' } }, signal: 'SIG' }, '/objects')
+	assert.equal(r.target.displayPath, 'shots/a.png')
+	assert.equal(r.sourceName, 'a.png', '存附件时的文件名取 basename，不是整条路径')
+	assert.equal(r.attachmentId, undefined, 'path 分支没有 sha256 可回显')
+	assert.deepEqual(ctx.calls, [
+		{ method: 'workingDirectory.ensure' },
+		{ method: 'fs.resolve', path: 'shots/a.png', cwd: '/work/live' },
+	])
+})
+
+test('resolveTarget：非 agent 调用不问活目录（cwd 交由 fs 服务默认解析）', async () => {
+	const ctx = 假Ctx()
+	ctx.workingDirectory.ensure = async () => {
+		throw new Error('无会话上下文时不该问活目录')
+	}
+	const r = await resolveTarget(ctx, { path: '/abs/b.png' }, { agent: undefined, signal: undefined }, '/objects')
+	assert.equal(r.sourceName, 'b.png')
+	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: '/abs/b.png', cwd: undefined }])
+})
+
+test('resolveTarget：attachment 分支按前缀定位对象，sourceName 与 attachmentId 同为完整 id', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'objects-'))
+	try {
+		mkdirSync(join(root, HEX64.slice(0, 2)))
+		writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
+		const ctx = 假Ctx()
+		const r = await resolveTarget(ctx, { attachment: `SHA256:053eb17e` }, { agent: undefined, signal: undefined }, root)
+		assert.equal(r.target.displayPath, join(root, HEX64.slice(0, 2), HEX64))
+		assert.equal(r.sourceName, HEX64)
+		assert.equal(r.attachmentId, HEX64, '占位符分支回显完整 id，调用方据此拼 sha256: 前缀')
+		assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: join(root, HEX64.slice(0, 2), HEX64), cwd: undefined }])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('resolveTarget：path 与 attachment 都给或都不给即拦（两条入口互斥）', async () => {
+	const ctx = 假Ctx()
+	await assert.rejects(() => resolveTarget(ctx, {}, { agent: undefined, signal: undefined }, '/objects'), /二选一/)
+	await assert.rejects(() => resolveTarget(ctx, { path: 'a.png', attachment: '053eb17e' }, { agent: undefined, signal: undefined }, '/objects'), /二选一/)
+	assert.deepEqual(ctx.calls, [], '互斥校验在碰 I/O 之前')
+})
+
+test('transcribe：喂流取正文（只留 text 块并去空白），chunks 逐个进 assembler', async () => {
+	const assembler = 假Assembler([{ type: 'text', text: '  图里有三行字  ' }, { type: 'reasoning', text: '思考不算正文' }])
+	const chunks = [{ type: 'text-delta', index: 0, text: 'a' }, { type: 'text-delta', index: 0, text: 'b' }]
+	assert.equal(await transcribe({ stream: 假流(chunks), assembler }), '图里有三行字')
+	assert.deepEqual(assembler.pushed, chunks)
+})
+
+test('transcribe：终态出错与空正文都抛（空转述比失败更难被调用方察觉）', async () => {
+	await assert.rejects(() => transcribe({
+		stream: 假流([]),
+		assembler: 假Assembler([], { kind: 'error', failure: { message: 'upstream 503' } }),
+	}), /upstream 503/)
+	await assert.rejects(() => transcribe({
+		stream: 假流([]),
+		assembler: 假Assembler([], { kind: 'max-tokens' }),
+	}), /truncated/)
+	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([]) }), /空正文/)
+	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([{ type: 'reasoning', text: '只有思考' }]) }), /空正文/)
 })
