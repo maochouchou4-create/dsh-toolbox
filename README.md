@@ -12,10 +12,12 @@
 
 ## memory 的索引与条目契约
 
-索引块每轮上下文都装一份，所以它有三重预算：层内索引的 **行数与字符数**、单条派生行的
-**字符数**（数值以 `lib/memory/core.js` 的常量为准，改档后跑 `npm run check:memory` 看
-它打印的当前定档与实测，别照抄本文档里的数字）。超预算时注入串带显式截断标注
-（不静默丢），`memory` 工具的 `lint` 与 `npm run check:memory` 逐条报病灶。
+索引块每轮上下文都装一份，所以它有四重预算，全在 `lib/memory/core.js` 声明：层内索引的
+**行数与字符数**、单条派生行的**字符数**，以及**注入块整块的字符数**（含写侧纪律
+`WRITING.md`）。前三重由注入时逐层施加，越线截断并带显式标注（不静默丢）；整块这一重
+**运行期不截**——截整块会连写侧纪律一起截掉，规则被静默丢掉比超预算更难查，所以它只判红，
+由 `npm run check:memory` 离线做。数值别照抄本文档里的，那条命令会打印当前定档与实测。
+`memory` 工具的 `lint` 与它逐条报病灶。
 
 索引不是数据：条目文件是唯一事实源，注入时按文件名排序扫目录、用
 `frontmatter.title`＋`description` 重建每一行（读侧不做跨调用缓存，故同长度改写也
@@ -81,9 +83,15 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 
 ## 验收口径
 
-- 单测：`npm test`（node --test；零宿主依赖的纯函数层＋接线静态解析）。
-- 记忆注入块：`npm run check:memory`（扫两层目录，按注入侧同一份判定验预算与
-  frontmatter 契约；接参 `[记忆根] [工作区 cwd]`）。
+- 单测：`npm test`（node --test；三类面：零宿主依赖层（纯函数直测＋node 适配器的
+  真 I/O，跑在临时目录上）、端口宿主适配器的**替身**（`ctx.fs` 替身，不是宿主
+  通道）、接线静态解析）。
+- 记忆注入块：`npm run check:memory -- <记忆根> <工作区 cwd>`——**必须带参数**：不带参数
+  会在仓内空跑（工作层按 `process.cwd()` 算出 `home-nvse-code-repos-dsh-toolbox` 这个不
+  存在的桶，该层在**注入块装配**里被省略，于是整块定档只量到习惯层——逐层预算那一项仍
+  照扫存在的层，整块却照印「全部达标」）。本机正确形态：
+  `npm run check:memory -- /home/nvse/.dsh/memory /home/nvse/code`
+  （扫两层目录，按注入侧同一份判定验预算与 frontmatter 契约；接参 `[记忆根] [工作区 cwd]`）。
 - 识图质量端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，
   答案与图吻合才留——不测易分辨的图，测「像素真喂进去了」。
 
@@ -93,7 +101,7 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，configShape 并集
 lib/memory/             记忆工具：index.js 装配 + core.js/write.js/frontmatter.js 纯函数 + fs-port.js 端口
 lib/see-image/          识图工具：index.js 装配 + vision.js 纯函数（嗅探/终态映射）
-test/                   node:test 单测（纯函数直测 + 接线静态解析）
+test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋接线静态解析）
 scripts/                check-memory-index.mjs：注入块离线自检（不依赖宿主启动）
 ```
 
