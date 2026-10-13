@@ -28,17 +28,14 @@ import { listLayerDirs } from '../lib/memory/layers.js'
 import { isNonBlankString } from '../lib/value.js'
 
 /**
- * 「给了」的定义：给了一个非空白的实参。判据本身问 lib/value.js 那份跨族原语——本文件要
- * 与 dsh-memory 的 Config 回退判同一件事，两者各抄一份时「算不算给了」就在脚本与插件之间分叉。
+ * 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。
  *
- * 判解析后的值而不是数位置参数个数：空串与纯空白经 `||` 回落后与缺参同形，可它们仍是调用方
- * **写下来**的形参，判据必须看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了
- * 两个空串，脚本却拿 process.cwd() 去算桶，然后拿只量到习惯层的块印「全部达标」——那是
- * 「检查没跑」却报成功的形态。记忆根同理：空串回落成默认根，而不是把当前目录当成记忆根。
+ * 「给了」问 lib/value.js 那份跨族原语——本文件要与 dsh-memory 的 Config 回退判同一件事，
+ * 两者各抄一份时「算不算给了」就在脚本与插件之间分叉。判的是解析后的值而不是数位置参数
+ * 个数：空串与纯空白经 `||` 回落后与缺参同形，可它们仍是调用方**写下来**的形参，判据必须
+ * 看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了两个空串，脚本却拿
+ * process.cwd() 去算桶，然后拿只量到习惯层的块印「全部达标」，那是「检查没跑」却报成功。
  */
-export const givenArg = isNonBlankString
-
-/** 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。 */
 export function readOptions(argv = process.argv, env = process.env) {
 	// 用 `||` 不用 `??`：显式传空串（想只跑默认值）不该被当成「记忆根就是当前目录」，
 	// 那会让脚本在一片空地上报「全部达标」
@@ -47,8 +44,8 @@ export function readOptions(argv = process.argv, env = process.env) {
 	return {
 		memoryRoot,
 		cwd,
-		rootGiven: givenArg(argv[2]),
-		cwdGiven: givenArg(argv[3]),
+		rootGiven: isNonBlankString(argv[2]),
+		cwdGiven: isNonBlankString(argv[3]),
 	}
 }
 
