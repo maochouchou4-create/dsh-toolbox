@@ -116,7 +116,16 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	assert.ok(match, 'index.js 须导出 inject 数组')
 	const declared = new Set(SERVICES.filter((service) => match[1].includes(`'${service}'`)))
 
-	const used = new Set([...consumedServices(glue), ...consumedServices(readLib('memory/index.js')), ...consumedServices(readLib('see-image/index.js'))])
+	// 扫描面＝实际消费 ctx.* 的文件清单，逐个点名而不是靠目录扫：ctx 消费一旦从被扫的
+	// 文件挪到没被扫的文件（如活目录解析收进 lib/working-dir.js、或收口后落到
+	// see-image/vision.js），DOA 要到运行期才炸，而这条用例正是提前拦住它的那道
+	const used = new Set([
+		...consumedServices(glue),
+		...consumedServices(readLib('memory/index.js')),
+		...consumedServices(readLib('see-image/index.js')),
+		...consumedServices(readLib('see-image/vision.js')),
+		...consumedServices(readLib('working-dir.js')),
+	])
 	for (const service of used) {
 		// 只对注入面服务做双向对齐：ctx.get('sandboxPolicy') 这类按需取用不在 inject 面
 		// 是设计，对齐它会把设计当噪音报错
