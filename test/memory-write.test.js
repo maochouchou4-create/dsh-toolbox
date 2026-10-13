@@ -18,6 +18,7 @@ import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, groupTitlesByTitle, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
 import { editEntry, upsertEntry } from '../lib/memory/write.js'
+import { entry } from './helpers.js'
 
 let base
 const port = createNodeFsPort()
@@ -30,9 +31,6 @@ before(() => {
 after(() => {
 	rmSync(base, { recursive: true, force: true })
 })
-
-/** 条目正文夹具：frontmatter 两键＋正文。 */
-const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
 /* ===================== frontmatter 契约 ===================== */
 

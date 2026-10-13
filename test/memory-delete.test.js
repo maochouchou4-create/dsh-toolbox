@@ -15,6 +15,7 @@ import { composeMemory } from '../lib/memory/assemble.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import { upsertEntry } from '../lib/memory/write.js'
+import { entry } from './helpers.js'
 
 let base
 const port = createNodeFsPort()
@@ -27,9 +28,6 @@ before(() => {
 after(() => {
 	rmSync(base, { recursive: true, force: true })
 })
-
-/** 条目正文夹具：frontmatter 两键＋正文。 */
-const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
 /** 收错误而不是让它抛出：断言要比 name 与 code，得先拿到那个对象。 */
 const 捕获 = async (fn) => {

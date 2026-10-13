@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING } from '../lib/memory/core.js'
 import { lintMemory } from '../lib/memory/lint.js'
+import { entry } from './helpers.js'
 
 let base
 
@@ -22,9 +23,6 @@ before(() => {
 after(() => {
 	rmSync(base, { recursive: true, force: true })
 })
-
-/** 条目正文夹具：frontmatter 两键＋正文。 */
-const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
 test('lintMemory：frontmatter 契约/超长/日期戳/死链/超预算全覆盖，干净夹具 ok', () => {
 	const root = join(base, 'lint-case')

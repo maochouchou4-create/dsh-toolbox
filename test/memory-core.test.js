@@ -11,6 +11,7 @@ import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
+import { entry } from './helpers.js'
 
 let base
 let memoryRoot
@@ -24,9 +25,6 @@ before(() => {
 after(() => {
 	rmSync(base, { recursive: true, force: true })
 })
-
-/** 条目夹具：frontmatter 两键＋正文。 */
-const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
 /** 独立根目录：建 habit 层，可选建工作桶；返回根与各目录。 */
 const fixture = (name) => {
