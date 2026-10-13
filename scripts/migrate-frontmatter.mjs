@@ -35,7 +35,7 @@
 import process from 'node:process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import { DEFAULT_MEMORY_ROOT, describeError, expandHome, resolveRoot } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory/core.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import {
 	assertEntryFrontmatter,
@@ -46,6 +46,7 @@ import {
 	stemOf,
 } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
+import { expandHome } from '../lib/paths.js'
 
 const args = process.argv.slice(2)
 const apply = args.includes('--apply')
