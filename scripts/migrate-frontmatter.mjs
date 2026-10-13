@@ -35,7 +35,7 @@
 import process from 'node:process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory/core.js'
+import { describeError, resolveRoot } from '../lib/memory/core.js'
 import { createNodeFsPort } from '../lib/memory/fs-port.js'
 import {
 	assertEntryFrontmatter,
@@ -46,11 +46,13 @@ import {
 	stemOf,
 } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
-import { expandHome } from '../lib/paths.js'
 
 const args = process.argv.slice(2)
 const apply = args.includes('--apply')
-const memoryRoot = expandHome(args.find((arg) => !arg.startsWith('--')) ?? DEFAULT_MEMORY_ROOT)
+// 记忆根实参原样留着，缺省兜底与绝对化交给 resolveRoot（core.js 归一的唯一出口）。此前这里
+// 自己 expandHome 一次又自己判一次缺省，是半归一：只展开 ~、不解析成绝对路径，而「空串按
+// 没给算」那时用的是 ?? 而不是 nonEmptyOrDefault——两套口径就差在空串上
+const rawMemoryRoot = args.find((arg) => !arg.startsWith('--'))
 
 /** 是否已合规（幂等判据就走契约本身，不另定一份「像不像合规」）。 */
 function isCompliant(text, file) {
@@ -118,7 +120,7 @@ function plan(root) {
 	for (const { kind, dir } of listLayerDirs(root)) {
 		for (const name of readdirSync(dir).sort()) {
 			const path = join(dir, name)
-			const rel = relative(memoryRoot, path)
+			const rel = relative(root.root, path)
 			if (isRetiredIndexFile(name)) {
 				changes.push({ layer: kind, rel, path, kindOfChange: '删除', text: null })
 				continue
@@ -167,8 +169,8 @@ const backupStamp = () => new Date().toISOString().replace(/[:.]/g, '-')
  * 真正的风险只有 `workspaces/` 那一支——备份目录若落进 `workspaces/<时间戳>/`，里面装的
  * .md 会被当成一层扫出来（幽灵层），而落在记忆根顶层则是安全的。
  */
-function backup(changes) {
-	const dir = join(dirname(memoryRoot), 'memory-migrate-backups', backupStamp())
+function backup(root, changes) {
+	const dir = join(dirname(root.root), 'memory-migrate-backups', backupStamp())
 	for (const change of changes) {
 		const target = join(dir, change.rel)
 		mkdirSync(dirname(target), { recursive: true })
@@ -193,7 +195,7 @@ async function applyChanges(changes) {
 }
 
 async function main() {
-	const root = resolveRoot(memoryRoot)
+	const root = resolveRoot(rawMemoryRoot)
 	const layers = listLayerDirs(root)
 	// 记忆根没接线与「层里没有要迁的东西」是两件事，前者印「无可迁移」并以 0 退出，
 	// 等于告诉人这一层已经合规，而事实是根本没读到任何层
@@ -208,7 +210,7 @@ async function main() {
 		return
 	}
 	const { changes, skipped, compliantEntries, crlfFiles } = plan(root)
-	console.log(`记忆根：${memoryRoot}`)
+	console.log(`记忆根：${root.root}`)
 	console.log(`模式：${apply ? '--apply（落盘）' : 'dry-run（只报不做，加 --apply 才落盘）'}`)
 	console.log(`已合规条目 ${compliantEntries} 条（不动、不备份、不报）`)
 	if (changes.length === 0) {
@@ -234,7 +236,7 @@ async function main() {
 	}
 	// 备份目录在动第一个文件之前就印：中途 ENOSPC/EACCES 时，人既要知道东西在哪，
 	// 也要知道已经动了多少——这两样缺一样就只能靠猜
-	const backupDir = backup(changes)
+	const backupDir = backup(root, changes)
 	console.log(`备份目录（改写前已复制原文件）：${backupDir}`)
 	let done = 0
 	try {
