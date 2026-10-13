@@ -90,6 +90,10 @@ test('lintMemory：派生索引行超长与 description 日期戳各报一项（
 	assert.equal(report.ok, false)
 	assert.ok(report.warnings.some((w) => w.includes('超') && w.includes(String(INDEX_LINE_CHAR_BUDGET)) && w.includes('long.md')))
 	assert.ok(report.warnings.some((w) => w.includes('日期戳') && w.includes('dated.md')))
+	// 文案与写侧共用一份，体检侧拿到的必须带写侧那两段引导语（体检是写侧的离线镜像，
+	// 镜像不得比本体弱）：日期戳指向纪律出处，超长给收敛方向
+	assert.ok(report.warnings.some((w) => w.includes('日期戳') && w.includes('WRITING.md')), '日期戳告警须指向写侧纪律出处')
+	assert.ok(report.warnings.some((w) => w.includes('收敛 description')), '派生行超长告警须给收敛方向')
 })
 
 test('lintMemory：缺习惯层接线/日期戳/失控保护/无桶提示', () => {

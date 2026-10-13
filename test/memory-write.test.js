@@ -150,6 +150,9 @@ test('upsertEntry：日期戳与派生行超长进 warnings（提示不拦截）
 	assert.equal(r.warnings.length, 2)
 	assert.ok(r.warnings.some((w) => w.includes('日期戳')))
 	assert.ok(r.warnings.some((w) => w.includes('超') && w.includes(String(INDEX_LINE_CHAR_BUDGET))))
+	// 同一份文案在写侧也钉住：判定与文案抽出去之后，两侧都不得再各自弱化
+	assert.ok(r.warnings.some((w) => w.includes('日期戳') && w.includes('WRITING.md')), '日期戳告警须指向写侧纪律出处')
+	assert.ok(r.warnings.some((w) => w.includes('收敛 description')), '派生行超长告警须给收敛方向')
 	assert.equal(existsSync(join(r.dir, 'dated.md')), true, '风格告警不拦落盘')
 })
 
