@@ -11,6 +11,7 @@ import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
+import { HEAD_CHUNK_BYTES } from '../lib/memory/head-read.js'
 import { entry } from './helpers.js'
 
 let base
@@ -223,23 +224,36 @@ test('composeMemory：memoryRoot 支持 ~ 展开（真造目录，不靠「不�
 	}
 })
 
-test('composeMemory：条目头跨 2KB 分块边界且边界劈开三字节汉字，派生行仍逐字正确', () => {
+test('composeMemory：条目头跨一个分块边界且边界劈开三字节汉字，派生行仍逐字正确', () => {
 	const { root, profile } = fixture('compose-head-chunk')
-	// 围栏要落在第二个 2KB 块里（头长到 2KB 开外），并把一个三字节汉字压在块边界上：
-	// 前段用 ASCII 铺到 2046 字节，那之后第一个字符就是那个字，占 2046–2048 号字节。
-	// 两件事同时被考——跨块累积，以及末尾那半个字不是坏字节
+	// 围栏要落在第二块里（头长到块边界开外），并把一个三字节汉字压在块边界上：前段用 ASCII
+	// 铺到边界前 2 字节，那之后第一个字符就是那个字，占 [边界-2, 边界+1) 号字节。偏移从
+	// HEAD_CHUNK_BYTES 算而不是写死——写死的话块大小一改夹具整个落进同一块，用例照样绿
+	const cut = HEAD_CHUNK_BYTES
 	const prefix = '---\ntitle: 长条目\ndescription: '
-	const description = `${'x'.repeat(2046 - Buffer.byteLength(prefix, 'utf8'))}${'汉'.repeat(64)}`
+	const description = `${'x'.repeat(cut - 2 - Buffer.byteLength(prefix, 'utf8'))}${'汉'.repeat(64)}`
 	writeFileSync(join(profile, 'long.md'), entry('长条目', description), 'utf8')
 	const bytes = readFileSync(join(profile, 'long.md'))
-	assert.deepEqual(bytes.subarray(2046, 2049), Buffer.from('汉', 'utf8'), '夹具自证：那个字确实被 2048 字节的块边界劈开（否则这条只是普通用例）')
-	assert.ok(bytes.length > 2048, '头部确实跨过第一块')
+	assert.deepEqual(bytes.subarray(cut - 2, cut + 1), Buffer.from('汉', 'utf8'), '夹具自证：那个字确实被块边界劈开（否则这条只是普通用例）')
+	assert.ok(bytes.length > cut, '头部确实跨过第一块')
 	const issues = []
 	const text = composeMemory({ memoryRoot: root, onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
 	// 头读若只取一块就收工，围栏在窗外，解析会判不合规并报 entry-frontmatter
 	assert.deepEqual(issues, [], `跨块头读出问题会报 issue，实际 ${JSON.stringify(issues)}`)
 	assert.ok(text.includes(`- [长条目](long.md) — ${description}`), '派生行须与 description 逐字相同')
 	assert.ok(!text.includes('�'), '半个字不许变成替换符')
+})
+
+test('composeMemory：没传 onIssue 且纪律块读不动 → 不抛、纪律块静默缺席', () => {
+	const { root, profile } = fixture('compose-writing-no-reporter')
+	// 与上一条同一格支路、另一个前提：调用方压根没给上报口（胶水层不传、脚本传）。缺省兜底
+	// 就守在这一格——删掉它这里就是 TypeError: report is not a function，而注入块连同索引
+	// 一起当场炸掉。判据是「不抛」，不是「报出了什么」：没上报口时按定义报不出去。
+	mkdirSync(join(profile, 'WRITING.md'), { recursive: true })
+	writeFileSync(join(profile, 'topic.md'), entry('好条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	assert.ok(!text.includes('## 记忆书写'), '读不动的纪律块不进注入块')
+	assert.ok(text.includes('- [好条目](topic.md) — 触发词'), '上报口缺席不得牵连索引块——这一格就是兜底存在的理由')
 })
 
 test('composeMemory：写侧纪律块读不动 → onIssue 报 read-error、纪律块缺席但不牵连索引块', () => {
