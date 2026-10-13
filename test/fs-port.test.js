@@ -123,10 +123,34 @@ test('createNodeFsPort：listDir 映射 file/directory/other 三种 type，目�
 	const entries = await port.listDir(await port.resolve(dir))
 	assert.deepEqual(
 		entries.sort((a, b) => a.name.localeCompare(b.name)),
-		[{ name: 'entry.md', type: 'file' }, { name: 'link.md', type: 'other' }, { name: 'sub', type: 'directory' }],
+		[{ name: 'entry.md', type: 'file' }, { name: 'link.md', type: 'file' }, { name: 'sub', type: 'directory' }],
 		'三种 type 都要映出来：消费方靠 type 滤掉目录，少映一种就把它当条目读',
 	)
 	assert.deepEqual(await port.listDir(await port.resolve(join(base, 'no-such-dir'))), [], '缺失目录按无子项归一，与 stat 的 absent 同口径')
+})
+
+test('createNodeFsPort：listDir 与 stat 对同一个路径给同一个 type（替身与宿主同口径）', async () => {
+	// 替身与宿主同口径的可验证形态是「替身自己内部不许有第二种判法」：stat 走 probe()
+	// 跟随软链，listDir 若拿 readdir 的 Dirent 判（lstat 口径）就与它分叉，于是同一个路径在
+	// 端口内部会得到两个答案，写侧既可能「stat 说它是文件、扫层时又说不是」而在无报错处
+	// 跳过它，也可能反过来。宿主那份 listDir 的 type 与它的 stat 同源，故这里逐个对齐。
+	const port = createNodeFsPort()
+	const dir = join(base, 'listdir-follow')
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(join(dir, 'plain.md'), 'x\n', 'utf8')
+	mkdirSync(join(dir, 'sub'), { recursive: true })
+	symlinkSync(join(dir, 'plain.md'), join(dir, 'link-file.md'))
+	symlinkSync(dir, join(dir, 'link-dir.md'))
+	symlinkSync(join(dir, 'no-such-target.md'), join(dir, 'dangling.md'))
+	const listed = Object.fromEntries((await port.listDir(await port.resolve(dir))).map((e) => [e.name, e.type]))
+	for (const name of ['plain.md', 'link-file.md', 'link-dir.md', 'sub']) {
+		const viaStat = await port.stat(await port.resolve(join(dir, name)))
+		assert.equal(listed[name], viaStat.type, `listDir 与 stat 对 ${name} 必须同口径`)
+	}
+	assert.equal(listed['link-file.md'], 'file', '软链到文件就是文件（跟随语义，宿主那份也是这么判的）')
+	assert.equal(listed['link-dir.md'], 'directory', '软链到目录就是目录')
+	assert.equal(listed['dangling.md'], 'other', '悬空软链没有可跟随的目标，按 other 交出去（不抛、也不谎报是文件）')
+	assert.deepEqual(await port.stat(await port.resolve(join(dir, 'dangling.md'))), { kind: 'absent' }, '同一个悬空软链在 stat 侧是不存在')
 })
 
 test('versionOf：五段纳秒级版本串（少一段守卫就漏），且与端口 stat 同一算法', async () => {
