@@ -239,11 +239,28 @@ test('createHostFsPort：writeText 第 4 位是同一个 AbortSignal、第 5 位
 	assert.equal(call.args[2], intent, '写入守卫按位透传，不得被适配器吞掉')
 })
 
-test('createHostFsPort：策略按会话解析（agent 缺席交后端默认解析），签名对不上就在构造期拒', () => {
-	const policy = { resolve: (request) => ({ mode: 'workspace-write', sessionId: request?.session?.id ?? 'none' }) }
-	const agent = { session: { id: 'session-7' } }
-	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent }).assertWritable(), undefined)
-	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent: undefined }).assertWritable(), undefined, '无会话上下文＝resolve({})')
+test('createHostFsPort：策略按会话解析——policy 对某会话返回只读，带 agent 即拒、无 agent 放行', () => {
+	// 「按会话解析」的可验证形态是策略**看会话 id 决定回什么**：只按「有没有 agent」分支的
+	// 实现（漏传 agent.session）在这条断言下同样绿，因为带 agent 的那一支恰好命中只读会话。
+	// 故只读与否由会话 id 决定，agent 缺席时 resolve 收到的是 {} ——同一个 policy、同一个
+	// 构造器，两种入参给出两种答案。
+	const readOnlySession = 'session-ro'
+	const policy = {
+		resolve: (request) =>
+			request?.session?.id === readOnlySession
+				? { mode: 'read-only', workspaceRoot: '/w', sessionId: readOnlySession }
+				: { mode: 'workspace-write', workspaceRoot: '/w', sessionId: request?.session?.id ?? 'none' },
+	}
+	assert.throws(
+		() => createHostFsPort({ fs: makeHostFsStub(), policy, agent: { session: { id: readOnlySession } } }).assertWritable(),
+		(error) => {
+			assert.equal(error.code, 'FS_SANDBOX_DENIED', '解出只读即拒写，且 code 落在宿主词表内')
+			return true
+		},
+		'agent.session 必须透进 policy.resolve：漏传时只读会话永远判不出来，越界写入将得逞',
+	)
+	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent: { session: { id: 'session-rw' } } }).assertWritable(), undefined, '非只读会话照常放行')
+	assert.equal(createHostFsPort({ fs: makeHostFsStub(), policy, agent: undefined }).assertWritable(), undefined, '无会话上下文＝resolve({})，不命中只读会话即放行')
 	// 形状齐备、只是 writeText 少一位形参（宿主本地后端那一版）：策略会被静默丢弃，
 	// 越界写入将得逞——这种错必须在构造期炸，不能等第一次记忆写入。替身补齐 listDir 与
 	// readByteRange 是为了过形状那道关、单独考语义门（缺方法是另一种根因，另有用例）

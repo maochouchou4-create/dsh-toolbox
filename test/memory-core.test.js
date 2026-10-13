@@ -8,7 +8,7 @@ import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
 
@@ -188,12 +188,41 @@ test('composeMemory：条目名被目录占用 → onIssue 报 read-error、好�
 	assert.ok(text.includes('- [好条目](good.md) — 触发词'), '邻近病态条目不得牵连好条目')
 })
 
-test('composeMemory：onIssue 缺省时不抛（旁路诊断可选）', () => {
-	assert.doesNotThrow(() => composeMemory({ memoryRoot: join(base, 'compose-no-onissue'), cwd: '/home/nvse/bare' }))
+test('composeMemory：onIssue 缺省时不抛（旁路诊断可选），真有 issue 的语料照样装配', () => {
+	const { root, profile } = fixture('compose-no-onissue')
+	// 语料要真的造出会报 issue 的东西：根不存在时全程零 issue，「不抛」证明不了缺省兜底，
+	// 倒地把兜底删掉（report 回落成 undefined）这条照样绿
+	writeFileSync(join(profile, 'bare.md'), '# 光有标题\n\n没有 frontmatter\n', 'utf8')
+	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
+	let text = ''
+	assert.doesNotThrow(() => {
+		text = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	}, 'onIssue 缺省时 issue 无处可去，丢弃即可，不许抛')
+	// 那条 issue 的归属没变：不合规条目照样被省略、邻近好条目照样进索引
+	assert.ok(!text.includes('bare.md'), '缺 frontmatter 的条目不进索引')
+	assert.ok(text.includes('- [好条目](good.md) — 触发词'), '无消费者的 issue 不得牵连好条目')
 })
 
-test('composeMemory：memoryRoot 支持 ~ 展开', () => {
-	assert.equal(composeMemory({ memoryRoot: '~/.dsh-memory-test-nonexistent' }), '')
+test('composeMemory：memoryRoot 支持 ~ 展开（真造目录，不靠「不存在的根返回空串」蒙过去）', () => {
+	// 目录造在 homedir 下：~ 展开与普通绝对路径处理在此同形，只有真有一个目录在场，
+	// 断言才证明得了「根被展开到了 homedir」，而不是「这个根不存在，于是返回空串」
+	const absolute = join(homedir(), `.dsh-memory-tilde-test-${process.pid}`)
+	const asTilde = `~/${basename(absolute)}`
+	try {
+		mkdirSync(join(absolute, 'profile'), { recursive: true })
+		writeFileSync(join(absolute, 'profile', 'topic.md'), entry('展开条目', '触发词'), 'utf8')
+		// 归一的三个产物路径同源：~ 展开后拼出来的 profile/workspaces 都在那棵真实的树下
+		assert.deepEqual(resolveRoot(asTilde), {
+			root: absolute,
+			profile: join(absolute, 'profile'),
+			workspaces: join(absolute, 'workspaces'),
+		}, '~ 要展开到 homedir，且三个产物路径同源')
+		const text = composeMemory({ memoryRoot: asTilde })
+		assert.ok(text.includes(`基目录：${join(absolute, 'profile')}`), '注入块里的层目录须是展开后的绝对路径')
+		assert.ok(text.includes('- [展开条目](topic.md) — 触发词'), '展开后的根真的读出了条目（不展开就落在 cwd 下，读不到）')
+	} finally {
+		rmSync(absolute, { recursive: true, force: true })
+	}
 })
 
 test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、该条目不进索引', () => {
