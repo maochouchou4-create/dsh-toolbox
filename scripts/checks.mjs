@@ -178,7 +178,7 @@ export const CHECKS = [
 	},
 	{
 		id: 'layer-title-dup',
-		label: '层内没有 title 重名（撞名的两行在注入块里按 title 分不出谁是谁）',
+		label: '层内没有 title 重名（撞名的各行在注入块里按 title 分不出谁是谁）',
 		guard: '按 frontmatter 的 title 字段分组，同组 >1 即判红；title 判不了的条目不占坑',
 		claims: ['layer-title-dup'],
 		// 文案不再自己渲染：detail 出自 frontmatter.js 那份共享渲染点，与体检 warning、
