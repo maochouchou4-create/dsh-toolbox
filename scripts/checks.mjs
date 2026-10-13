@@ -25,15 +25,18 @@ import {
 } from '../lib/memory/core.js'
 import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
+import { isNonBlankString } from '../lib/value.js'
 
 /**
- * 「给了」的定义：给了一个非空白的实参。判解析后的值而不是数位置参数个数——空串与纯空白
- * 经 `||` 回落后与缺参同形，可它们仍是调用方**写下来**的形参，判据必须看得见这件事：
- * `node scripts/check-memory-index.mjs "" ""` 收了两个空串，脚本却拿 process.cwd() 去算桶，
- * 然后拿只量到习惯层的块印「全部达标」——那是「检查没跑」却报成功的形态。
- * 记忆根同理：空串回落成默认根，而不是把当前目录当成记忆根。
+ * 「给了」的定义：给了一个非空白的实参。判据本身问 lib/value.js 那份跨族原语——本文件要
+ * 与 dsh-memory 的 Config 回退判同一件事，两者各抄一份时「算不算给了」就在脚本与插件之间分叉。
+ *
+ * 判解析后的值而不是数位置参数个数：空串与纯空白经 `||` 回落后与缺参同形，可它们仍是调用方
+ * **写下来**的形参，判据必须看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了
+ * 两个空串，脚本却拿 process.cwd() 去算桶，然后拿只量到习惯层的块印「全部达标」——那是
+ * 「检查没跑」却报成功的形态。记忆根同理：空串回落成默认根，而不是把当前目录当成记忆根。
  */
-export const givenArg = (value) => typeof value === 'string' && value.trim().length > 0
+export const givenArg = isNonBlankString
 
 /** 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。 */
 export function readOptions(argv = process.argv, env = process.env) {
@@ -161,8 +164,8 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-readable',
-		label: '条目、层目录与写侧纪律 WRITING.md 读得动（读失败即失去判定覆盖面，不许静默）',
-		guard: '扫描期 read-error issue（层目录、WRITING.md 与注入块装配三路都收）',
+		label: `条目、层目录与写侧纪律 ${WRITING_FILE} 读得动（读失败即失去判定覆盖面，不许静默）`,
+		guard: `扫描期 read-error issue（层目录、${WRITING_FILE} 与注入块装配三路都收）`,
 		claims: ['read-error'],
 		run: (site) => site.issues.filter((item) => item.issue === 'read-error').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
@@ -249,7 +252,7 @@ export function renderReport(site) {
 	push(
 		`预算：层内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐层），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符`,
 	)
-	push(`其中写侧纪律 WRITING.md 占 ${site.rulesChars} 字符`)
+	push(`其中写侧纪律 ${WRITING_FILE} 占 ${site.rulesChars} 字符`)
 	push()
 	if (site.block.length === 0) push('（无内容：记忆根未接线，或该工作区尚无桶）')
 
