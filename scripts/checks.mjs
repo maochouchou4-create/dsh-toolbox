@@ -23,7 +23,7 @@ import {
 	resolveRoot,
 	workspaceSlug,
 } from '../lib/memory/core.js'
-import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
+import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, groupTitlesByTitle, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
 import { isNonBlankString } from '../lib/value.js'
 
@@ -63,7 +63,10 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 		// 一次 readdir 同时收派生行与文件名两样东西：清点与派生出自同一层目录，
 		// 各读一次就等于赌两次读看到的是同一个目录状态
 		const names = readdirSync(dir)
-		const text = buildIndexBlock(dir, record(kind))
+		// 同理：条目头由这一次扫描顺手带出来（onEntry），不自检再扫一遍盘——两次读分属
+		// 两个时刻，目录在这中间变了，两边看到的就不是同一层
+		const heads = []
+		const text = buildIndexBlock(dir, record(kind), (name, head) => heads.push({ name, text: head }))
 		const lines = text === null ? [] : text.split('\n')
 		return {
 			kind,
@@ -74,6 +77,7 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 			entryFiles: names.filter(isEntryName).length,
 			overLine: lines.filter((line) => line.length > INDEX_LINE_CHAR_BUDGET),
 			retired: names.filter(isRetiredIndexFile),
+			heads,
 		}
 	})
 	// 写侧纪律的字符数读不到即记一条 issue：静默归 0 会让整块变小、block-chars 随之达标，
@@ -174,6 +178,20 @@ export const CHECKS = [
 			site.layers
 				.filter((layer) => layer.retired.length > 0)
 				.map((layer) => `${layer.kind}：${layer.retired.map((name) => join(layer.dir, name)).join('、')} 是已退役的索引文件（索引由条目 frontmatter 现场派生，不再读它）——删掉它`),
+	},
+	{
+		id: 'layer-title-dup',
+		label: '层内没有 title 重名（撞名的两行在注入块里按 title 分不出谁是谁）',
+		guard: '按 frontmatter 的 title 字段分组，同组 >1 即判红；title 判不了的条目不占坑',
+		run: (site) =>
+			site.layers.flatMap((layer) => {
+				const { byTitle, unparsable } = groupTitlesByTitle(layer.heads)
+				// 覆盖不到的那几条要一并说出来：只报撞名的两条，读者会以为结论覆盖了整层
+				const coverage = unparsable.length > 0 ? `；本层另有 ${unparsable.length} 条 title 判不了，本结论只覆盖其余条目` : ''
+				return [...byTitle]
+					.filter(([, names]) => names.length > 1)
+					.map(([title, names]) => `${layer.kind}：title「${title}」撞在 ${names.join('、')}（改 frontmatter 的 title，不要 delete 那一条——两条各带正文${coverage}）`)
+			}),
 	},
 	{
 		id: 'block-chars',

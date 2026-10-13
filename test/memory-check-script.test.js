@@ -200,6 +200,44 @@ test('层内退役索引文件残留：只由那一项判红（大小写不敏�
 	assert.ok(stdout.includes('MEMORY.md'), stdout)
 })
 
+test('层内 title 重名：只由那一项判红，且跨层同名不算（撞名的成因是合流，脚本得能看见）', () => {
+	const root = join(base, 'title-dup')
+	mkdirSync(root, { recursive: true })
+	const cwd = '/盘/辛-project'
+	// 同层两条共用一个 title：文件名各不相同（派生行以 title 为准），注入块里那两行照样分不出谁是谁
+	seedLayer(root, workspaceSlug(cwd), [
+		deriveIndexLine({ title: '同题条目', description: '触发词甲', file: 'a.md' }),
+		deriveIndexLine({ title: '同题条目', description: '触发词乙', file: 'b.md' }),
+		deriveIndexLine({ title: '独题条目', description: '触发词丙', file: 'c.md' }),
+	])
+	// 习惯层也放一条同名：两层各一行都看得清，跨层不构成不可区分
+	seedLayer(root, 'habit', [deriveIndexLine({ title: '同题条目', description: '习惯层触发词', file: 'h.md' })])
+	const { code, stdout } = runScript([root, cwd])
+	assert.equal(code, 1, `层内重名须以 1 退出：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['layer-title-dup'], `只该由这一项判红：\n${stdout}`)
+	assert.ok(stdout.includes('同题条目') && stdout.includes('topic-0.md') && stdout.includes('topic-1.md'), stdout)
+	// 处置指向 edit 而不是 delete：报出来的两条是各自带正文的现存条目，照着删丢的是内容
+	assert.ok(stdout.includes('不要 delete'), stdout)
+	assert.ok(!stdout.includes('独题条目'), `未撞名的条目不牵进来：\n${stdout}`)
+})
+
+test('层内重名结论的覆盖面：title 判不了的条目一并说出来，别让读者以为结论覆盖了整层', () => {
+	const root = join(base, 'title-dup-coverage')
+	mkdirSync(root, { recursive: true })
+	const cwd = '/盘/壬-project'
+	seedLayer(root, workspaceSlug(cwd), [
+		deriveIndexLine({ title: '同题条目', description: '触发词甲', file: 'a.md' }),
+		deriveIndexLine({ title: '同题条目', description: '触发词乙', file: 'b.md' }),
+	])
+	// 第三键＝最贴近真语料的坏形态：它占坑不得，却让这一层的 title 比对少了一条覆盖面
+	seedRaw(root, workspaceSlug(cwd), 'broken.md', '---\ntitle: A\nname: 多余键\ndescription: B\n---\n\n正文。\n')
+	const { code, stdout } = runScript([root, cwd])
+	assert.equal(code, 1, `层内重名须以 1 退出：\n${stdout}`)
+	assert.ok(violationIds(stdout).includes('layer-title-dup'), stdout)
+	assert.ok(stdout.includes('1 条 title 判不了'), `覆盖面缺口要一并说出来：\n${stdout}`)
+	assert.ok(violationIds(stdout).includes('entry-frontmatter'), stdout)
+})
+
 test('没人认领的 issue kind：兜底项把它报出来，而不是让它随报告消失', () => {
 	// 这一条没法用子进程造：issue kind 由扫描器（assemble.js）发出，测试不该为它改扫描器。
 	// 直接拿现场片段喂那一项的 run，钉的是「未认领即判红」这个判定本身
