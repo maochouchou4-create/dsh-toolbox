@@ -48,6 +48,13 @@ test('parseAttachmentId：收 sha256: 前缀／裸前缀／完整 64 位，归�
 	assert.equal(parseAttachmentId(HEX64), HEX64)
 })
 
+test('parseAttachmentId：sha256:／SHA256:／裸 hex 三种写法等价（同一标识不该有两种结果）', () => {
+	assert.equal(parseAttachmentId('SHA256:053eb17e'), '053eb17e', '大写前缀同样剥掉')
+	assert.equal(parseAttachmentId('SHA256:053EB17E'), parseAttachmentId('sha256:053eb17e'))
+	assert.equal(parseAttachmentId('053EB17E'), parseAttachmentId('sha256:053eb17e'))
+	assert.equal(parseAttachmentId('SHA256:053eb17e'), parseAttachmentId('053eb17e'))
+})
+
 test('parseAttachmentId：过短／非法字符／空标识显式拒绝', () => {
 	assert.throws(() => parseAttachmentId('sha256:053eb1'), /无效的附件标识/)
 	assert.throws(() => parseAttachmentId('sha256:zzzzzzzz'), /无效的附件标识/)
