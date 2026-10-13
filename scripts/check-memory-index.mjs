@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * 记忆注入块离线自检（npm run check:memory）。
+ * 记忆注入块离线自检。必须带 <记忆根> <工作区 cwd> 两参：不带参数时工作层按
+ * process.cwd() 算出桶，该层在注入块装配里被省略，整块定档只量到习惯层——空跑。
+ * 空跑不再是假绿而是判红：桶不存在且两参都没给时，本命令以 1 退出并说明该带什么。
  *
  * 为什么有它：注入块每轮上下文都要装一份，涨起来是看不见的成本；插件改动又只能在
  * 下次启动后才在运行期观察。本脚本用注入侧同一份判定（core.js 的扫描与预算常量）
@@ -17,6 +19,7 @@ import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+	BLOCK_CHAR_BUDGET,
 	DEFAULT_MEMORY_ROOT,
 	INDEX_CHAR_BUDGET,
 	INDEX_LINE_BUDGET,
@@ -28,17 +31,12 @@ import {
 } from '../lib/memory/core.js'
 import { isEntryName, isReservedFile } from '../lib/memory/frontmatter.js'
 
-/**
- * 注入块整块的字符定档：层内索引各有一份预算，块体合计（含写侧纪律 WRITING.md）没人
- * 管，这里当机判点。取 4500 是按现语料实测 4.4K（索引 2.6K ＋ 写侧纪律 1.6K ＋ 块头）
- * 留约 2% 余量——它是治理线不是容量线，越线就该收敛条目或精简写侧纪律，而不是调大它。
- */
-const BLOCK_CHAR_BUDGET = 4500
-
 // 用 `||` 不用 `??`：显式传空串（想只跑默认值）不该被当成「记忆根就是当前目录」，
 // 那会让脚本在一片空地上报「全部达标」
 const memoryRoot = process.argv[2] || process.env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
 const cwd = process.argv[3] || process.cwd()
+// 两参是否都由调用方给了：没给就走默认值，而默认值在工作层这一维几乎必然算错桶
+const argsGiven = process.argv.length > 2
 const root = resolveRoot(memoryRoot)
 
 const violations = []
@@ -87,7 +85,12 @@ const rulesChars = (() => {
 // 否则报告里的字符数会被当成全量而误判
 const bucket = workspaceSlug(cwd)
 console.log(`\n注入块（cwd=${cwd}，桶 ${bucket}）：${block.length} 字符／${block.split('\n').length} 行（含规则块与索引）`)
-if (bucket.length > 0 && !existsSync(join(root.workspaces, bucket))) console.log('提示：该工作区无桶，本次装配只有习惯层（新工作区属常态）')
+if (bucket.length > 0 && !existsSync(join(root.workspaces, bucket))) {
+	console.log(`提示：该工作区无桶，本次装配只有习惯层${argsGiven ? '（新工作区属常态）' : ''}`)
+	// 两参都没给时这不是「新工作区」，是忘了带参数：进程 cwd 多半是仓库目录，算出个不存在的桶。
+	// 照印「全部达标」＝空跑假绿，所以在这里判红而不是只提醒。
+	if (!argsGiven) violations.push(`未给工作区 cwd 参数：按进程 cwd=${cwd} 算出桶 ${bucket}，而它不存在——整块定档只量到习惯层，本次是空跑。要真检某个工作区请带上 <记忆根> <工作区 cwd>`)
+}
 console.log(`预算：层内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐层），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符`)
 console.log(`其中写侧纪律 WRITING.md 占 ${rulesChars} 字符\n`)
 if (block.length > BLOCK_CHAR_BUDGET) violations.push(`注入块 ${block.length} 字符超 ${BLOCK_CHAR_BUDGET} 整块定档（写侧纪律 ${rulesChars} ＋ 两层索引）`)
