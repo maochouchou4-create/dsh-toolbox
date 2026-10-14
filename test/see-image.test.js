@@ -114,7 +114,7 @@ const 取根 = () => {
 }
 
 /** ctx 替身：只实现 resolveTarget 问得到的服务成员，记下每次调用便于断言。 */
-const 假Ctx = ({ cwd = '/work/live' } = {}) => {
+const 假Ctx = () => {
 	const calls = []
 	return {
 		calls,
@@ -124,14 +124,11 @@ const 假Ctx = ({ cwd = '/work/live' } = {}) => {
 				return { targetKey: path, displayPath: path }
 			},
 		},
-		workingDirectory: {
-			async ensure() {
-				calls.push({ method: 'workingDirectory.ensure' })
-				return cwd
-			},
-		},
 	}
 }
+
+/** 带会话活目录的执行上下文替身：cwd 走会话 header（宿主 rc.2 的口径，见 lib/working-dir.js）。 */
+const 假Exec = (cwd) => ({ agent: cwd === undefined ? undefined : { session: { header: { cwd } } }, signal: 'SIG' })
 
 /** assembler 替身：只实现 transcribe 用到的三个成员（宿主 BlockAssembler 裸仓不可 import）。 */
 const 假Assembler = (blocks, finish = { kind: 'stop' }) => {
@@ -145,22 +142,16 @@ const 假流 = async function* (chunks) {
 
 test('resolveTarget：path 分支按会话活目录解析，sourceName 取 basename、attachmentId 空', async () => {
 	const ctx = 假Ctx()
-	const r = await resolveTarget(ctx, { path: 'shots/a.png' }, { agent: { session: { id: 's1' } }, signal: 'SIG' }, 取根)
+	const r = await resolveTarget(ctx, { path: 'shots/a.png' }, 假Exec('/work/live'), 取根)
 	assert.equal(r.target.displayPath, 'shots/a.png')
 	assert.equal(r.sourceName, 'a.png', '存附件时的文件名取 basename，不是整条路径')
 	assert.equal(r.attachmentId, undefined, 'path 分支没有 sha256 可回显')
-	assert.deepEqual(ctx.calls, [
-		{ method: 'workingDirectory.ensure' },
-		{ method: 'fs.resolve', path: 'shots/a.png', cwd: '/work/live' },
-	], '磁盘路径入口不碰存区根（取根函数被问就会抛）')
+	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: 'shots/a.png', cwd: '/work/live' }], '磁盘路径入口不碰存区根（取根函数被问就会抛）')
 })
 
-test('resolveTarget：非 agent 调用不问活目录（cwd 交由 fs 服务默认解析）', async () => {
+test('resolveTarget：无会话上下文的调用不带 cwd（交由 fs 服务默认解析）', async () => {
 	const ctx = 假Ctx()
-	ctx.workingDirectory.ensure = async () => {
-		throw new Error('无会话上下文时不该问活目录')
-	}
-	const r = await resolveTarget(ctx, { path: '/abs/b.png' }, { agent: undefined, signal: undefined }, 取根)
+	const r = await resolveTarget(ctx, { path: '/abs/b.png' }, 假Exec(undefined), 取根)
 	assert.equal(r.sourceName, 'b.png')
 	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: '/abs/b.png', cwd: undefined }])
 })

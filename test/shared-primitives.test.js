@@ -86,19 +86,15 @@ test('styleWarnings：日期戳与派生行超长各出一条，合规输入一�
 	assert.equal(styleWarnings({ description: '2026-01-02 记', indexLine: 超一行 }).length, 2)
 })
 
-test('resolveActiveCwd：无 agent 不问服务，有 agent 才问并透传结果', async () => {
-	const calls = []
-	const workingDirectory = {
-		ensure: async (agent, signal) => {
-			calls.push([agent, signal])
-			return '/work/live'
-		},
-	}
-	// 无 agent 的脚本化/预览路径：不问服务、返回 undefined，由下游按自己的默认解析
-	assert.equal(await resolveActiveCwd(workingDirectory, { agent: undefined, signal: undefined }), undefined)
-	assert.deepEqual(calls, [], '无 agent 时不许碰服务')
-	// 有 agent：走 ensure（含目录消失后的恢复），agent 与 signal 原样透传，返回值不改写
-	const agent = { session: { id: 's1' } }
-	assert.equal(await resolveActiveCwd(workingDirectory, { agent, signal: 'SIG' }), '/work/live')
-	assert.deepEqual(calls, [[agent, 'SIG']])
+test('resolveActiveCwd：无 agent 返回 undefined，有 agent 取会话 header.cwd', () => {
+	// 无 agent 的脚本化/预览路径：返回 undefined，由下游按自己的默认解析（不猜 process.cwd()）
+	assert.equal(resolveActiveCwd(undefined), undefined)
+	// 有 agent：活目录就是会话 header.cwd，原样透传不改写
+	assert.equal(resolveActiveCwd({ session: { header: { cwd: '/work/live' } } }), '/work/live')
+	// 会话没带 cwd（宿主里 cwd 是可选字段）＝合法缺省，不是契约断裂
+	assert.equal(resolveActiveCwd({ session: { header: {} } }), undefined)
+	// 契约断裂当场抛：静默回落成 undefined 会让层路由整体退到 habit 层、相对路径改按启动
+	// 目录解析，症状出现在几层之外，最难查
+	assert.throws(() => resolveActiveCwd({}), /session\.header/)
+	assert.throws(() => resolveActiveCwd({ session: {} }), /session\.header/)
 })

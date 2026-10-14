@@ -46,7 +46,7 @@ function stripComments(source) {
  * 覆盖的是**注入面消费**（ctx.<service>）外加按需取用（ctx.get('<service>')）——后者
  * 不在 inject 面是设计（工具族不需要它必然在场），收集起来只为识别、不参与下面的
  * 双向对齐；本函数因此看不见任何其它形式的服务引用（如解构注入、插件闭包取用）。 */
-const SERVICES = ['systemPrompt', 'tools', 'llm', 'attachments', 'workingDirectory', 'fs']
+const SERVICES = ['systemPrompt', 'tools', 'llm', 'attachments', 'fs']
 function consumedServices(source) {
 	const code = stripComments(source)
 	const used = new Set()

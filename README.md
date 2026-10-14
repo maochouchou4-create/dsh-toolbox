@@ -117,7 +117,7 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 lib/index.js            胶水：FEATURES 表逐工具 try/catch 注册，configShape 并集
 lib/paths.js            跨工具族的路径原语（目前只有 ~ 展开）。落 lib 根是因为记忆根与附件存区两条来路都要它，而它是文件系统约定不是记忆约定——留在 lib/memory/ 就越了那层自述的界
 lib/value.js            跨工具族的值判据原语（isNonBlankString：非空白的字符串才算「给了」）。落 lib 根同理由：Config 回退、脚本入参判定、宿主注入的路径校验问的是同一个问题
-lib/working-dir.js      会话活目录的取用收口（工具执行路径用 ensure，注入侧用 get，差异见文件内注释）。落 lib 根因为两个工具族都要它
+lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口 + fs-guard.js（写侧 I/O 前置守卫与错误码，零 node:fs 以免拖进写侧闭包）+ head-read.js（分块头读，端口适配器与读侧共用）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
