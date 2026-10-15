@@ -231,7 +231,12 @@ test('必读链·施工版守门：施工模板指向施工那张辅助页，页
 	const [brief] = assembleBrief(data, construction())
 	assert.ok(brief.text.includes(page), '施工 brief 的必读链逐字取自施工版辅助页')
 	assert.ok(!brief.text.includes('只读禁写'), '施工 brief 里不得出现只读禁写')
-	assert.equal(page.split('\n')[1], data.templates['AGENTS 必读链·复核'].split('\n')[1], '两版除分工那一句外逐字同形：硬约束那句两份同源，不各写一套口径')
+	// 两版除分工那一句外逐字同形：硬约束那句两份同源，不各写一套口径。比的是整篇摘掉分工那一句
+	// 之后的全文，不是按下标比某一行——原先只比第 2 行，差异本就该落在第 1 行，其余行照样会
+	// 漂而比不出来。加载期那道互验（data.checkChainPair）拦的是数据文件漂到加载这一步之前，
+	// 这条留在出稿这侧，两者拦的是不同时刻
+	assert.equal(page.split('；只读禁写').join(''), data.templates['AGENTS 必读链·复核'].split('；只读禁写').join(''), '两页除「；只读禁写」外整篇逐字相同')
+
 })
 
 test('decisions 空则整行省略，非空则逐条带入', () => {
@@ -587,7 +592,7 @@ test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数
 
 test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚举混用、0 也算给了、只对门二出', () => {
 	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
-	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note'
+	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note；动了共享面（工具参数面、数据表、模板、契约）照走门禁，规模小不是免门禁的理由'
 	const hits = (params) => matchRhythm(data, params).includes(exempt)
 	assert.ok(hits({ ...base, diffLines: 5, changedFiles: 1 }), '边界：正好等于阈值命中')
 	assert.ok(!hits({ ...base, diffLines: 6, changedFiles: 1 }), '超一行即不出（免派口径对齐几行级小修）')
@@ -630,7 +635,7 @@ test('免派条的阶段限定读的是配对表那份数据：把它挪到施�
 	// 阶段限定若写死在 core 里（"只对门二出"），改配对表改不动它，两处就此分家且都不报错：
 	// 数据面说这条判据限门二，代码说限死门二，加载期无从发现
 	const params = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
-	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note'
+	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note；动了共享面（工具参数面、数据表、模板、契约）照走门禁，规模小不是免门禁的理由'
 	const moved = withLoadedData({
 		'pairing.json': (value) => {
 			const rule = value.rhythm.find((entry) => entry.when?.diffLines?.max === 5)

@@ -249,6 +249,33 @@ test('阶段表专核：uses 里的 plan-spec.json 与模板里的 plan-spec 占
 	})
 })
 
+test('阶段表专核：core 的 CONSTRUCTION_STAGE 落在词表内＝改 id 不再静默失效（根因三行按 stage id 匹配，落空时 brief 看着完整）', () => {
+	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
+		lifecycle.stages.find((row) => row.id === '施工').id = '动手'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /CONSTRUCTION_STAGE「施工」不在 lifecycle\.json 的 stage id.*动手/, '只改 lifecycle 不改 core：根因分类三行按 id 匹配，落空时施工 brief 末尾少三行而其余部分照样出稿')
+	})
+})
+
+test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不同、或缺一张＝加载失败（两份页各写一次口径，改一处忘了另一处＝两个子代理对着两份 AGENTS 读同一批文件）', () => {
+	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
+		templates['AGENTS 必读链·施工'] += '\n汇报格式＝只报现象＋证据'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*除「；只读禁写」外须整篇逐字相同.*第 3 行起/, '漂的是追加那几行：原用例按下标只比第 2 行，比不出这类漂移')
+	})
+	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
+		templates['AGENTS 必读链·施工'] = templates['AGENTS 必读链·施工'].replace('测试只增不删', '测试可改可删')
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*第 2 行起/, '硬约束那句是两份同源的口径，各改一处就等于给两边两套约束')
+	})
+	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
+		delete templates['AGENTS 必读链·施工']
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /缺模板键「AGENTS 必读链·施工」/, '键白名单只查「多出来的键」，少写一张时那一路的 brief 静默少掉必读链与硬约束两句')
+	})
+	assert.doesNotThrow(() => loadDispatchData(), '盘上真数据两页本来就只差「；只读禁写」那一句')
+})
+
 test('plan-spec 节 id 唯一：重名＝加载失败（查表取第一条，重名那条等于悄悄失效）', () => {
 	withDataDir((dir) => editData(dir, 'plan-spec.json', (planSpec) => {
 		planSpec.blocks.push({ ...structuredClone(planSpec.blocks[2]), title: '另一个写前必读' })

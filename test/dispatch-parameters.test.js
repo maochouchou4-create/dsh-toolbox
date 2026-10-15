@@ -27,20 +27,29 @@ const parameters = dispatchParameters(data)
 
 test('参数面的键集＝core 的参数名全集（两份名单同源，多一个少一个都红）', () => {
 	assert.deepEqual(Object.keys(parameters), PARAM_FIELDS)
-	// 类型面三档：字符串、字符串数组、数值——scale 两项是 number，漏进白名单外它们会被当成
+	// 类型面三档：字符串、字符串数组、整数——scale 两项是 integer，漏进白名单外它们会被当成
 	// string 判红，而反过来把它写成 string 就是宿主按字符串收、rhythm 拿不到数比大小
 	for (const field of PARAM_FIELDS) {
 		const type = ['decisions', 'addons', 'anchors'].includes(field)
 			? 'array'
-			: ['diffLines', 'changedFiles'].includes(field) ? 'number' : 'string'
+			: ['diffLines', 'changedFiles'].includes(field) ? 'integer' : 'string'
 		assert.equal(parameters[field].type, type, `${field} 的类型`)
 	}
-	// 数值槽位三链互验：core 的 NUMERIC_PARAMS（空判据与取值域按它判）＝参数面标 number 的那几格
-	// ＝数值那几格在 core 的 rhythm 谓词里按 {max:N} 区间比。三处各列一份，任一处漏一个字段，
+	// 数值槽位三链互验：core 的 NUMERIC_PARAMS（空判据与取值域按它判）＝参数面标 number/integer 的
+	// 那几格＝数值那几格在 core 的 rhythm 谓词里按 {max:N} 区间比。三处各列一份，任一处漏一个字段，
 	// 漏的那处表现是「传了不报类型错、谓词那条也不生效」，没有任何错误会响
-	const numeric = Object.entries(parameters).filter(([, spec]) => spec.type === 'number').map(([field]) => field)
-	assert.deepEqual(numeric, NUMERIC_PARAMS, '参数面标 number 的键集 ≡ core 的 NUMERIC_PARAMS')
+	const numeric = Object.entries(parameters).filter(([, spec]) => spec.type === 'number' || spec.type === 'integer').map(([field]) => field)
+	assert.deepEqual(numeric, NUMERIC_PARAMS, '参数面标 number/integer 的键集 ≡ core 的 NUMERIC_PARAMS')
 	assert.deepEqual(RHYTHM_FIELDS.filter((field) => NUMERIC_PARAMS.includes(field)), NUMERIC_PARAMS, '数值槽位就是节奏谓词里按区间比的那几个字段')
+})
+
+test('规模参数在 schema 层就标 integer：小数由宿主在调用边界拒掉（core 的运行期检查仍在，留给不经宿主 schema 的路）', () => {
+	// 这条与上一条的「类型面三档」是同一件事的两面：那边核键集与类型名，这边核「为什么是
+	// integer 而不是 number」——行数与文件数是计数，宿主 DSL 有 IntegerValueSchemaSpec，
+	// 标 number 的话 4.5 能过 schema，之后只由 core.assertNumericParams 兜着。兜得住，
+	// 但两道的落点不同：schema 那道在调用边界、点名参数；core 那道要等整趟参数校验走到它
+	assert.equal(parameters.diffLines.type, 'integer')
+	assert.equal(parameters.changedFiles.type, 'integer')
 })
 
 test('规模参数按非负整数收：字符串数字／负数／小数当场点名（changedFiles 侧同样，不只 diffLines）', () => {
@@ -90,9 +99,10 @@ test('回填面四格都不标必填（宿主按 schema 拦必填发生在进 ex
 	}
 })
 
-test('批型条件槽位：core 的 holders 与参数面的 rowsWith 判的是同一条行上条件（改一行，两处一起变）', () => {
+test('批型条件槽位：core 的 holders 与参数面的描述读的是同一份判定（改一行，两处一起变）', () => {
 	// 两处各判一次就会一边点名要、一边说不要，调用方照着描述传参然后撞上「不消费」而不知道该信
-	// 哪个。改掉行上的条件标记，两边必须同时改口——那条标记是它们唯一的共同输入
+	// 哪个。故参数面不自己按条件字段名 filter，它调 core 的 holders——下面把行上的条件标记全部
+	// 翻掉再断言一次：翻掉之后两处必须同时改口，而它们只有那一份判定可改
 	const call = { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' }
 	const valueOf = { baseBatchType: '纯后端管线批', rootCause: '错行' }
 	const holdersInMessage = (rules, field) => {
@@ -104,7 +114,7 @@ test('批型条件槽位：core 的 holders 与参数面的 rowsWith 判的是�
 		}
 	}
 	assert.match(holdersInMessage(data, 'baseBatchType'), /消费它的是新功能·形态未定、修复批那一类批型/, 'core 点名的那类批型＝配对表里标 needsBase 的行（次序照表）')
-	assert.match(parameters.batchType.description, /需 baseBatchType 的特殊行：新功能·形态未定、修复批/, '参数面点名的也是那几行——两处是同一份 rowsWith/holders')
+	assert.match(parameters.batchType.description, /需 baseBatchType 的特殊行：新功能·形态未定、修复批/, '参数面点名的也是那几行——同读 core 的 holders')
 	assert.match(holdersInMessage(data, 'rootCause'), /消费它的是施工\+needsRootCause 批型（修复批）/)
 	assert.match(parameters.rootCause.description, /修复批施工必填/)
 
@@ -122,6 +132,19 @@ test('批型条件槽位：core 的 holders 与参数面的 rowsWith 判的是�
 		/已上线的阶段都不消费它/,
 		'两个标记都摘掉后 rootCause 真的没人消费：core 的 holders 与描述同时空了，两处仍一致',
 	)
+
+	// 判定单源的机械证据：把行上的条件值换成 truthy 但非 true 的东西，两侧仍须给出同一答案。
+	// 描述与 core 各 filter 一份的实现（早先那版在本文件按 row[condition] === true 判）在这里
+	// 会与 core 分道扬镳——「=== true」与「truthy」是两种判定，而行上真值是什么只有一处知道
+	const odd = structuredClone(data)
+	for (const row of odd.pairing.rows) {
+		if (row.needsBase === true) row.needsBase = 'true'
+		if (row.needsRootCause === true) row.needsRootCause = 'true'
+	}
+	const oddDescription = dispatchParameters(odd)
+	assert.ok(!oddDescription.batchType.description.includes('需 baseBatchType 的特殊行'), '条件值不是 true 就不算带条件：描述与 core 的 holders 同一口径')
+	assert.ok(!oddDescription.rootCause.description.includes('施工必填'), '同上，rootCause 侧')
+	assert.match(holdersInMessage(odd, 'baseBatchType'), /配对表里没有任何一行标 needsBase/, 'core 那侧对同一个数据也判「没人标这个条件」')
 })
 
 test('描述里的阶段名单与 core 的槽位消费集一致（描述说某阶段可填，契约就得真消费它）', () => {
