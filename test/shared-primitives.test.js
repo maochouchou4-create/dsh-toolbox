@@ -9,7 +9,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
-import { nonEmptyOrDefault } from '../lib/memory/core.js'
+import { nonEmptyOrDefault } from '../lib/memory-root.js'
 import { forEachWikilinkMatch, styleWarnings } from '../lib/memory/patterns.js'
 import { resolveActiveCwd } from '../lib/working-dir.js'
 

@@ -197,6 +197,7 @@ const NODE_FS_DIRECT = new Map([
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
+	['memory-root.js', false],
 	['fs-port.js', true],
 	['fs-guard.js', false],
 	['head-read.js', true],

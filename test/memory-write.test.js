@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, rmSync, statSync, writeFileSync, readFileSync } 
 import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createNodeFsPort } from '../lib/fs-port.js'
-import { DEFAULT_MEMORY_ROOT, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, resolveRoot } from '../lib/memory/core.js'
+import { INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, resolveRoot } from '../lib/memory-root.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, groupTitlesByTitle, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
@@ -35,7 +36,7 @@ after(() => {
 /* ===================== frontmatter 契约 ===================== */
 
 test('resolveRoot：记忆根归一成绝对路径（相对路径不按两套基目录分家）', () => {
-	// 断言走 resolveRoot 的 root 字段：absoluteMemoryRoot 已收为 core.js 模块私有（唯一出口
+	// 断言走 resolveRoot 的 root 字段：absoluteMemoryRoot 已收为 memory-root.js 模块私有（唯一出口
 	// 是 resolveRoot，它自带缺省兜底），「不许漏兜底」从此不靠注释维持
 	assert.equal(resolveRoot(DEFAULT_MEMORY_ROOT).root, join(homedir(), '.dsh', 'memory'), '默认根的 ~ 要展开')
 	assert.equal(resolveRoot('~/tilde').root, join(homedir(), 'tilde'))
@@ -587,8 +588,11 @@ test('editEntry：编辑后正文为空与超失控保护走同一条拦截链�
 	const content = entry('主题条目', '触发词', '唯一一行')
 	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content })
 	// 整条清空（含 frontmatter）才触得到「编辑后为空」：有 frontmatter 的条目删不干净，
-	// 剩下的空壳会由 upsert 的 frontmatter 契约拦——两条报错说的是两件事
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: content.replace(/\n$/, ''), newString: '' }), /为空/)
+	// 剩下的空壳会由 upsert 的 frontmatter 契约拦——两条报错说的是两件事，故这里按各条
+	// 自己的报错句钉，不按「为空」两个字钉（upsert 那条也叫「content 不能为空」，
+	// 混着匹配就分不出是 editEntry 那道拦住了还是漏到了下一道）
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: content.replace(/\n$/, ''), newString: '' }), /编辑后正文为空/, '删掉正文那条拦截时，剩下的空壳会落到 upsert 那道「content 不能为空」——报错还在，但报的是下一道')
+	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), content, '拦截发生在写盘之前：原条目逐字未动，不留半截改动')
 	const big = join(base, 'edit-big')
 	await upsertEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', content: entry('大条目', '触发词', 'x'.repeat(RUNAWAY_CEILING - 200)) })
 	await assert.rejects(() => editEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', oldString: 'x', newString: 'yy', replaceAll: true }), /失控保护/)

@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { HEAD_CHUNK_BYTES } from '../lib/head-read.js'
-import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
+import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
 import { entry } from './helpers.js'
 

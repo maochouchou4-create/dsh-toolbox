@@ -37,7 +37,7 @@ import process from 'node:process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { createNodeFsPort } from '../lib/fs-port.js'
-import { describeError, resolveRoot } from '../lib/memory/core.js'
+import { describeError, resolveRoot } from '../lib/memory-root.js'
 import {
 	assertEntryFrontmatter,
 	findFenceEnd,

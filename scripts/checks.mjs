@@ -10,19 +10,16 @@
  * import 本文件拿 CHECKS，不必起子进程才能验一份清单。
  */
 import process from 'node:process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildIndexBlock, composeMemory } from '../lib/memory/assemble.js'
+import { composeMemory, readEntryHead, scanLayer } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
-	DEFAULT_MEMORY_ROOT,
 	INDEX_CHAR_BUDGET,
 	INDEX_LINE_BUDGET,
 	INDEX_LINE_CHAR_BUDGET,
-	describeError,
-	resolveRoot,
-	workspaceSlug,
 } from '../lib/memory/core.js'
+import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
 import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
 import { isNonBlankString } from '../lib/value.js'
@@ -60,17 +57,18 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 		issues.push({ kind, issue, path, detail })
 	}
 	const layers = listLayerDirs(root).map(({ kind, dir }) => {
-		// 层清点（下面的 names）与派生（buildIndexBlock 自己那次扫描）出自两次 readdir：
-		// 本脚本的既有形态。真正同源的是后一次——派生行与它报出的 issue 出自同一遍扫描，
-		// 判层内重名因此不必再为条目头另扫一遍盘
-		const names = readdirSync(dir)
-		const text = buildIndexBlock(dir, record(kind))
-		const lines = text === null ? [] : text.split('\n')
+		// 层清点、派生行与这一层报出的 issue 出自同一次扫描：脚本自己再列一遍目录，
+		// 两次结果不一致时（中途增删条目）报告里的「条目文件数」与派生行数就对不上，
+		// 而那正是读报告的人唯一能自查的抓手。读法与注入侧同源（只读文件头），
+		// 故派生行与判据量的是同一段文本
+		const scan = scanLayer(dir, { read: readEntryHead, report: record(kind) })
+		const names = scan?.names ?? []
+		const lines = scan?.lines ?? []
 		return {
 			kind,
 			dir,
 			lines,
-			chars: text?.length ?? 0,
+			chars: lines.join('\n').length,
 			// 条目文件数与派生行数分列：两者的差就是被拒条目数，合在一列里这个差值看不见
 			entryFiles: names.filter(isEntryName).length,
 			overLine: lines.filter((line) => line.length > INDEX_LINE_CHAR_BUDGET),
