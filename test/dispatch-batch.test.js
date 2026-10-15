@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import {
 	advanceEvent,
 	appendEvent,
+	RenderModelMissingError,
 	backfillFromBatch,
 	foldBatch,
 	isoNow,
@@ -241,7 +242,14 @@ test('双批次隔离：一个批次的事件不进另一个批次的推导', as
 	assert.equal(second.next, '方案', '另一个批次一条 advance 都没有')
 	assert.equal(foldBatch(second.events, data).decisions[0], '别的拍板')
 	const list = await run('list', {})
-	assert.equal(list.events, undefined, 'list 的结构化值不带事件：全量事件进上下文是负担，渲染那一份由 execute 预先算好')
+	assert.equal(list.events, undefined, 'list 的结构化值不带事件：全量事件进上下文是负担，渲染那一份由 execute 算成 rows 摘要')
+	// rows 是多批视图的渲染输入（宿主深拷贝结构化值再交给 render，按对象身份的缓存必然 miss），
+	// 也是程序侧直接可读的摘要——消费者不必自己 fold 一遍
+	assert.equal(Array.isArray(list.rows), true, 'list 带 rows 摘要')
+	assert.deepEqual(Object.keys(list.rows[0]).sort(), ['batch', 'batchType', 'gatesAhead', 'lastT', 'next', 'note', 'progress', 'warnings'])
+	assert.deepEqual(new Set(list.rows.map((row) => row.batch)), new Set([START.batch, '另一个批次']), '两批各一行，互不串批')
+	assert.equal(typeof list.rows[0].progress, 'string')
+	assert.deepEqual(list.rows[0].warnings, [])
 	const listText = renderBatchResult(list, data)
 	assert.equal(new Set(listText.split('\n').filter((line) => line !== '').map((line) => line.split('｜')[0])).size, 2, '两批两行，互不串行')
 })
@@ -623,8 +631,11 @@ test('append 不变式：已写入的行逐字不变（最常见的「末尾有�
 	assert.deepEqual(parsedLines().map((event) => event.action), ['start', 'advance'])
 })
 
-test('渲染模型缺失即显式报错，不静默出一份空视图（多批视图的结构化值不带事件）', () => {
-	assert.throws(() => renderBatchResult({ ok: true }, data), /渲染模型/, '宿主若深拷贝了结构化值再传给 render，出「没有批次」的空文本会被读成台账空了')
+test('渲染模型缺失抛一个专用的错，不静默出一份空视图（多批视图的结构化值不带事件）', () => {
+	// 专用错误类是装配层重跑的开关：它只对「这次渲染拿不到推导所需的东西」重跑一次只读查询，
+	// 把数据面真坏了这类错误也当成模型缺失重跑一遍，只会把两个故障叠在一起查
+	assert.throws(() => renderBatchResult({ ok: true }, data), RenderModelMissingError, '多批视图拿不到推导所需的东西，抛专用错让装配层重跑')
+	assert.throws(() => renderBatchResult({ ok: true, batch: START.batch }, data), RenderModelMissingError, '单批视图带了 batch 却没带事件，同一个错')
 	const opened = startEvent({ ...START, rules: 'a1b2c3d4' })
 	assert.match(renderBatchResult({ ok: true, batch: START.batch, events: [opened] }, data), /批次 dispatch-plugin-b4（纯后端管线批）/, '单批视图能从结构化值本身复算：它带事件')
 })

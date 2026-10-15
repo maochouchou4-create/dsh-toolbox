@@ -13,7 +13,7 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -83,6 +83,7 @@ test('装配层冒烟：两件工具注册得出来，且 execute 真被调过�
 	assert.deepEqual(Object.keys(configShape), ['dispatchDataDir', 'dispatchLedgerPath'], 'Config 两个键：数据目录与台账路径')
 
 	const exec = { signal: undefined, agent: { session: 'smoke' } }
+	const lines = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter((line) => line !== '') : []
 	// 不带 batch 的老路径也要能跑通——回填那段在 execute 里，它引用错一个变量就是这条全红
 	const plain = await dispatchTool.execute({ stage: '门一', batchType: '纯后端管线批', subject: 'README', intent: '冒烟' }, exec)
 	assert.ok(plain.briefs.length > 0, '装配层 execute 要真能出稿：这条路径曾经 100% 抛 ReferenceError，而纯函数用例全绿')
@@ -92,14 +93,34 @@ test('装配层冒烟：两件工具注册得出来，且 execute 真被调过�
 	assert.equal(started.ok, true)
 	// 两个写动作的返回值也要渲染得出来：它们曾只回新事件、渲染回落去现读数据面而抛错，
 	// 而 render 那条路在纯函数用例里照不到（要宿主才有的 output.render 接线）
-	assert.match(batchTool.output.render({}, started)[0].text, /批次 smoke-batch（纯后端管线批）/, 'start 那一趟的返回值渲染得出来')
+	assert.match((await batchTool.output.render({ action: 'start', batch: 'smoke-batch' }, started))[0].text, /批次 smoke-batch（纯后端管线批）/, 'start 那一趟的返回值渲染得出来')
 	const advanced = await batchTool.execute({ action: 'advance', batch: 'smoke-batch', stage: '方案', note: '方案已定稿' }, exec)
-	assert.match(batchTool.output.render({}, advanced)[0].text, /已记录：方案 第 1 轮/, 'advance 那一趟的返回值渲染得出来')
+	assert.match((await batchTool.output.render({ action: 'advance', batch: 'smoke-batch' }, advanced))[0].text, /已记录：方案 第 1 轮/, 'advance 那一趟的返回值渲染得出来')
 	const status = await batchTool.execute({ action: 'status', batch: 'smoke-batch' }, exec)
 	assert.equal(status.next, '门一')
-	assert.match(batchTool.output.render({}, status)[0].text, /批次 smoke-batch（纯后端管线批）/)
+	assert.match((await batchTool.output.render({ action: 'status', batch: 'smoke-batch' }, status))[0].text, /批次 smoke-batch（纯后端管线批）/)
 	const list = await batchTool.execute({ action: 'list' }, exec)
-	assert.match(batchTool.output.render({}, list)[0].text, /smoke-batch/, '多批视图的渲染模型挂在 execute 那一次的结果上')
+	assert.match((await batchTool.output.render({ action: 'list' }, list))[0].text, /smoke-batch/, '多批视图的渲染模型挂在 execute 那一次的结果上（同对象直取，不用重跑）')
+
+	const beforeCount = lines().length
+	// 真宿主实测：它把 execute 的结构化值深拷贝一遍再交给 render（dsh-tools lib/index.js 的
+	// snapshotToolValue＋deepFreeze），按对象身份的缓存在那条路上必然 miss（曾经有个 WeakMap
+	// 渲染模型，真宿主上永远不命中）。现在两条视图的推导输入都在值自己身上：单批与写动作带
+	// events，多批带 rows 摘要——深拷贝后渲染照常出文本。
+	const clonedList = await batchTool.execute({ action: 'list' }, exec).then((value) => structuredClone(value))
+	assert.ok(Array.isArray(clonedList.rows) && clonedList.rows.length > 0, '多批视图的结构化值带 rows 摘要：渲染的推导输入在值自己身上')
+	assert.match((await batchTool.output.render({ action: 'list' }, clonedList))[0].text, /smoke-batch/, '多批视图深拷贝后照样渲染出正确文本（从值里的 rows 映射，不再依赖对象身份）')
+	const clonedInflight = await batchTool.execute({ action: 'status' }, exec).then((value) => structuredClone(value))
+	assert.match((await batchTool.output.render({ action: 'status' }, clonedInflight))[0].text, /smoke-batch/, '不带批次的 status 同理')
+	assert.deepEqual(
+		(await batchTool.output.render({ action: 'list' }, clonedList))[0].text,
+		(await batchTool.output.render({ action: 'list' }, structuredClone(clonedList)))[0].text,
+		'深拷贝几次文本都一样：渲染不碰对象身份，也不碰台账',
+	)
+	const single = await batchTool.execute({ action: 'status', batch: 'smoke-batch' }, exec).then((value) => structuredClone(value))
+	assert.match((await batchTool.output.render({ action: 'status', batch: 'smoke-batch' }, single))[0].text, /批次 smoke-batch（纯后端管线批）/, '单批视图深拷贝后靠结构化值自带的 events 复算，渲染照常')
+	assert.match((await batchTool.output.render({ action: 'start', batch: 'smoke-batch' }, structuredClone(started)))[0].text, /批次 smoke-batch（纯后端管线批）/, '写动作深拷贝后同样靠 events 渲染')
+	assert.equal(lines().length, beforeCount, '渲染这条路上没有写台账')
 
 	// 跨工具那一趟：dispatch 带批次名跑一趟，回填把台账里的对象与意图补上
 	const cross = await dispatchTool.execute({ stage: '门一', batch: 'smoke-batch' }, exec)
