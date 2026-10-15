@@ -1,5 +1,5 @@
-# dsh-toolbox bundle 层：memory＋see_image 双工具。
-# 工具级配置（memoryRoot/visionProvider/visionModel）写各机 profile 的 cordis.patch.yml，不写这里。
+# dsh-toolbox bundle 层：memory＋see_image＋dispatch＋dispatch_batch 四件工具。
+# 工具级配置（memoryRoot/dispatchLedgerPath/visionProvider/visionModel）写各机 profile 的 cordis.patch.yml，不写这里。
 - insert:
     - id: dsh-toolbox
       name: dsh-toolbox

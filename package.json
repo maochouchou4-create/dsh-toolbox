@@ -1,7 +1,7 @@
 {
 	"name": "dsh-toolbox",
-	"version": "0.4.0",
-	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）＋dispatch（派发装配：按批型配对复核形态＋现成 brief＋方案任务书）。单包多工具，逐工具隔离激活。",
+	"version": "0.5.0",
+	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）＋dispatch（派发装配：按批型配对复核形态＋现成 brief＋方案任务书）＋dispatch_batch（批次台账：四动作记账、状态从事件现推、dispatch 传批次名即回填拍板清单）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",
 	"main": "lib/index.js",

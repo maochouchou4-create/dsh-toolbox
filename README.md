@@ -1,7 +1,7 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前三件：
+单个工具初始化失败只丢那一件，不连坐整包。当前四件：
 
 - **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
   附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
@@ -12,6 +12,9 @@
 - **dispatch**：派发装配器。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的
   brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段；阶段＝方案时
   出方案任务书（十三节规范骨架＋定稿自查）。规则面是数据不是代码，见下节。
+- **dispatch_batch**：批次台账。按 `start`/`advance`/`status`/`list` 把一个批次的
+  一生记成结构化事件，状态从事件现推；`dispatch(batch=…)` 从台账回填该批的批型、意图、对象与
+  拍板清单（只填这一趟真正消费的那几格，显式传参优先、与台账说岔了即报错）。见下节。
 
 ## memory 的索引与条目契约
 
@@ -116,7 +119,38 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 交集非空（谓词值各自合法但永不相交＝那条规则永不命中）。反方向（定义了却
 没有任何配对行引用＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着
 的预期孤儿，来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
-后续版本会在这份数据面之外加追加面台账 `dispatch-ledger.jsonl`。
+第五面（追加面）台账见下节。
+
+## dispatch_batch 批次台账
+
+一个批次的一生记成一行一事件的 JSONL，默认落在**习惯层底目录下的
+`data/dispatch-ledger.jsonl`**：Config 的 `dispatchLedgerPath` 显式路径优先，空串按
+`memoryRoot` 推导，与 memory 写侧共用同一份「记忆根 → 层目录」归一（`~` 展开、绝对化都走
+那一处）。习惯层在两台机器上都落在 agent-data 仓里，台账跟着它走才叫两机共享——
+`agent-data/.gitattributes` 给这一行配 `merge=union`：两台同时追加的行都保留、零文本冲突，
+行序非时间序由集合式推导吸收（展示按事件时间 `t` 排序）。跨机并发 `start` 各登各自合法，
+合并后出现双 `start` 是正常吸收态：`status` 取 `t` 最小的一条并出告警，不当事故。
+
+四个 action：`start` 登记批次（拍板清单随这次登记进台账，此后每次 `dispatch(batch=…)` 自动
+带出）、`advance` 记一次阶段完成、`status` 查门禁（不给批次＝列在飞批次及各自下一道
+未过门）、`list` 列全量。**状态永远从事件现推**，不存状态文件、不另设缓存——台账是唯一真相，
+另存一份就是两份真相，且跨机合并出的乱序行会让「按行序累加出来的状态」漂。
+
+`start` 是唯一的自举入口：台账与其目录都不存在时由它建出来，其余 action 遇台账缺失一律显式
+报错「批次未登记（先 start）」，不静默建。写入经包级 fs 端口（与 memory 写侧同一条通道：
+会话文件策略、原子发布与版本守卫都在那一层），追加时先给末行补一个换行再拼一行 JSON——
+两行 JSON 直接相邻会长成一行不可解析的内容。写前拿的是旧版本就报版本失配（并发写不整篇
+覆盖别人的行）。台账里出现坏行时 `status`/`list` 带行号报错，不静默跳过一行继续出稿。
+
+写侧前提与 memory 写工具同一条：台账落在工作目录之外（记忆根下的 `data/`），会话文件策略是
+`workspace-write` 时写入会被宿主当场拒——要记账就得给这一次会话全权（或放宽到记忆根），
+不是这个工具多要的一份权限。
+
+返回值分两种：给批次名的那一趟连事件一起回（单批有界，程序侧要能自己复算），`list` 与不给
+批次名的 `status` 不回事件——一百分批就是几百 KB，那是往上下文里灌垃圾；这两种视图的文本由
+执行那一次算好的状态渲染，不在渲染时重读台账。「这道门有没有」看配对表那一列：直做批之类
+`gate1: null` 的批型免门一，不会每次都收一条「门一 缺记录」；`needsBase` 的行（修复批、
+新功能·形态未定）按 `start` 时登记的 `baseBatchType` 落回那一行的门列判，判得出就不告警。
 
 ## 安装（本地仓直装）
 
@@ -158,12 +192,14 @@ lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路�
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（工具参数面，清单现读拼，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发工具与批次台账工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```
 
-每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`。
+每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录那一族
+装配两件工具，故导出 `registerDispatch` 与 `registerDispatchBatch` 两个注册函数、共用一张
+`configShape`——胶水的 FEATURES 表按工具逐条 try/catch，一件起不来不连坐另一件）。
 纯函数文件零宿主依赖，可直接单测；含宿主 import 的装配文件由 test/imports.test.js
 静态解析钉住接线（防搬家断链、防 inject 漏声明）。
 

@@ -27,6 +27,8 @@ import {
 	validateParams,
 } from '../lib/dispatch/core.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
+import { backfillFromBatch, readLedgerEvents } from '../lib/dispatch/batch.js'
+import { createNodeFsPort } from '../lib/fs-port.js'
 
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
 const readData = (name) => JSON.parse(readFileSync(join(dataDir, name), 'utf8'))
@@ -605,8 +607,10 @@ test('方案装配：13 节规范逐字成文、自查 11 条、单路「方案�
 		expectedTail,
 		'自查段＝checklist 数组逐条 join 的整串：挤成一段（join(空串)）、改动一条或多挂一句都红',
 	)
-	assert.deepEqual(output.checklist, data.planSpec.checklist, '11 条逐条成行，不重排不丢条')
-	assert.ok(!output.checklist.some((line) => line.includes('锚点全部亲核过吗')), '派 brief 的自检四条不混进方案自查')
+	assert.deepEqual(output.checklist, [], '方案那一趟出空：定稿自查 11 条已由模板尾逐条渲染（见上面那段逐字比对），checklist 字段再返回一份＝同一次输出里同一份内容两遍')
+	const reviewOutput = assembleDispatch(data, { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' })
+	assert.ok(reviewOutput.checklist.length > 0, '复核那一趟出 brief 自检——上面那条「方案出空」钉的不是「整个字段恒空」')
+	assert.ok(!reviewOutput.checklist.some((line) => line.includes('软前提两档制')), '方案自查 11 条不混进派 brief 的自检四条——那 11 条随任务书模板尾走，字段里再带一份就是同一次输出两份')
 	assert.ok(taskBook.text.includes('执行纪律全文随施工 brief 固定段下发'), '拍板后的执行节改指 brief 固定段，不再随任务书复述全文')
 	assert.ok(!taskBook.text.includes('落点级偏差（锚点行号漂移'), '执行纪律全文只在施工 brief 固定段留一份——双副本等于改一处漏一处')
 	assert.ok(!taskBook.text.includes('不依赖 brief 转述'), '何时写那节的反向句也已翻转')
@@ -722,7 +726,8 @@ test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶
 		'templates.json': (templates) => { templates.定稿 = '按下列规范定稿：\n〔plan-spec 各节逐字〕\n〔plan-spec checklist 逐条〕' },
 	}, (loaded) => loaded)
 	const output = assembleDispatch(twin, { stage: '定稿', subject: '方案.md', intent: '定稿' })
-	assert.deepEqual(output.checklist, twin.planSpec.checklist, '判据是 uses 引用了 plan-spec.json，不按阶段名叫「方案」')
+	assert.deepEqual(output.checklist, [], '判据是 uses 引用了 plan-spec.json（不按阶段名叫「方案」）：吃 plan-spec 的那一趟出空，11 条由模板尾渲染')
+	assert.ok(output.briefs[0].text.includes(twin.planSpec.checklist[0]), '模板尾仍逐条渲染那 11 条——出空的是 checklist 字段，不是把自查内容一起去掉')
 	assert.ok(output.briefs[0].text.includes('## 根设计原则'), '两条 plan-spec 占位照样接到那份数据上')
 	assert.throws(() => assembleDispatch(data, { stage: '定稿', subject: 'x', intent: 'y' }), /未知 stage「定稿」/, '真数据里没有这一行——判据是数据，单源不是「认得所有词」')
 })
@@ -730,7 +735,7 @@ test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶
 test('槽位消费完备：全阶段×全参数矩阵——不消费的参数收到值即报错并点名消费它的是哪些阶段', () => {
 	const batchType = '纯后端管线批'
 	const values = {
-		batchType, subject: 'x', intent: 'y', baseBatchType: '纯后端管线批',
+		batchType, subject: 'x', intent: 'y', baseBatchType: '纯后端管线批', batch: 'dispatch-plugin-b4',
 		forbidden: '禁区', verifyCmd: 'npm test', rootCause: '错行', provider: 'minimax-cn',
 		decisions: ['拍板'], addons: ['涉鉴权/上传/输入'], anchors: ['a'],
 	}
@@ -757,7 +762,8 @@ test('槽位消费完备：全阶段×全参数矩阵——不消费的参数收
 	assert.deepEqual(stagesConsuming(data, 'baseBatchType'), ['门一', '门二'])
 	assert.deepEqual(stagesConsuming(data, 'decisions'), ['门一', '施工', '门二'], 'decisions 按模板占位消费：方案任务书没有拍板清单那一行（方案是给用户拍板的输入，不是已拍板的载体）')
 	assert.deepEqual(stagesConsuming(data, 'provider'), ['方案', '门一', '施工', '门二'], 'provider 由 rhythm 谓词消费，与阶段无关')
-	assert.deepEqual([...consumedParams(data, '方案')], ['subject', 'intent', 'provider'], '方案那一趟消费的槽位只有这三个：模板占位＋必填矩阵＋通用槽位，无门列故不消费组合那三项，任务书无拍板清单行故不消费 decisions')
+	assert.deepEqual(stagesConsuming(data, 'batch'), ['方案', '门一', '施工', '门二'], 'batch 是台账回填入口，装配层拿到就拉台账，与这一趟出不出稿无关')
+	assert.deepEqual([...consumedParams(data, '方案')], ['subject', 'intent', 'provider', 'batch'], '方案那一趟消费的槽位只有这四个：模板占位＋必填矩阵＋通用槽位（provider 供 rhythm 谓词读、batch 是台账回填入口），无门列故不消费组合那三项，任务书无拍板清单行故不消费 decisions')
 })
 
 test('decisions 按模板占位消费：方案那一趟传它即报错并说清为什么（方案是给用户拍板的输入，不是已拍板的载体）', () => {
@@ -840,6 +846,86 @@ test('方案任务书：执行纪律指针、语义判定段位置、自查第 �
 	const layout = data.planSpec.blocks.find((block) => block.id === 'layout')
 	assert.ok(layout.text.includes('（见本节三档表）'), '版面节里的自指改成节内三档表，不指回节名')
 	assert.ok(!layout.text.includes('（见「版面」节）'), '悬空自指清掉')
+})
+
+test('跨工具回填：dispatch(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-backfill-'))
+	const path = join(dir, 'dispatch-ledger.jsonl')
+	const batch = 'dispatch-plugin-b4'
+	const decisions = ['台账落共享层', 'fold 集合式']
+	writeFileSync(path, `${[
+		JSON.stringify({ t: '2026-10-15T10:00:00+08:00', batch, action: 'start', batchType: '纯后端管线批', intent: '台账落共享层', subject: '方案.md 批 4', decisions, rules: 'a1b2c3d4' }),
+		JSON.stringify({ t: '2026-10-15T11:00:00+08:00', batch, action: 'advance', stage: '门一', rules: 'a1b2c3d4', combo: '', recommended: '', perFormCounts: {}, adopted: 0, overlap: 0, missed: '', note: '' }),
+	].join('\n')}\n`)
+	try {
+		const events = await readLedgerEvents({ port: createNodeFsPort(), path })
+		const review = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4' }, events).params
+		assert.deepEqual(review.decisions, decisions, '拍板清单跟批次走：登记一次，此后每路 brief 自动带「不得重开」')
+		assert.equal(review.batchType, '纯后端管线批')
+		const output = assembleDispatch(data, review)
+		for (const brief of output.briefs) {
+			assert.ok(brief.text.includes(`拍板清单（不得重开）：${decisions.join('；')}。`), `${brief.form} 的 brief 带出台账登记的拍板清单`)
+			assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的 brief 带上台账登记的意图`)
+		}
+		// 方案那一趟不消费 decisions/batchType：回填只给 intent，出稿不撞「不消费即报错」
+		const planParams = backfillFromBatch(data, { stage: '方案', batch, subject: '方案.md 批 4' }, events).params
+		assert.deepEqual(Object.keys(planParams).sort(), ['batch', 'intent', 'stage', 'subject'])
+		assert.doesNotThrow(() => assembleDispatch(data, planParams))
+		// 显式参数优先，且与台账说岔了即报错：两个来源说同一件事说岔时静默取一个＝主会话以为自己改过
+		assert.throws(
+			() => backfillFromBatch(data, { stage: '门一', batch, subject: 'x', intent: '另一句意图' }, events),
+			/与批次「dispatch-plugin-b4」台账里登记的不一致/,
+		)
+		const agreed = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events)
+		assert.equal(agreed.params.intent, '台账落共享层', '与台账一致的显式值照用，不重复填也不报冲突')
+		assert.deepEqual(agreed.filled, [])
+		// 对象那格每阶段都必填：登记时带对象、这一趟不传，回填补齐后出稿
+		const build = backfillFromBatch(data, { stage: '施工', batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events)
+		assert.deepEqual(build.filled, ['batchType', 'subject', 'decisions'], '施工消费 batchType/subject/intent/anchors/decisions：台账补上没传的那几格')
+		assert.equal(build.params.subject, '方案.md 批 4', '对象从台账补齐——登记一次，每路 brief 指同一份对象指针')
+		for (const brief of assembleDispatch(data, build.params).briefs) {
+			assert.ok(brief.text.includes('对象（动工前先读对应批次节）：方案.md 批 4。'), `${brief.form} 的施工 brief 带出台账登记的对象`)
+			assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的施工 brief 带上显式传的意图`)
+			assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享层；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('「先回填后校验」是契约（回填面那四格里两格每阶段必填，顺序反了就是先报缺必填）', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-order-'))
+	const path = join(dir, 'dispatch-ledger.jsonl')
+	writeFileSync(path, `${JSON.stringify({ t: '2026-10-15T10:00:00+08:00', batch: 'order-batch', action: 'start', batchType: '纯后端管线批', intent: '台账落共享层', subject: '方案.md 批 4', decisions: [], rules: 'a1b2c3d4' })}\n`)
+	try {
+		const events = await readLedgerEvents({ port: createNodeFsPort(), path })
+		const args = { stage: '门一', batch: 'order-batch' }
+		assert.throws(() => validateParams(data, args), /缺必填参数：batchType、subject、intent/, '不先回填就校验：报的是「你少传了」，而那两格本来就该由台账给')
+		const backfilled = backfillFromBatch(data, args, events).params
+		assert.doesNotThrow(() => validateParams(data, backfilled), '回填之后才校验：这两格齐了，出稿继续往下走')
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('batchParameters 的键面＝工具逻辑层要的那几格（漏一个就是模型传了收不到的那一格）', async () => {
+	const { batchParameters } = await import('../lib/dispatch/parameters.js')
+	const { BATCH_ACTIONS } = await import('../lib/dispatch/batch.js')
+	const parameters = batchParameters(data)
+	// 这份清单是「工具描述的逐字档参数面」的快照：逻辑层读到的槽位一个不许少（少一个＝模型
+	// 按描述传了参数却没人接），多出来同样红（那是描述里承诺了而实现不认的面）
+	assert.deepEqual(
+		Object.keys(parameters).sort(),
+		['action', 'baseBatchType', 'batch', 'batchType', 'combo', 'decisions', 'intent', 'missed', 'note', 'overlap', 'perFormCounts', 'recommended', 'stage', 'subject', 'adopted'].sort(),
+		'参数面与台账工具的槽位清单必须逐个对得上',
+	)
+	assert.equal(parameters.action.description, BATCH_ACTIONS.join(' | '), 'action 的取值现读自逻辑层那份词表——描述里那四个动作与实现能跑的四个是同一份')
+	assert.equal(parameters.action.required, true, 'action 不在回填面，宿主层拦形态错误是好事')
+	for (const field of ['batchType', 'intent', 'subject', 'decisions']) {
+		assert.equal(parameters[field].required, undefined, `${field} 能由 dispatch 的 batch 回填，schema 上标必填＝回填永远到不了`)
+	}
+	const tooFew = { ...data, forms: { ...data.forms, forms: data.forms.forms.slice(0, 1) } }
+	assert.throws(() => batchParameters(tooFew), /至少要有两个形态才能给示例/, '形态表空到解构出 undefined 时示例会渲染成 "undefined": 2——当场点名，不让带病的示例出稿')
 })
 
 test('requireData：五份数据缺任何一份都点名（含 lifecycle 与 planSpec），不静默出空稿', () => {

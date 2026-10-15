@@ -43,12 +43,17 @@ test('stage 取值清单＝本工具能出稿的阶段，按 lifecycle 的 order
 	assert.ok(!parameters.stage.description.includes(' | 提交'), '清单里不许出现不可达阶段')
 })
 
-test('batchType 不标必填（方案阶段不判批型，标了等于逼模型为了过 schema 编一个批型）', () => {
+test('回填面四格都不标必填（宿主按 schema 拦必填发生在进 execute 之前，台账回填就永远到不了；必填判定归 core.validateParams）', () => {
 	assert.equal(parameters.batchType.required, undefined)
 	assert.deepEqual(parameters.batchType.required, undefined, '手抄回 required:true 这里红')
-	assert.equal(parameters.subject.required, true)
-	assert.equal(parameters.intent.required, true)
+	assert.equal(parameters.subject.required, undefined, '对象那格能由 batch 回填，schema 标必填＝回填到不了')
+	assert.equal(parameters.intent.required, undefined, '意图那格能由 batch 回填，schema 标必填＝回填到不了')
+	assert.equal(parameters.decisions.required, undefined)
 	assert.equal(parameters.anchors.required, undefined, '阶段级必填由 core.validateParams 按数据点名，schema 里不标')
+	assert.equal(parameters.stage.required, true, 'stage 是调用形态参数、不在回填面，宿主层拦形态错误是好事')
+	for (const field of ['batchType', 'subject', 'intent', 'decisions']) {
+		assert.ok(parameters[field].description.includes('缺省可由 batch 回填'), `${field} 的描述要告诉模型这格可以从台账来，否则不传就以为该编`)
+	}
 	assert.ok(parameters.batchType.description.startsWith('批型（门一/施工/门二阶段必填'), '必填阶段名单现读自 lifecycle 的 requires')
 	for (const row of data.pairing.rows.filter((entry) => entry.kind !== 'addon')) {
 		assert.ok(parameters.batchType.description.includes(row.batchType), `主行「${row.batchType}」漏在描述外，模型照着挑不到`)

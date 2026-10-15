@@ -73,7 +73,7 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
-		['dispatch/index.js', ['registerDispatch', 'configShape']],
+		['dispatch/index.js', ['registerDispatch', 'registerDispatchBatch', 'configShape']],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -123,6 +123,9 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	const used = new Set([
 		...consumedServices(glue),
 		...consumedServices(readLib('dispatch/index.js')),
+		// 台账逻辑模块今天不消费 ctx.*，仍在扫描面里：它经装配层拿端口，一旦将来自己伸手取服务，
+		// 少了这一行 DOA 要到运行期才炸
+		...consumedServices(readLib('dispatch/batch.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
@@ -143,6 +146,14 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 
 	for (const file of ['memory/index.js', 'see-image/index.js', 'dispatch/index.js']) {
 		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
+	}
+	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
+	// 两件工具写进一行就是「一件起不来，另一件陪葬」——逐工具隔离正是本层存在的理由
+	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
+	assert.deepEqual(features.map(([label]) => label), ['dispatch', 'dispatch_batch', 'memory', 'see_image'], 'FEATURES 的标签集＝本包登记的工具面：台账工具与装配器分两行（两者失败原因无关）')
+	const glueImports = [...parseLocalImports(glue).values()].flat()
+	for (const [label, register] of features) {
+		assert.ok(glueImports.includes(register), `FEATURES 的 ${label} 指向 ${register}，而胶水没 import 它——apply 时撞 undefined，try/catch 接不住`)
 	}
 })
 
@@ -178,6 +189,7 @@ const NODE_FS_DIRECT = new Map([
 	['see-image/index.js', false],
 	['dispatch/core.js', false],
 	['dispatch/parameters.js', false],
+	['dispatch/batch.js', false],
 	['dispatch/data.js', true],
 	['dispatch/index.js', false],
 	['working-dir.js', false],
