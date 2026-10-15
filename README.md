@@ -91,7 +91,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 `dispatch` 的规则不在代码里，在 `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs
 现读）：
 
-- `forms.json`：20 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
+- `forms.json`：21 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
   另有 `principles` 与 `rejected`（不做清单）。
 - `pairing.json`：`rows` 十条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
   特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 九条节奏
@@ -155,7 +155,7 @@ lib/value.js            跨工具族的值判据原语（isNonBlankString：非�
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口 + fs-guard.js（写侧 I/O 前置守卫与错误码，零 node:fs 以免拖进写侧闭包）+ head-read.js（分块头读，端口适配器与读侧共用）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（工具参数面，清单现读拼，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（20 形态／10 配对行＋9 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（工具参数面，清单现读拼，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```

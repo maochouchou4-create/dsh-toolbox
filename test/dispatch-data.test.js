@@ -43,12 +43,12 @@ const editData = (dir, file, mutate) => {
 
 const orphanId = (warning) => warning.match(/「(.+?)」/)[1]
 
-test('盘上真数据加载即用：20 形态／10 配对行／9 节奏／6 阶段／13 节，warnings 只收两条预期孤儿', () => {
+test('盘上真数据加载即用：21 形态／11 配对行／10 节奏／6 阶段／13 节，warnings 只收两条预期孤儿', () => {
 	const data = loadDispatchData()
 	assert.deepEqual(Object.keys(data).sort(), ['forms', 'lifecycle', 'pairing', 'planSpec', 'templates', 'warnings'])
-	assert.equal(data.forms.forms.length, 20)
-	assert.equal(data.pairing.rows.length, 10)
-	assert.equal(data.pairing.rhythm.length, 9)
+	assert.equal(data.forms.forms.length, 21)
+	assert.equal(data.pairing.rows.length, 11)
+	assert.equal(data.pairing.rhythm.length, 10)
 	assert.equal(data.lifecycle.stages.length, 6)
 	assert.equal(data.planSpec.blocks.length, 13)
 	assert.deepEqual(data.warnings.map(orphanId).sort(), ['设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦')
@@ -59,7 +59,7 @@ test('盘上真数据加载即用：20 形态／10 配对行／9 节奏／6 阶�
 })
 
 test('dataDir 省略或留空串＝模块同目录的 ./data/（Config 默认值走同一条路）', () => {
-	assert.equal(loadDispatchData({ dataDir: '' }).forms.forms.length, 20)
+	assert.equal(loadDispatchData({ dataDir: '' }).forms.forms.length, 21)
 	assert.deepEqual(loadDispatchData({ dataDir: DEFAULT_DATA_DIR }).warnings, loadDispatchData().warnings)
 })
 
@@ -103,7 +103,7 @@ test('去掉一条配对引用不失败：该形态进 warnings，数据照常�
 		}
 	}), (dir) => {
 		const data = loadDispatchData({ dataDir: dir })
-		assert.equal(data.forms.forms.length, 20, '孤儿只报不拦：三份数据照常返回，装配层继续可用')
+		assert.equal(data.forms.forms.length, 21, '孤儿只报不拦：三份数据照常返回，装配层继续可用')
 		assert.ok(data.warnings.some((warning) => orphanId(warning) === '砍刀'), '无引用（且自己没写 notes）的形态也进 warnings')
 		assert.deepEqual(data.warnings.filter((warning) => warning.includes('预期孤儿')).map(orphanId).sort(), ['设计七维', '证伪复核'])
 	})

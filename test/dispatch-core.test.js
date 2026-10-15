@@ -276,7 +276,8 @@ test('matchRhythm：谓词两侧都验（修复批二轮／机械搬运免派／
 	const noProvider = matchRhythm(data, { batchType: '纯后端管线批', stage: '施工' })
 	assert.ok(!noProvider.some((note) => note.includes('Flash')), '未传 provider 时含 provider 字段的条目不命中')
 	assert.ok(noProvider.some((note) => note.includes('机器门前置')))
-	assert.deepEqual(matchRhythm(data, { batchType: '纯后端管线批', stage: '门一' }), [], '无命中输出空数组')
+	assert.deepEqual(matchRhythm(data, { stage: '方案' }), [], '无命中输出空数组')
+	assert.ok(matchRhythm(data, { batchType: '纯后端管线批', stage: '门一' }).some((note) => note.includes('施工走查')), '门一通用提示：大工程方案走查加挂')
 })
 
 test('施工阶段：combo 出空（复核组合是复核阶段的产物，门二调用时现取），brief 与 rhythm 照常', () => {
@@ -410,7 +411,7 @@ test('MU13 加挂只增路不改路：加挂后主行已生成那路 brief 逐�
 	}
 })
 
-test('P6 role 归属：全部 20 个形态都扫一遍——该形态那路 brief 以本形态 role 句起头', () => {
+test('P6 role 归属：全部 21 个形态都扫一遍——该形态那路 brief 以本形态 role 句起头', () => {
 	// 两个预期孤儿（设计七维、证伪复核）配对表没有行引用，借一条收容行把它们扫进来，
 	// 否则「角色句取成别的形态」这件事在它们身上永远无人验
 	const swept = structuredClone(data)
@@ -439,7 +440,7 @@ test('P6 role 归属：全部 20 个形态都扫一遍——该形态那路 brie
 			}
 		}
 	}
-	assert.equal(seen.size, 20, `全部 20 个形态都被扫到，实扫 ${seen.size}：${[...swept.forms.forms.map((form) => form.id)].filter((id) => !seen.has(id)).join('、')}`)
+	assert.equal(seen.size, 21, `全部 21 个形态都被扫到，实扫 ${seen.size}：${[...swept.forms.forms.map((form) => form.id)].filter((id) => !seen.has(id)).join('、')}`)
 })
 
 test('P7 占位残留：主行×三个判批型阶段全组合扫，加方案阶段单扫一次；渲染结果里不留占位、未替换值与 null 拼串', () => {
@@ -552,7 +553,7 @@ test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数
 	assert.ok(hits({ stage: '门二', batchType: '纯后端管线批' }), '两个在字段都命中才出')
 	assert.ok(!hits({ stage: '门一', batchType: '纯后端管线批' }), 'stage 不合即不出')
 	assert.ok(!hits({ stage: '门二', batchType: '用户可见功能批' }), 'batchType 不合即不出')
-	assert.ok(matchRhythm(data, { stage: '门一', batchType: '纯后端管线批' }).length === 0, '真数据里门一纯后端管线批无命中，空数组')
+	assert.ok(matchRhythm(data, { stage: '门一', batchType: '纯后端管线批' }).every((note) => note.includes('施工走查')), '真数据里门一纯后端管线批只命中走查通用提示（放宽基线也随之更新）')
 })
 
 test('P15 core 无突变：数据深冻后五个入口都不抛；rejected 是拷贝，调用方改不动规则面', () => {
