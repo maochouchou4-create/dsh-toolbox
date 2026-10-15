@@ -6,16 +6,15 @@
  * workspaces/ 会被 listLayerDirs 当成一层扫，造出幽灵层）。幂等另钉一次：第二次跑零改动、
  * 零备份——迁移脚本按设计会被反复跑，每次都重写一遍已合规条目只会平白制造 diff 与备份。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parseFrontmatter } from '../lib/memory/frontmatter.js'
+import { SCRIPTS_DIR, memoryTree, tempRoot, withTempDir } from './helpers.js'
 
-const scriptPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'migrate-frontmatter.mjs')
+const scriptPath = join(SCRIPTS_DIR, 'migrate-frontmatter.mjs')
 
 /** 老布局实锤形态：name: ＋ description: ＋ metadata:（缩进块），没有 title:。 */
 const LEGACY = '---\nname: batch-subagent-process\ndescription: 批次执行与子代理复核纪律（DSH 载体）——两道自检门\nmetadata:\n  type: feedback\n---\n\n# 批次执行与子代理复核（DSH 载体，边跑边精进）\n\n正文。\n'
@@ -30,20 +29,14 @@ let base
 let memoryRoot
 let profile
 
-before(() => {
-	base = mkdtempSync(join(tmpdir(), 'dsh-memory-migrate-'))
-	memoryRoot = join(base, 'memory')
-	profile = join(memoryRoot, 'profile')
-	mkdirSync(profile, { recursive: true })
+before((t) => {
+	base = tempRoot(t, 'memory-migrate')
+	;({ root: memoryRoot, profile } = memoryTree(base, 'memory'))
 	writeFileSync(join(profile, 'batch-subagent-process.md'), LEGACY, 'utf8')
 	writeFileSync(join(profile, 'old-entry.md'), ALREADY_OK, 'utf8')
 	writeFileSync(join(profile, 'folded.md'), FOLDED, 'utf8')
 	writeFileSync(join(profile, 'MEMORY.md'), RETIRED_INDEX, 'utf8')
 	writeFileSync(join(profile, 'WRITING.md'), WRITING_RULES, 'utf8')
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
 })
 
 function runScript(args) {
@@ -98,7 +91,7 @@ test('--apply：转换结果恰为两键，name:/metadata: 不留残迹，退役
 	assert.notEqual(code, 0, '有文件被跳过时退出码须非 0（跳过＝仍需人工处理）')
 })
 
-test('二次跑：零改动零备份（迁移脚本被反复跑是常态，每次重写已合规条目只会平白制造 diff）', () => {
+test('二次跑：零改动零备份（迁移脚本被反复跑是常态，每次重写已合规条目只会平白制造 diff）', (t) => {
 	const before = readFileSync(join(profile, 'batch-subagent-process.md'), 'utf8')
 	const { stdout } = runScript(['--apply'])
 	assert.match(stdout, /已合规条目 2 条/, stdout)
@@ -111,14 +104,11 @@ test('二次跑：零改动零备份（迁移脚本被反复跑是常态，每�
  * 另起一个临时记忆根跑单条语料：共享 fixture 里有「已合规条目 2 条」这类计数断言，
  * 往那个语料里加条目会把它搅动，于是分支各自带语料、各自用完即删。
  */
-function withCorpus(seed, run) {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-memory-migrate-case-'))
-	try {
+function withCorpus(t, seed, run) {
+	return withTempDir(t, 'memory-migrate-case', (dir) => {
 		seed(dir)
 		return run(dir)
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
-	}
+	})
 }
 
 const runOn = (root, args) => {
@@ -141,8 +131,8 @@ const readKeys = (root, file) => {
 	return parsed.frontmatter
 }
 
-test('备份目录在动第一个文件之前就打印（中途失败时人得知道东西在哪、已经动了多少）', () => {
-	withCorpus(
+test('备份目录在动第一个文件之前就打印（中途失败时人得知道东西在哪、已经动了多少）', (t) => {
+	withCorpus(t,
 		(root) => writeEntry(root, 'legacy.md', '---\nname: legacy\ndescription: 触发词\nmetadata:\n  type: feedback\n---\n\n# 老条目\n\n正文。\n'),
 		(root) => {
 			const { stdout } = runOn(root, ['--apply'])
@@ -154,8 +144,8 @@ test('备份目录在动第一个文件之前就打印（中途失败时人得�
 	)
 })
 
-test('CRLF 老条目：dry-run 明说会把行尾整篇归一为 LF（与写侧 edit 同口径，不做保真）', () => {
-	withCorpus(
+test('CRLF 老条目：dry-run 明说会把行尾整篇归一为 LF（与写侧 edit 同口径，不做保真）', (t) => {
+	withCorpus(t,
 		(root) =>
 			writeEntry(
 				root,
@@ -174,8 +164,8 @@ test('CRLF 老条目：dry-run 明说会把行尾整篇归一为 LF（与写侧 
 	)
 })
 
-test('条目名被同名目录占住：逐条降级成「跳过」，不让异常崩掉整轮迁移', () => {
-	withCorpus(
+test('条目名被同名目录占住：逐条降级成「跳过」，不让异常崩掉整轮迁移', (t) => {
+	withCorpus(t,
 		(root) => {
 			writeEntry(root, 'ok.md', '---\nname: ok\ndescription: 触发词\n---\n\n# 条目\n\n正文。\n')
 			mkdirSync(join(root, 'profile', 'broken.md'), { recursive: true })
@@ -190,8 +180,8 @@ test('条目名被同名目录占住：逐条降级成「跳过」，不让异�
 	)
 })
 
-test('迁移不得造出它要躲的那个问题：转换结果层内撞名的条目推进跳过，落盘后以非 0 退出', () => {
-	withCorpus(
+test('迁移不得造出它要躲的那个问题：转换结果层内撞名的条目推进跳过，落盘后以非 0 退出', (t) => {
+	withCorpus(t,
 		(root) => {
 			// 三条老布局条目从同一个 H1 派生 title：撞名是转换这一刻才出现的，而本脚本按设计
 			// 不经写侧 assertTitleFree（那个拦截只管 write/edit 这条链路）
@@ -219,9 +209,8 @@ test('迁移不得造出它要躲的那个问题：转换结果层内撞名的�
 	)
 })
 
-test('记忆根不存在或根下没有层：退出 1 并说明没接线（不是「无需迁移」）', () => {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-memory-migrate-root-'))
-	try {
+test('记忆根不存在或根下没有层：退出 1 并说明没接线（不是「无需迁移」）', (t) => {
+	withTempDir(t, 'memory-migrate-root', (dir) => {
 		const missing = runOn(join(dir, 'no-such-root'), [])
 		assert.equal(missing.code, 1, '记忆根没接线不得以 0 退出告诉人「已合规」')
 		assert.match(missing.stdout, /没有层目录/, missing.stdout)
@@ -232,12 +221,10 @@ test('记忆根不存在或根下没有层：退出 1 并说明没接线（不�
 		const empty = runOn(bare, [])
 		assert.equal(empty.code, 1, '根下 0 层同样不得以 0 退出')
 		assert.match(empty.stdout, /扫到 0 层/, empty.stdout)
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
-	}
+	})
 })
 
-test('title 派生：四种断开标点各断一次，断完为空就退回文件名 stem', () => {
+test('title 派生：四种断开标点各断一次，断完为空就退回文件名 stem', (t) => {
 	const cases = [
 		['paren.md', '# 全角括号（副标题）\n', '全角括号'],
 		['paren-ascii.md', '# 半角括号 (副标题)\n', '半角括号'],
@@ -247,7 +234,7 @@ test('title 派生：四种断开标点各断一次，断完为空就退回文�
 		['no-heading.md', '正文没有 H1。\n', 'no-heading'],
 		['bracket-first.md', '#（括号开头，没有语义名）\n', 'bracket-first'],
 	]
-	withCorpus(
+	withCorpus(t,
 		(root) => {
 			for (const [file, body] of cases) writeEntry(root, file, `---\nname: ${file.replace('.md', '')}\ndescription: 触发词\n---\n\n${body}`)
 		},
@@ -260,8 +247,8 @@ test('title 派生：四种断开标点各断一次，断完为空就退回文�
 	)
 })
 
-test('没有成形 frontmatter 的文件：跳过并点名（机械转换无从下手时不硬改）', () => {
-	withCorpus(
+test('没有成形 frontmatter 的文件：跳过并点名（机械转换无从下手时不硬改）', (t) => {
+	withCorpus(t,
 		(root) => {
 			writeEntry(root, 'no-fence.md', '# 根本没有 frontmatter\n\n正文。\n')
 			writeEntry(root, 'unclosed.md', '---\ntitle: 未闭合\ndescription: 触发词\n\n正文。\n')
@@ -278,8 +265,8 @@ test('没有成形 frontmatter 的文件：跳过并点名（机械转换无从�
 	)
 })
 
-test('metadata 块被空行终结：块后的键属于别的键，不跟着 metadata 一起删', () => {
-	withCorpus(
+test('metadata 块被空行终结：块后的键属于别的键，不跟着 metadata 一起删', (t) => {
+	withCorpus(t,
 		(root) => {
 			writeEntry(
 				root,
@@ -298,8 +285,8 @@ test('metadata 块被空行终结：块后的键属于别的键，不跟着 meta
 	)
 })
 
-test('退役索引文件按保留名判定，大小写不敏感（大小写不敏感的文件系统上二者是同一个文件）', () => {
-	withCorpus(
+test('退役索引文件按保留名判定，大小写不敏感（大小写不敏感的文件系统上二者是同一个文件）', (t) => {
+	withCorpus(t,
 		(root) => {
 			writeEntry(root, 'ok.md', '---\ntitle: 条目\ndescription: 触发词\n---\n\n正文。\n')
 			writeEntry(root, 'memory.md', '# 索引\n')

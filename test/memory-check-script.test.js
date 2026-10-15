@@ -15,29 +15,24 @@
  *
  * 语料跑在 mkdtemp 出的临时目录上：脚本吃的是真实路径，而仓库外的真实语料不该被测试改写。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { BLOCK_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
 import { workspaceSlug } from '../lib/memory-root.js'
 import { deriveIndexLine } from '../lib/memory/frontmatter.js'
 import { CHECKS } from '../scripts/checks.mjs'
+import { SCRIPTS_DIR, tempRoot } from './helpers.js'
 
-const scriptPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'check-memory-index.mjs')
+const scriptPath = join(SCRIPTS_DIR, 'check-memory-index.mjs')
 const CHECK_IDS = CHECKS.map((check) => check.id)
 
 let base
 
-before(() => {
-	base = mkdtempSync(join(tmpdir(), 'dsh-memory-check-'))
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
+before((t) => {
+	base = tempRoot(t, 'memory-check')
 })
 
 /** 起子进程跑脚本。脚本是「模块 + 薄壳」两层，被直接运行就跑薄壳，不存在 import 时该不该跑的分支。 */

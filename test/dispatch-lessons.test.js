@@ -12,17 +12,16 @@
  * 断言里的数字一律写字面量，不从实现或数据面反查：反查的用例在阈值被人改过时只会跟着改，永远
  * 钉不住任何东西（真要跟数据面联动，改的是那条专门盯数据面的用例——见「点位判据单源」那条）。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { collectStats, judgePoint, parseFormList, pointOf, renderLessonsResult, runLessons } from '../lib/dispatch/lessons.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
 import { createNodeFsPort, createReadOnlyPort } from '../lib/fs-port.js'
+import { DISPATCH_DATA_DIR, DISPATCH_DIR, makeEvent, seedLedger, tempRoot } from './helpers.js'
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
+const dataDir = DISPATCH_DATA_DIR
 const data = loadDispatchData({ dataDir })
 /** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTables，测试直接取已读好的真数据）。 */
 const loadTables = ({ names }) => Object.fromEntries(names.map((name) => [name, data[name]]))
@@ -31,27 +30,9 @@ const vocabulary = data.forms.forms.map((form) => form.id)
 const port = createNodeFsPort()
 let root
 
-/** 时间戳按写入顺序递增：事件时间定序是趋势读法的前提，同秒并列的情形由「同刻并列」那条专门测。 */
-let clock = 0
-const iso = () => {
-	clock += 1
-	return new Date(Date.UTC(2026, 0, 1, 0, 0, clock)).toISOString().replace('Z', '+00:00')
-}
-
-const start = (batch, batchType, rules, extra = {}) => ({
-	t: iso(), batch, action: 'start', batchType, baseBatchType: '', intent: `${batch} 意图`, subject: '', decisions: [], rules, ...extra,
-})
-
-const advance = ({ batch, stage = '门二', rules = 'v1', combo = '', recommended = '', perFormCounts = {}, adopted = 0, overlap = 0, missed = '', note = '' }) => ({
-	t: iso(), batch, action: 'advance', stage, rules, combo, recommended, perFormCounts, adopted, overlap, missed, note,
-})
-
-/** 落一份台账：一行一事件（与写侧同形，故读侧那条「坏行 fail fast」的契约在本文件也生效）。 */
-const seed = (name, events) => {
-	const path = join(root, `${name}.jsonl`)
-	writeFileSync(path, events.map((event) => `${JSON.stringify(event)}\n`).join(''))
-	return path
-}
+/** 事件夹具与台账落盘都取自 helpers：字段名与生产构造器（batch.js 的 startEvent／advanceEvent）逐字同形，
+ *  时钟按写入顺序递增（事件时间定序是趋势读法的前提，同秒并列的情形由「同刻并列」那条专门测）。 */
+const { start, advance } = makeEvent()
 
 /** 直读刚落好的台账：走 collectStats 那条纯函数路时用（生产读法是 runLessons 里的同一个解析）。 */
 const readEvents = (path) => readFileSync(path, 'utf8')
@@ -73,12 +54,8 @@ const reached = (rules = 'v1') => [
 	start('b5', '用户可见功能批', rules),
 ]
 
-before(() => {
-	root = mkdtempSync(join(tmpdir(), 'dsh-dispatch-lessons-'))
-})
-
-after(() => {
-	rmSync(root, { recursive: true, force: true })
+before((t) => {
+	root = tempRoot(t, 'dispatch-lessons')
 })
 
 test('点位判据单源＝lifecycle 复盘行的 point 字段（工具描述与 README 里的数字只是它的快照）', () => {
@@ -97,9 +74,9 @@ test('点位判据单源＝lifecycle 复盘行的 point 字段（工具描述与
 })
 
 test('复盘点位：批数下界 4 批 false / 5 批 true，批型下界 2 种 false / 3 种 true', async () => {
-	assert.equal((await run(seed('四批', reached().slice(0, 6)))).due, false, '四批不到下界 5')
-	assert.equal((await run(seed('五批', reached()))).due, true, '五批且覆盖三种批型＝到点')
-	const twoTypes = seed('五批两批型', [
+	assert.equal((await run(seedLedger(root, '四批', reached().slice(0, 6)))).due, false, '四批不到下界 5')
+	assert.equal((await run(seedLedger(root, '五批', reached()))).due, true, '五批且覆盖三种批型＝到点')
+	const twoTypes = seedLedger(root, '五批两批型', [
 		start('c1', '纯后端管线批', 'v1'),
 		start('c2', '纯后端管线批', 'v1'),
 		start('c3', '机械搬运/小修', 'v1'),
@@ -107,7 +84,7 @@ test('复盘点位：批数下界 4 批 false / 5 批 true，批型下界 2 种 
 		start('c5', '机械搬运/小修', 'v1'),
 	])
 	assert.equal((await run(twoTypes)).due, false, '批数够但只有 2 种批型：配对表只在多种批型上被验证过')
-	const threeTypes = seed('五批三批型', [
+	const threeTypes = seedLedger(root, '五批三批型', [
 		start('d1', '纯后端管线批', 'v1'),
 		start('d2', '纯后端管线批', 'v1'),
 		start('d3', '机械搬运/小修', 'v1'),
@@ -115,11 +92,11 @@ test('复盘点位：批数下界 4 批 false / 5 批 true，批型下界 2 种 
 		start('d5', '机械搬运/小修', 'v1'),
 	])
 	assert.equal((await run(threeTypes)).due, true, '第三种批型一出现就到点——门槛是「覆盖够不够」不是「攒够没有」')
-	assert.match((await run(seed('五批三批型', reached()))).stats, /已到复盘点位：5 批（批型 3 种：机械搬运\/小修、用户可见功能批、纯后端管线批）/)
+	assert.match((await run(seedLedger(root, '五批三批型', reached()))).stats, /已到复盘点位：5 批（批型 3 种：机械搬运\/小修、用户可见功能批、纯后端管线批）/)
 })
 
 test('批型空串不贡献批型数（拿空串凑出「第三种批型」会让点位提前到点）', async () => {
-	const path = seed('空批型', [
+	const path = seedLedger(root, '空批型', [
 		start('e1', '纯后端管线批', 'v1'),
 		start('e2', '纯后端管线批', 'v1'),
 		start('e3', '机械搬运/小修', 'v1'),
@@ -132,7 +109,7 @@ test('批型空串不贡献批型数（拿空串凑出「第三种批型」会�
 })
 
 test('同名批多个 start 按批型并集取（跨机并发登记是吸收态，取第一条会丢掉另一台登记的覆盖面）', async () => {
-	const path = seed('双start', [
+	const path = seedLedger(root, '双start', [
 		start('f1', '纯后端管线批', 'v1'),
 		start('f1', '机械搬运/小修', 'v1'),
 		start('f2', '机械搬运/小修', 'v1'),
@@ -175,7 +152,7 @@ test('形态 id 含空格也不被切坏：词法按形态词表走最长匹配�
 })
 
 test('采纳率按集合算：同一个 id 在串里重复两遍不算两路（否则分母翻倍、比率能算出 100% 以上）', async () => {
-	const path = seed('重复id', [
+	const path = seedLedger(root, '重复id', [
 		start('g1', '纯后端管线批', 'v1'),
 		advance({ batch: 'g1', combo: '锚点核对', recommended: '锚点核对 锚点核对 事实校准', perFormCounts: { 锚点核对: 3 }, adopted: 3 }),
 		start('g2', '纯后端管线批', 'v1'),
@@ -188,13 +165,13 @@ test('采纳率按集合算：同一个 id 在串里重复两遍不算两路（�
 })
 
 test('裁剪与加派各走各的方向（判反必红：那会把主会话削减组合读成它自己加派）', async () => {
-	const trimmed = await run(seed('裁剪方向', [
+	const trimmed = await run(seedLedger(root, '裁剪方向', [
 		start('h1', '纯后端管线批', 'v1'),
 		advance({ batch: 'h1', combo: '锚点核对', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 3 }, adopted: 3 }),
 	]), { force: true })
 	assert.ok(trimmed.suggestions.some((line) => line.includes('裁剪记录（推荐了没派）：事实校准 1 次')), '推荐了没派＝裁剪')
 	assert.ok(!trimmed.suggestions.some((line) => line.includes('加派记录')), '裁剪那一趟不许同时报加派')
-	const added = await run(seed('加派方向', [
+	const added = await run(seedLedger(root, '加派方向', [
 		start('h2', '纯后端管线批', 'v1'),
 		advance({ batch: 'h2', combo: '连带面 锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 3 }, adopted: 3 }),
 	]), { force: true })
@@ -204,7 +181,7 @@ test('裁剪与加派各走各的方向（判反必红：那会把主会话削�
 })
 
 test('裁剪与加派跨规则版本合并时按次数求和（只并键会把三趟裁剪报成一次）', async () => {
-	const path = seed('跨组合并', [
+	const path = seedLedger(root, '跨组合并', [
 		start('i1', '纯后端管线批', 'v1'),
 		advance({ batch: 'i1', rules: 'v1', combo: '锚点核对', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 2 }, adopted: 2 }),
 		advance({ batch: 'i1', rules: 'v1', combo: '锚点核对', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 2 }, adopted: 2 }),
@@ -219,7 +196,7 @@ test('裁剪与加派跨规则版本合并时按次数求和（只并键会把�
 })
 
 test('统计输出含各形态 findings 数与采纳率，三处口径交叉守恒（头条＝各版本＝逐事件）', async () => {
-	const path = seed('采纳率', reached())
+	const path = seedLedger(root, '采纳率', reached())
 	const { stats, suggestions } = await run(path)
 	// 三趟复核的 recommended 共 2+2+2=6 路，实派∩推荐 2+1+2=5 路 → 83%；裁剪 1 路（事实校准）
 	assert.match(stats, /组合采纳率 83%（推荐 6 路／采纳 5 路／裁剪 1）/u)
@@ -236,7 +213,7 @@ test('统计输出含各形态 findings 数与采纳率，三处口径交叉守�
 })
 
 test('采纳率分母不可算时注明（事件未自存 recommended 不等于采纳率 0%）', async () => {
-	const path = seed('无分母', [
+	const path = seedLedger(root, '无分母', [
 		start('x1', '纯后端管线批', 'v1'),
 		advance({ batch: 'x1', combo: '锚点核对 事实校准', recommended: '', perFormCounts: { 锚点核对: 4 } }),
 	])
@@ -250,7 +227,7 @@ test('采纳率分母不可算时注明（事件未自存 recommended 不等于�
 })
 
 test('规则版本分组不跨版本平均：两个版本各报各的比率与 findings，头条合计跨版本求和', async () => {
-	const path = seed('两版本', [
+	const path = seedLedger(root, '两版本', [
 		start('m1', '纯后端管线批', 'v1'),
 		advance({ batch: 'm1', rules: 'v1', combo: '锚点核对', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 9 }, adopted: 4 }),
 		advance({ batch: 'm1', rules: 'v1', combo: '锚点核对', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 9, 事实校准: 1 }, adopted: 5 }),
@@ -267,7 +244,7 @@ test('规则版本分组不跨版本平均：两个版本各报各的比率与 f
 })
 
 test('到点分支的 stats 正文逐字钉住（把任何一行换成「（略）」都会红）', async () => {
-	const path = seed('正文', [
+	const path = seedLedger(root, '正文', [
 		start('e1', '纯后端管线批', 'v1'),
 		advance({ batch: 'e1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 2 }, adopted: 2 }),
 		start('e2', '机械搬运/小修', 'v1'),
@@ -290,7 +267,7 @@ test('到点分支的 stats 正文逐字钉住（把任何一行换成「（略�
 })
 
 test('force 只跳点位判断，不改统计（跳的是「该不该现在复」，不是「复什么」）', async () => {
-	const path = seed('force', reached().slice(0, 6))
+	const path = seedLedger(root, 'force', reached().slice(0, 6))
 	const normal = await run(path)
 	const forced = await run(path, { force: true })
 	assert.equal(normal.due, false)
@@ -305,11 +282,11 @@ test('force 只跳点位判断，不改统计（跳的是「该不该现在复�
 })
 
 test('render：到点三段（点位统计／建议草稿／裁决归属），未到点一句带点位摘要且不叠词', async () => {
-	const dueText = renderLessonsResult(await run(seed('渲染到点', reached())))
+	const dueText = renderLessonsResult(await run(seedLedger(root, '渲染到点', reached())))
 	assert.match(dueText, /^【点位统计】/u)
 	assert.ok(dueText.includes('【修订建议草稿】') && dueText.includes('· '), '建议逐条带项目符号成行')
 	assert.match(dueText, /建议给主会话裁决，不自动改配对表——本工具只读台账、不落盘。/u)
-	const pending = await run(seed('渲染未到', reached().slice(0, 6)))
+	const pending = await run(seedLedger(root, '渲染未到', reached().slice(0, 6)))
 	const pendingText = renderLessonsResult(pending)
 	assert.match(pendingText, /^未到复盘点（/u)
 	assert.ok(pendingText.includes(pending.stats), '未到点那一句带的是同一个 stats 值')
@@ -320,7 +297,7 @@ test('render：到点三段（点位统计／建议草稿／裁决归属），�
 })
 
 test('只读不落盘：跑一趟复盘后台账逐字不变（自动改配对表/回写事件都从这里被挡住）', async () => {
-	const path = seed('只读', reached())
+	const path = seedLedger(root, '只读', reached())
 	const before = { text: readFileSync(path, 'utf8'), mtimeMs: statSync(path).mtimeMs }
 	await run(path, { force: true })
 	assert.equal(readFileSync(path, 'utf8'), before.text, '台账内容不许变')
@@ -328,7 +305,7 @@ test('只读不落盘：跑一趟复盘后台账逐字不变（自动改配对�
 })
 
 test('只读是结构性的：门面端口上写方法根本不存在（写方法一律 throw 的替身端口也能跑通）', async () => {
-	const path = seed('门面', reached())
+	const path = seedLedger(root, '门面', reached())
 	const guarded = {
 		...createNodeFsPort(),
 		writeText: () => {
@@ -345,13 +322,13 @@ test('只读是结构性的：门面端口上写方法根本不存在（写方�
 	assert.ok(Object.isFrozen(readOnly), '门面冻结：事后往它身上挂方法也不算数')
 	const value = await runLessons({ port: readOnly, path, loadTables, force: true })
 	assert.equal(value.due, true, '只读门面照样跑得出复盘结果')
-	const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'lessons.js'), 'utf8')
+	const source = readFileSync(join(DISPATCH_DIR, 'lessons.js'), 'utf8')
 	assert.ok(!/writeText|assertWritable|node:fs/.test(source), '逻辑面源码里不许出现写方法或 node:fs——边界不靠纪律维持')
 })
 
 test('漏网按批型聚合成一条并带上限与余数（逐事件流水进上下文几万字符，而描述承诺的是趋势）', async () => {
 	const long = '真机窄屏下面板溢出，滚动条压住最后一个按钮，用户点了没反应，回归时没人发现，验收也漏过——本可由 GUI 目检在真机上点到这个位置'
-	const path = seed('漏网聚合', [
+	const path = seedLedger(root, '漏网聚合', [
 		start('j1', '纯后端管线批', 'v1'),
 		advance({ batch: 'j1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 2 }, adopted: 2, missed: long }),
 		advance({ batch: 'j1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 2 }, adopted: 2, missed: '第二条漏网' }),
@@ -375,7 +352,7 @@ test('漏网按批型聚合成一条并带上限与余数（逐事件流水进�
 })
 
 test('双报重叠按批型聚合：每批型一趟数、重叠 0 趟数与估算区间，超出的批型报余数', async () => {
-	const path = seed('重叠聚合', [
+	const path = seedLedger(root, '重叠聚合', [
 		start('k1', '纯后端管线批', 'v1'),
 		advance({ batch: 'k1', combo: '连带面 砍刀', recommended: '连带面 砍刀', perFormCounts: { 连带面: 6, 砍刀: 4 }, adopted: 6, overlap: 1 }),
 		advance({ batch: 'k1', combo: '连带面 砍刀', recommended: '连带面 砍刀', perFormCounts: { 连带面: 6, 砍刀: 4 }, adopted: 6, overlap: 1 }),
@@ -399,14 +376,14 @@ test('双报重叠按批型聚合：每批型一趟数、重叠 0 趟数与估�
 })
 
 test('重叠 0 时不出估算（没有交集就没有捕获-再捕获的样本），重叠数与捕获数矛盾时报不可算', async () => {
-	const disjoint = await run(seed('重叠0', [
+	const disjoint = await run(seedLedger(root, '重叠0', [
 		start('l1', '纯后端管线批', 'v1'),
 		advance({ batch: 'l1', combo: '连带面 砍刀', recommended: '连带面 砍刀', perFormCounts: { 连带面: 5, 砍刀: 2 }, adopted: 5, overlap: 0 }),
 	]), { force: true })
 	const line = disjoint.suggestions.find((entry) => entry.includes('双报重叠'))
 	assert.match(line, /重叠 0 的 1 趟/u)
 	assert.match(line, /捕获-再捕获估算 不可算（两路无交集，或重叠数与捕获数自相矛盾，见口径注记）/u)
-	const broken = await run(seed('重叠矛盾', [
+	const broken = await run(seedLedger(root, '重叠矛盾', [
 		start('l2', '纯后端管线批', 'v1'),
 		advance({ batch: 'l2', combo: '连带面 砍刀', recommended: '连带面 砍刀', perFormCounts: { 连带面: 5, 砍刀: 2 }, adopted: 5, overlap: 9 }),
 	]), { force: true })
@@ -420,7 +397,7 @@ test('重叠 0 时不出估算（没有交集就没有捕获-再捕获的样本�
 })
 
 test('少于两路有捕获就不报重叠（一条单路复核没有第二个样本，那个式子无从算起）', async () => {
-	const { suggestions } = await run(seed('单路', [
+	const { suggestions } = await run(seedLedger(root, '单路', [
 		start('m1', '纯后端管线批', 'v1'),
 		advance({ batch: 'm1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 4 }, adopted: 4, overlap: 0 }),
 		advance({ batch: 'm1', combo: '连带面', recommended: '连带面', perFormCounts: { 连带面: 2 }, adopted: 2, overlap: 0 }),
@@ -429,7 +406,7 @@ test('少于两路有捕获就不报重叠（一条单路复核没有第二个�
 })
 
 test('修复轮数、零 findings 形态与记账缺格各走各的那条建议', async () => {
-	const path = seed('草稿', [
+	const path = seedLedger(root, '草稿', [
 		start('r1', '修复批', 'v1', { baseBatchType: '纯后端管线批' }),
 		advance({ batch: 'r1', combo: '连带面 设计七维·终审 契约一致性', recommended: '连带面 设计七维·终审 契约一致性', perFormCounts: { 连带面: 6, '设计七维·终审': 4, 契约一致性: 0 }, adopted: 6, overlap: 3 }),
 		advance({ batch: 'r1', combo: '连带面 设计七维·终审 契约一致性', recommended: '连带面 设计七维·终审 契约一致性', perFormCounts: { 连带面: 2, '设计七维·终审': 0, 契约一致性: 0 }, adopted: 2, overlap: 1, missed: '收尾批又开了新账' }),
@@ -448,7 +425,7 @@ test('修复轮数、零 findings 形态与记账缺格各走各的那条建议'
 })
 
 test('零 findings 与记账缺格是两件事：派过两次仍零 findings 才进降级候选，只出现过一次不算', async () => {
-	const path = seed('零门槛', [
+	const path = seedLedger(root, '零门槛', [
 		start('y1', '纯后端管线批', 'v1'),
 		// 第一趟：砍刀派了两次零 findings；GUI 目检派了却没在 perFormCounts 里落数（记账缺格）
 		advance({ batch: 'y1', combo: '砍刀 GUI 目检', recommended: '砍刀 GUI 目检', perFormCounts: { 砍刀: 0 } }),
@@ -463,7 +440,7 @@ test('零 findings 与记账缺格是两件事：派过两次仍零 findings 才
 })
 
 test('坏计数折成零而不是把整份统计变成 NaN（坏行本身由读台账那层报错）', async () => {
-	const path = seed('坏计数', [
+	const path = seedLedger(root, '坏计数', [
 		start('n1', '纯后端管线批', 'v1'),
 		advance({ batch: 'n1', combo: '锚点核对 砍刀 连带面 GUI 目检', recommended: '锚点核对 砍刀 连带面 GUI 目检', perFormCounts: { 锚点核对: '4', 砍刀: -3, 连带面: 'Infinity', 'GUI 目检': null }, adopted: '2' }),
 	])
@@ -476,7 +453,7 @@ test('坏计数折成零而不是把整份统计变成 NaN（坏行本身由读�
 
 test('超过提示上限批数时只多一条提示，不改到点判定（点位看覆盖面不是攒月数）', async () => {
 	const kinds = ['纯后端管线批', '机械搬运/小修', '用户可见功能批']
-	const path = seed('超上限', Array.from({ length: 9 }, (_, index) => start(`o${index}`, kinds[index % 3], 'v1')))
+	const path = seedLedger(root, '超上限', Array.from({ length: 9 }, (_, index) => start(`o${index}`, kinds[index % 3], 'v1')))
 	const value = await run(path)
 	assert.equal(value.due, true, '九批三批型：到点')
 	assert.match(value.stats, /已到复盘点位：9 批（批型 3 种/u, '过了上限也不改首行的判定结论，只是多一条提示')
@@ -484,7 +461,7 @@ test('超过提示上限批数时只多一条提示，不改到点判定（点�
 })
 
 test('空台账（在、一条事件都没有）出零值统计，不报「异常」也不编数', async () => {
-	const path = seed('空台账', [])
+	const path = seedLedger(root, '空台账', [])
 	const value = await run(path)
 	assert.equal(value.due, false)
 	assert.match(value.stats, /^0 批（批型 0 种：—）｜门二 修复轮数合计 0（多轮批 0）/u)
@@ -504,8 +481,8 @@ test('统计是事件集合的函数：行序打乱（跨机 union merge 的常�
 		advance({ batch: 'o1', combo: '连带面 锚点核对', recommended: '连带面 锚点核对', perFormCounts: { 连带面: 5, 锚点核对: 2 }, adopted: 5, overlap: 1 }),
 		advance({ batch: 'o2', combo: 'GUI 目检', recommended: 'GUI 目检 砍刀', perFormCounts: { 'GUI 目检': 0 }, adopted: 0, missed: '甲批漏网' }),
 	]
-	const forward = await run(seed('顺序', events))
-	const backward = await run(seed('乱序', [...events].reverse()))
+	const forward = await run(seedLedger(root, '顺序', events))
+	const backward = await run(seedLedger(root, '乱序', [...events].reverse()))
 	assert.equal(backward.stats, forward.stats, '按事件时间定序，读到哪一行都一样')
 	assert.deepEqual(backward.suggestions, forward.suggestions)
 })
@@ -522,8 +499,8 @@ test('时间戳并列时行序也不许漂（t 只到秒，跨机各记一条同
 		{ ...start('q4', '跨端契约批', 'v1'), t: at },
 		{ ...start('q5', '机械搬运/小修', 'v1'), t: at },
 	]
-	const forward = await run(seed('同刻正序', events))
-	const backward = await run(seed('同刻乱序', [...events].reverse()))
+	const forward = await run(seedLedger(root, '同刻正序', events))
+	const backward = await run(seedLedger(root, '同刻乱序', [...events].reverse()))
 	assert.equal(backward.stats, forward.stats, '同一秒内的并列不许让版本组、批型清单的行序漂')
 	assert.deepEqual(backward.suggestions, forward.suggestions, '漏网这类逐条出的也一样——它们都自带定序键（两条漏网分属同一批型的两个批次，正序倒序会换位）')
 	assert.match(forward.stats, /规则版本 v1：/u)

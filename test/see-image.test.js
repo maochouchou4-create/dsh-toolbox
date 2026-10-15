@@ -5,10 +5,11 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, resolveTarget, sniffImageMediaType, transcribe } from '../lib/see-image/vision.js'
+import { tempRoot } from './helpers.js'
 
 test('sniffImageMediaType 按魔数识别四种受支持图型', () => {
 	assert.equal(sniffImageMediaType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'image/png')
@@ -74,38 +75,30 @@ test('resolveAttachmentRoot：DSH home 由胶水层注入，~ 展开／带尾斜
 	assert.throws(() => resolveAttachmentRoot(undefined), /DSH home/)
 })
 
-test('resolveAttachmentObject：前缀与全量均唯一命中，返回完整路径与 id', () => {
-	const root = mkdtempSync(join(tmpdir(), 'objects-'))
-	try {
-		mkdirSync(join(root, HEX64.slice(0, 2)))
-		writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
+test('resolveAttachmentObject：前缀与全量均唯一命中，返回完整路径与 id', (t) => {
+	const root = tempRoot(t, 'objects')
+	mkdirSync(join(root, HEX64.slice(0, 2)))
+	writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
 
-		const byPrefix = resolveAttachmentObject(root, '053eb17e')
-		assert.equal(byPrefix.id, HEX64)
-		assert.equal(byPrefix.path, join(root, HEX64.slice(0, 2), HEX64))
+	const byPrefix = resolveAttachmentObject(root, '053eb17e')
+	assert.equal(byPrefix.id, HEX64)
+	assert.equal(byPrefix.path, join(root, HEX64.slice(0, 2), HEX64))
 
-		const byFullId = resolveAttachmentObject(root, HEX64)
-		assert.equal(byFullId.id, HEX64)
-	} finally {
-		rmSync(root, { recursive: true, force: true })
-	}
+	const byFullId = resolveAttachmentObject(root, HEX64)
+	assert.equal(byFullId.id, HEX64)
 })
 
-test('resolveAttachmentObject：零命中／歧义／缺桶均显式报错', () => {
-	const root = mkdtempSync(join(tmpdir(), 'objects-'))
-	try {
-		mkdirSync(join(root, HEX64.slice(0, 2)))
-		writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
-		assert.throws(() => resolveAttachmentObject(root, '053eb17f'), /没有以 053eb17f 开头的对象/)
+test('resolveAttachmentObject：零命中／歧义／缺桶均显式报错', (t) => {
+	const root = tempRoot(t, 'objects')
+	mkdirSync(join(root, HEX64.slice(0, 2)))
+	writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
+	assert.throws(() => resolveAttachmentObject(root, '053eb17f'), /没有以 053eb17f 开头的对象/)
 
-		const sibling = '053eb17e'.padEnd(64, 'f')
-		writeFileSync(join(root, HEX64.slice(0, 2), sibling), 'x')
-		assert.throws(() => resolveAttachmentObject(root, '053eb17e'), /命中 2 个对象.*加长前缀/)
+	const sibling = '053eb17e'.padEnd(64, 'f')
+	writeFileSync(join(root, HEX64.slice(0, 2), sibling), 'x')
+	assert.throws(() => resolveAttachmentObject(root, '053eb17e'), /命中 2 个对象.*加长前缀/)
 
-		assert.throws(() => resolveAttachmentObject(root, 'ffffffff'), /没有桶/, '桶不存在时报可诊断路径')
-	} finally {
-		rmSync(root, { recursive: true, force: true })
-	}
+	assert.throws(() => resolveAttachmentObject(root, 'ffffffff'), /没有桶/, '桶不存在时报可诊断路径')
 })
 
 /** 存区根取用函数：只有占位符分支会问它（求根失败不许拖垮磁盘路径入口）。 */
@@ -156,20 +149,16 @@ test('resolveTarget：无会话上下文的调用不带 cwd（交由 fs 服务�
 	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: '/abs/b.png', cwd: undefined }])
 })
 
-test('resolveTarget：attachment 分支按前缀定位对象，sourceName 与 attachmentId 同为完整 id', async () => {
-	const root = mkdtempSync(join(tmpdir(), 'objects-'))
-	try {
-		mkdirSync(join(root, HEX64.slice(0, 2)))
-		writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
-		const ctx = 假Ctx()
-		const r = await resolveTarget(ctx, { attachment: `SHA256:053eb17e` }, { agent: undefined, signal: undefined }, () => root)
-		assert.equal(r.target.displayPath, join(root, HEX64.slice(0, 2), HEX64))
-		assert.equal(r.sourceName, HEX64)
-		assert.equal(r.attachmentId, HEX64, '占位符分支回显完整 id，调用方据此拼 sha256: 前缀')
-		assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: join(root, HEX64.slice(0, 2), HEX64), cwd: undefined }], '占位符入口同样不问会话活目录')
-	} finally {
-		rmSync(root, { recursive: true, force: true })
-	}
+test('resolveTarget：attachment 分支按前缀定位对象，sourceName 与 attachmentId 同为完整 id', async (t) => {
+	const root = tempRoot(t, 'objects')
+	mkdirSync(join(root, HEX64.slice(0, 2)))
+	writeFileSync(join(root, HEX64.slice(0, 2), HEX64), 'x')
+	const ctx = 假Ctx()
+	const r = await resolveTarget(ctx, { attachment: `SHA256:053eb17e` }, { agent: undefined, signal: undefined }, () => root)
+	assert.equal(r.target.displayPath, join(root, HEX64.slice(0, 2), HEX64))
+	assert.equal(r.sourceName, HEX64)
+	assert.equal(r.attachmentId, HEX64, '占位符分支回显完整 id，调用方据此拼 sha256: 前缀')
+	assert.deepEqual(ctx.calls, [{ method: 'fs.resolve', path: join(root, HEX64.slice(0, 2), HEX64), cwd: undefined }], '占位符入口同样不问会话活目录')
 })
 
 test('resolveTarget：path 与 attachment 都给或都不给即拦（两条入口互斥）', async () => {

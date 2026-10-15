@@ -6,10 +6,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
 	PARAM_FIELDS,
 	assembleBrief,
@@ -25,11 +23,11 @@ import {
 	templateKeyOf,
 	validateParams,
 } from '../lib/dispatch/core.js'
-import { loadDispatchData } from '../lib/dispatch/data.js'
 import { backfillFromBatch, readLedgerEvents } from '../lib/dispatch/batch.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { DISPATCH_DATA_DIR, makeEvent, seedLedger, tempRoot, withLoadedData } from './helpers.js'
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
+const dataDir = DISPATCH_DATA_DIR
 const readData = (name) => JSON.parse(readFileSync(join(dataDir, name), 'utf8'))
 const data = {
 	forms: readData('forms.json'),
@@ -44,25 +42,9 @@ const formIds = (combo) => combo.map((entry) => entry.form)
 /**
  * 现造的数据经真加载器走一遍再喂 core：core 吃得下不等于加载期放行（阶段表六处专核、模板键
  * 白名单、谓词可达都在加载期），绕过它测「加 stage 只改 JSON」等于给自己一份假信心——那份
- * 数据真装进工具时可能在加载期就被拦下。
+ * 数据真装进工具时可能在加载期就被拦下。实现在 helpers.js 的 withLoadedData：与 dispatch-data
+ * 那边的 withDataDir 共用同一套「拷真数据 → 改坏 → 删」的收尾。
  */
-const DATA_FILES = ['forms.json', 'pairing.json', 'templates.json', 'lifecycle.json', 'plan-spec.json']
-
-function withLoadedData(edits, run) {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-core-'))
-	try {
-		for (const file of DATA_FILES) writeFileSync(join(dir, file), readFileSync(join(dataDir, file)))
-		for (const [file, mutate] of Object.entries(edits ?? {})) {
-			const value = JSON.parse(readFileSync(join(dir, file), 'utf8'))
-			mutate(value)
-			writeFileSync(join(dir, file), JSON.stringify(value))
-		}
-		return run(loadDispatchData({ dataDir: dir }))
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
-	}
-}
-
 /**
  * 未知阶段的报错整句钉死：词表只列本工具真能出稿的四个阶段，另把提交/复盘归给谁说清——照着一份
  * 含出不了稿阶段的名单选阶段，模型只会从「未知 stage」撞到「本工具不装配该阶段」，两道错。
@@ -631,12 +613,12 @@ test('规模参数只给一半＝出一条告警：按不命中是静默的，�
 	assert.deepEqual(warningsOf({}), [], '一个都不给同样不报——那是没有规模判据要判，不是给漏了')
 })
 
-test('免派条的阶段限定读的是配对表那份数据：把它挪到施工，免派提示就跟着搬走', () => {
+test('免派条的阶段限定读的是配对表那份数据：把它挪到施工，免派提示就跟着搬走', (t) => {
 	// 阶段限定若写死在 core 里（"只对门二出"），改配对表改不动它，两处就此分家且都不报错：
 	// 数据面说这条判据限门二，代码说限死门二，加载期无从发现
 	const params = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
 	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note；动了共享面（工具参数面、数据表、模板、契约）照走门禁，规模小不是免门禁的理由'
-	const moved = withLoadedData({
+	const moved = withLoadedData(t, {
 		'pairing.json': (value) => {
 			const rule = value.rhythm.find((entry) => entry.when?.diffLines?.max === 5)
 			rule.when.stage = ['施工']
@@ -737,7 +719,7 @@ test('requires 参数校验：门一缺 subject 拒绝；方案阶段传 batchTy
 	assert.throws(() => validateParams(data, planning({ subject: '   ' })), /缺必填参数：subject/, '空白串算缺')
 })
 
-test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必填/词表/模板全跟着数据走（代码一行不改，且经真加载器验过）', () => {
+test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必填/词表/模板全跟着数据走（代码一行不改，且经真加载器验过）', (t) => {
 	const addRow = (lifecycle) => lifecycle.stages.push({
 		// kind 落在 core 的词表内（装载期形状规格按那份词表核）：新阶段可以另起一个 id，kind
 		// 却是「这一行被按哪种语义读」的判据，编一个词表外的值只会得到一条加载失败
@@ -747,7 +729,7 @@ test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必�
 	const addTemplate = (templates) => { templates.验收 = '验收结论：〔intent〕。〔subject〕' }
 	const call = { stage: '验收', batchType: '纯后端管线批', subject: '净 diff', intent: '验收' }
 
-	withLoadedData({ 'lifecycle.json': addRow }, (loaded) => {
+	withLoadedData(t, { 'lifecycle.json': addRow }, (loaded) => {
 		assert.deepEqual(stageRequires(loaded, '验收'), ['batchType', 'subject', 'intent'], '必填矩阵现算自该行的 requires')
 		assert.equal(stageVocabulary(loaded).at(-1), '验收', '词表现算，跟着 order 排')
 		assert.deepEqual(dispatchStages(loaded), ['方案', '门一', '施工', '门二'], '没有模板键就不算本工具能出稿的阶段——加载期就分得清')
@@ -761,7 +743,7 @@ test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必�
 		}
 	})
 
-	withLoadedData({ 'lifecycle.json': addRow, 'templates.json': addTemplate }, (loaded) => {
+	withLoadedData(t, { 'lifecycle.json': addRow, 'templates.json': addTemplate }, (loaded) => {
 		assert.deepEqual(dispatchStages(loaded).at(-1), '验收', '模板键存在即进可服务清单（数据驱动，加阶段不改代码）')
 		assert.throws(() => validateParams(loaded, { ...call, batchType: undefined }), /缺必填参数：batchType/, '模板补上之后才轮到必填矩阵说话')
 		assert.doesNotThrow(() => validateParams(loaded, call))
@@ -771,7 +753,7 @@ test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必�
 	})
 
 	assert.throws(
-		() => withLoadedData({ 'templates.json': addTemplate }, () => {}),
+		() => withLoadedData(t, { 'templates.json': addTemplate }, () => {}),
 		/多出未声明的模板键「验收」.*没有任何阶段会读到它/,
 		'只加模板不加 lifecycle 行＝加载失败：那个键没有任何阶段会读到，留着等于让人以为写了就生效',
 	)
@@ -779,8 +761,8 @@ test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必�
 	assert.throws(() => validateParams(data, call), unknownStageError('验收'), '真数据里没有这一行——单源不是「认得所有词」')
 })
 
-test('加 stage 不扰动既有阶段：临时加一行后，四个已上线阶段的输出逐字不变', () => {
-	const extended = withLoadedData({
+test('加 stage 不扰动既有阶段：临时加一行后，四个已上线阶段的输出逐字不变', (t) => {
+	const extended = withLoadedData(t, {
 		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
 			id: '验收', order: 7, gate: false, kind: '方案',
 			requires: ['subject', 'intent'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
@@ -810,8 +792,8 @@ test('词表排序按数值：order 混进 10／1.5／-1 时仍是数值严格�
 	}
 })
 
-test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶段也走同一份 13 节与自查清单', () => {
-	const twin = withLoadedData({
+test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶段也走同一份 13 节与自查清单', (t) => {
+	const twin = withLoadedData(t, {
 		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
 			id: '定稿', order: 7, gate: false, kind: '方案',
 			requires: ['subject', 'intent'], produces: ['定稿文档'], uses: ['plan-spec.json'], note: '单测现造的阶段',
@@ -896,8 +878,8 @@ test('批型条件槽位的点名带条件：门一传 baseBatchType／rootCause
 	assert.doesNotThrow(() => validateParams(data, { stage: '门二', batchType: '修复批', baseBatchType: '纯后端管线批', subject: 'x', intent: 'y' }), 'needsBase 行在有门列的阶段仍然消费它')
 })
 
-test('复核阶段出一路都没有＝报错点名两种成因（静默空转：briefs 空数组，调用方以为派了门复核）', () => {
-	const noBatchType = withLoadedData({
+test('复核阶段出一路都没有＝报错点名两种成因（静默空转：briefs 空数组，调用方以为派了门复核）', (t) => {
+	const noBatchType = withLoadedData(t, {
 		'lifecycle.json': (lifecycle) => { lifecycle.stages[1].requires = ['subject', 'intent'] },
 	}, (loaded) => loaded)
 	assert.deepEqual(stageRequires(noBatchType, '门一'), ['subject', 'intent'], '必填矩阵里没有判批型参数')
@@ -910,7 +892,7 @@ test('复核阶段出一路都没有＝报错点名两种成因（静默空转�
 		)
 	}
 	assert.throws(
-		() => assembleDispatch(withLoadedData({
+		() => assembleDispatch(withLoadedData(t, {
 			'pairing.json': (pairing) => { pairing.rows[0].gate1 = [] },
 		}, (loaded) => loaded), { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' }),
 		/复核阶段无可派组合/,
@@ -939,64 +921,56 @@ test('方案任务书：执行纪律指针、语义判定段位置、自查第 �
 	assert.ok(!layout.text.includes('（见「版面」节）'), '悬空自指清掉')
 })
 
-test('跨工具回填：dispatch(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async () => {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-backfill-'))
-	const path = join(dir, 'dispatch-ledger.jsonl')
+test('跨工具回填：dispatch(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async (t) => {
+	const dir = tempRoot(t, 'dispatch-backfill')
 	const batch = 'dispatch-plugin-b4'
 	const decisions = ['台账落共享层', 'fold 集合式']
-	writeFileSync(path, `${[
-		JSON.stringify({ t: '2026-10-15T10:00:00+08:00', batch, action: 'start', batchType: '纯后端管线批', intent: '台账落共享层', subject: '方案.md 批 4', decisions, rules: 'a1b2c3d4' }),
-		JSON.stringify({ t: '2026-10-15T11:00:00+08:00', batch, action: 'advance', stage: '门一', rules: 'a1b2c3d4', combo: '', recommended: '', perFormCounts: {}, adopted: 0, overlap: 0, missed: '', note: '' }),
-	].join('\n')}\n`)
-	try {
-		const events = await readLedgerEvents({ port: createNodeFsPort(), path })
-		const review = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4' }, events).params
-		assert.deepEqual(review.decisions, decisions, '拍板清单跟批次走：登记一次，此后每路 brief 自动带「不得重开」')
-		assert.equal(review.batchType, '纯后端管线批')
-		const output = assembleDispatch(data, review)
-		for (const brief of output.briefs) {
-			assert.ok(brief.text.includes(`拍板清单（不得重开）：${decisions.join('；')}。`), `${brief.form} 的 brief 带出台账登记的拍板清单`)
-			assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的 brief 带上台账登记的意图`)
-		}
-		// 方案那一趟不消费 decisions/batchType：回填只给 intent，出稿不撞「不消费即报错」
-		const planParams = backfillFromBatch(data, { stage: '方案', batch, subject: '方案.md 批 4' }, events).params
-		assert.deepEqual(Object.keys(planParams).sort(), ['batch', 'intent', 'stage', 'subject'])
-		assert.doesNotThrow(() => assembleDispatch(data, planParams))
-		// 显式参数优先，且与台账说岔了即报错：两个来源说同一件事说岔时静默取一个＝主会话以为自己改过
-		assert.throws(
-			() => backfillFromBatch(data, { stage: '门一', batch, subject: 'x', intent: '另一句意图' }, events),
-			/与批次「dispatch-plugin-b4」台账里登记的不一致/,
-		)
-		const agreed = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events)
-		assert.equal(agreed.params.intent, '台账落共享层', '与台账一致的显式值照用，不重复填也不报冲突')
-		assert.deepEqual(agreed.filled, [])
-		// 对象那格每阶段都必填：登记时带对象、这一趟不传，回填补齐后出稿
-		const build = backfillFromBatch(data, { stage: '施工', batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events)
-		assert.deepEqual(build.filled, ['batchType', 'subject', 'decisions'], '施工消费 batchType/subject/intent/anchors/decisions：台账补上没传的那几格')
-		assert.equal(build.params.subject, '方案.md 批 4', '对象从台账补齐——登记一次，每路 brief 指同一份对象指针')
-		for (const brief of assembleDispatch(data, build.params).briefs) {
-			assert.ok(brief.text.includes('对象（动工前先读对应批次节）：方案.md 批 4。'), `${brief.form} 的施工 brief 带出台账登记的对象`)
-			assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的施工 brief 带上显式传的意图`)
-			assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享层；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
-		}
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
+	const fixture = makeEvent()
+	const path = seedLedger(dir, 'dispatch-ledger', [
+		fixture.start(batch, '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享层', subject: '方案.md 批 4', decisions }),
+		fixture.advance({ batch, stage: '门一', rules: 'a1b2c3d4' }),
+	])
+	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
+	const review = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4' }, events).params
+	assert.deepEqual(review.decisions, decisions, '拍板清单跟批次走：登记一次，此后每路 brief 自动带「不得重开」')
+	assert.equal(review.batchType, '纯后端管线批')
+	const output = assembleDispatch(data, review)
+	for (const brief of output.briefs) {
+		assert.ok(brief.text.includes(`拍板清单（不得重开）：${decisions.join('；')}。`), `${brief.form} 的 brief 带出台账登记的拍板清单`)
+		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的 brief 带上台账登记的意图`)
+	}
+	// 方案那一趟不消费 decisions/batchType：回填只给 intent，出稿不撞「不消费即报错」
+	const planParams = backfillFromBatch(data, { stage: '方案', batch, subject: '方案.md 批 4' }, events).params
+	assert.deepEqual(Object.keys(planParams).sort(), ['batch', 'intent', 'stage', 'subject'])
+	assert.doesNotThrow(() => assembleDispatch(data, planParams))
+	// 显式参数优先，且与台账说岔了即报错：两个来源说同一件事说岔时静默取一个＝主会话以为自己改过
+	assert.throws(
+		() => backfillFromBatch(data, { stage: '门一', batch, subject: 'x', intent: '另一句意图' }, events),
+		/与批次「dispatch-plugin-b4」台账里登记的不一致/,
+	)
+	const agreed = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events)
+	assert.equal(agreed.params.intent, '台账落共享层', '与台账一致的显式值照用，不重复填也不报冲突')
+	assert.deepEqual(agreed.filled, [])
+	// 对象那格每阶段都必填：登记时带对象、这一趟不传，回填补齐后出稿
+	const build = backfillFromBatch(data, { stage: '施工', batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events)
+	assert.deepEqual(build.filled, ['batchType', 'subject', 'decisions'], '施工消费 batchType/subject/intent/anchors/decisions：台账补上没传的那几格')
+	assert.equal(build.params.subject, '方案.md 批 4', '对象从台账补齐——登记一次，每路 brief 指同一份对象指针')
+	for (const brief of assembleDispatch(data, build.params).briefs) {
+		assert.ok(brief.text.includes('对象（动工前先读对应批次节）：方案.md 批 4。'), `${brief.form} 的施工 brief 带出台账登记的对象`)
+		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的施工 brief 带上显式传的意图`)
+		assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享层；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
 	}
 })
 
-test('「先回填后校验」是契约（回填面那四格里两格每阶段必填，顺序反了就是先报缺必填）', async () => {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-order-'))
-	const path = join(dir, 'dispatch-ledger.jsonl')
-	writeFileSync(path, `${JSON.stringify({ t: '2026-10-15T10:00:00+08:00', batch: 'order-batch', action: 'start', batchType: '纯后端管线批', intent: '台账落共享层', subject: '方案.md 批 4', decisions: [], rules: 'a1b2c3d4' })}\n`)
-	try {
-		const events = await readLedgerEvents({ port: createNodeFsPort(), path })
-		const args = { stage: '门一', batch: 'order-batch' }
-		assert.throws(() => validateParams(data, args), /缺必填参数：batchType、subject、intent/, '不先回填就校验：报的是「你少传了」，而那两格本来就该由台账给')
-		const backfilled = backfillFromBatch(data, args, events).params
-		assert.doesNotThrow(() => validateParams(data, backfilled), '回填之后才校验：这两格齐了，出稿继续往下走')
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
-	}
+test('「先回填后校验」是契约（回填面那四格里两格每阶段必填，顺序反了就是先报缺必填）', async (t) => {
+	const path = seedLedger(tempRoot(t, 'dispatch-order'), 'dispatch-ledger', [
+		makeEvent().start('order-batch', '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享层', subject: '方案.md 批 4' }),
+	])
+	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
+	const args = { stage: '门一', batch: 'order-batch' }
+	assert.throws(() => validateParams(data, args), /缺必填参数：batchType、subject、intent/, '不先回填就校验：报的是「你少传了」，而那两格本来就该由台账给')
+	const backfilled = backfillFromBatch(data, args, events).params
+	assert.doesNotThrow(() => validateParams(data, backfilled), '回填之后才校验：这两格齐了，出稿继续往下走')
 })
 
 test('batchParameters 的键面＝工具逻辑层要的那几格（漏一个就是模型传了收不到的那一格）', async () => {

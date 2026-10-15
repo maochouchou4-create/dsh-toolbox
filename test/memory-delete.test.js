@@ -6,27 +6,21 @@
  * 用例留在 memory-write.test.js：它三个动作都碰，拆开就不是同一个用例了。
  * 每个用例独立临时根，互不共享状态。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { composeMemory } from '../lib/memory/assemble.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { upsertEntry } from '../lib/memory/write.js'
-import { entry } from './helpers.js'
+import { entry, tempRoot } from './helpers.js'
 
 let base
 const port = createNodeFsPort()
 
-before(() => {
-	base = join(tmpdir(), `dsh-memory-delete-test-${process.pid}`)
-	mkdirSync(base, { recursive: true })
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
+before((t) => {
+	base = tempRoot(t, 'memory-delete')
 })
 
 /** 收错误而不是让它抛出：断言要比 name 与 code，得先拿到那个对象。 */

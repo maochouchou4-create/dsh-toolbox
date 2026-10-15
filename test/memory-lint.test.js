@@ -4,32 +4,22 @@
  * 体检按设计全程留在 node:fs（本层无写动作，故不接端口、不 async），用例不碰 upsert。
  * 每个用例独立临时根，互不共享状态。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING } from '../lib/memory/core.js'
 import { lintMemory } from '../lib/memory/lint.js'
-import { entry } from './helpers.js'
+import { entry, memoryTree, tempRoot } from './helpers.js'
 
 let base
 
-before(() => {
-	base = join(tmpdir(), `dsh-memory-lint-test-${process.pid}`)
-	mkdirSync(base, { recursive: true })
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
+before((t) => {
+	base = tempRoot(t, 'memory-lint')
 })
 
 test('lintMemory：frontmatter 契约/超长/日期戳/死链/超预算全覆盖，干净夹具 ok', () => {
-	const root = join(base, 'lint-case')
-	const profile = join(root, 'profile')
-	const bucket = join(root, 'workspaces', 'D-code')
-	mkdirSync(bucket, { recursive: true })
-	mkdirSync(profile, { recursive: true })
+	const { root, profile, bucket } = memoryTree(base, 'lint-case', 'D-code')
 	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词', 'x 引 [[missing]]'), 'utf8')
 	writeFileSync(join(profile, 'bare.md'), '没有 frontmatter\n', 'utf8')
 	writeFileSync(join(profile, 'extra.md'), '---\nname: extra\ntitle: 多余键\ndescription: 触发词\n---\n\n正文\n', 'utf8')
@@ -112,11 +102,7 @@ test('lintMemory：缺习惯层接线/日期戳/失控保护/无桶提示', () =
 })
 
 test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算撞（判据＝同层同 title 字段）', () => {
-	const root = join(base, 'lint-dup-title')
-	const profile = join(root, 'profile')
-	const bucket = join(root, 'workspaces', 'D-code')
-	mkdirSync(profile, { recursive: true })
-	mkdirSync(bucket, { recursive: true })
+	const { root, profile, bucket } = memoryTree(base, 'lint-dup-title', 'D-code')
 	// 同层同 title、文件名各不同：写侧 assertTitleFree 正是按 frontmatter 的 title 字段拦的，
 	// 按文件名判的话这一组根本不会被拦——两条判据必须落在同一处
 	writeFileSync(join(profile, 'alpha.md'), entry('撞名标题', '触发词甲'), 'utf8')
@@ -150,9 +136,7 @@ test('lintMemory：层内 title 重名点名撞上的条目，跨层同名不算
 })
 
 test('lintMemory：有 title 判不了的条目而本层不撞名，覆盖面缺口照样单独立一条（挂在撞名尾巴上时不撞名就一个字都不说）', () => {
-	const root = join(base, 'lint-coverage-alone')
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
+	const { root, profile } = memoryTree(base, 'lint-coverage-alone')
 	writeFileSync(join(profile, 'good.md'), entry('独一份', '触发词'), 'utf8')
 	writeFileSync(join(profile, 'broken.md'), '没有 frontmatter\n', 'utf8')
 	const report = lintMemory({ memoryRoot: root })
@@ -184,6 +168,7 @@ test('lintMemory：条目清点失败退回保留 stem 集（死链判定降级�
 	writeFileSync(join(healthyBucket, 'linker.md'), entry('引用条目', '触发词', '见 [[present]] 一处'), 'utf8')
 	assert.equal(lintMemory({ memoryRoot: healthy }).warnings.filter((w) => w.includes('死 wikilink')).length, 0, '对照：stem 集完整时在场条目不判死链')
 
+	// 这一档刻意只建工作层、不建习惯层：下面往 profile 那个路径上写一个目录，逼条目清点失败
 	const root = join(base, 'lint-stems-degraded')
 	const bucket = join(root, 'workspaces', 'home-nvse-code')
 	mkdirSync(bucket, { recursive: true })
@@ -202,9 +187,7 @@ test('lintMemory：条目清点失败退回保留 stem 集（死链判定降级�
 })
 
 test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（同名目录确定性触发）', () => {
-	const root = join(base, 'lint-degraded')
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
+	const { root, profile } = memoryTree(base, 'lint-degraded')
 	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
 	// x.md 名字的目录：readdirSync 列出它，而它落在「Dirent 判不出是不是普通文件」那一档，补的那
 	// 次 statSync 说它不是文件——报出来的是「条目名被非普通文件占用」，不再是读文件时的 EISDIR

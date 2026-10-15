@@ -6,11 +6,11 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assembleDispatch, computeCombo } from '../lib/dispatch/core.js'
 import { DEFAULT_DATA_DIR, SAFETY_CARRIER_IDS, loadDispatchData } from '../lib/dispatch/data.js'
+import { editData, withDataDir } from './helpers.js'
 
 const GATE_COLUMNS = ['gate1', 'gate2']
 
@@ -18,43 +18,88 @@ const GATE_COLUMNS = ['gate1', 'gate2']
 const SAFETY_HEAD = '此用户能操作此资源吗'
 const SAFETY_TAIL = 'PII 与 token 进日志吗'
 
-/** 现读面的五份数据：少拷一份＝临时目录里那份读不到，用例全红在无关的原因上。 */
-const DATA_FILES = ['forms.json', 'pairing.json', 'templates.json', 'lifecycle.json', 'plan-spec.json']
+const orphanId = (warning) => warning.match(/「(.+?)」/)[1]
 
-/** 一份可随意改坏的临时数据目录：按盘上真数据落盘 → mutator 改坏 → 跑断言 → 删。 */
-function withDataDir(mutate, run) {
-	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-data-'))
-	try {
-		for (const file of DATA_FILES) {
-			writeFileSync(join(dir, file), readFileSync(join(DEFAULT_DATA_DIR, file)))
-		}
-		mutate?.(dir)
-		return run(dir)
-	} finally {
-		rmSync(dir, { recursive: true, force: true })
-	}
+/**
+ * 五份数据的计数快照。改数据时只改这一处：断言拿它对着盘上现读的 JSON 核，数据变了就红在
+ * 这里并指明该改哪儿，而不是让人再去翻散在各用例里的字面量。
+ *
+ * 八个键＝五份 JSON 里每一条「行/条」列表：形态、原则、不做清单、配对行、节奏谓词、阶段表、
+ * 方案节、定稿自查条。少一维就有一份文件的改动不触发任何红——例如 checklist 增减一条，
+ * 快照里没有那一格，改了它这条用例照样全绿，而它是方案任务书尾巴上的定稿自查清单。
+ */
+const COUNT_SNAPSHOT = {
+	forms: 21,
+	principles: 6,
+	rejected: 3,
+	rows: 11,
+	rhythm: 11,
+	stages: 6,
+	blocks: 13,
+	checklist: 11,
 }
 
 /**
- * 改临时目录里的一份数据再写回。刻意只从磁盘文本重新解析、不复用任何一次加载返回的对象：
- * 复用的话，下面那条「改文件后取新值」的用例就会被自己写回的那份缓存喂绿。
+ * 三段阶段模板的正文快照（门一／施工／方案任务书）。计数快照守的是「条目数没变」，而这三键的
+ * 风险正相反：改一个字不改变任何计数，于是改规则这件事本身没有任何东西会拦——而模板正文就是
+ * 派发出来的那份 brief 的骨架，它被顺手改掉时的症状是「派出去的活儿悄悄换了要求」。
+ * 「裁决」「修复批增量」「横切判据」「checklist」「AGENTS 必读链」那几键不在这儿：前两者各有
+ * 已有红点覆盖，后三者的正文由别处逐句断言（必读链整篇逐字比对在 data.js 的加载期校验里）。
+ *
+ * 改模板正文＝改规则，更新这份快照是有意的动作而不是善后：快照与盘面不一致时红，指的是「有人
+ * 改了规则面而没打算改这里」或「改了而忘了说」。
  */
-const editData = (dir, file, mutate) => {
-	const value = JSON.parse(readFileSync(join(dir, file), 'utf8'))
-	mutate(value)
-	writeFileSync(join(dir, file), JSON.stringify(value))
+const TEMPLATE_SNAPSHOT = {
+	门一: "\"〔形态角色句，forms.json 逐字带入〕。\\n本批意图一句话：〔intent〕。\\n对象：〔subject〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n横切判据：〔下文四条原文〕\\n〔AGENTS 必读链·复核〕\\n上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}，只报问题不附方案——低能力复核模型的「更优做法」会误导主会话裁决，根治法由主会话亲读原文后定；无法判断的域标「转派」而不是硬答。\\n派发时 provider/model 必须显式指派（先查 list_subagent_models 取真 model id；省略＝继承主会话路线且绕过授权清单）。\"",
+	施工: "\"方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。偏差在收尾汇报里说明。设计级冲突（改语义、动拍板项、批级顺势重设计机会、范围外发现）停下上报（conflict/escalations），不自行换方案。\\n对象（动工前先读对应批次节）：〔subject〕。\\n本批意图一句话：〔intent〕。\\n锚点（符号名，禁行号）：〔anchors〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n禁区：〔forbidden；空则本行省略〕。\\n自验封顶＝一条受影响单测：〔verifyCmd；空则本行省略〕。\\n自证：上报必须附自验证据——verifyCmd 实跑输出＋机器门（typecheck/lint/测试）全绿的命令与输出，证据不是陈述。\\n提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做——提交在门二判据过后由主会话执行。\\n〔AGENTS 必读链·施工〕\\n上报格式＝只报现象＋证据＋影响面事实；不附方案/选项/倾向——方案由主会话定。\\n裁决类上报必须等裁决再动工（不得「否则我按上述施工」）。\\n派发时 provider/model 必须显式指派。\"",
+	方案任务书: "\"按下列规范撰写实施方案（对象与意图注入在末尾）：\\n〔plan-spec 各节逐字〕\\n本批意图一句话：〔intent〕。\\n对象与落点：〔subject〕。\\n写完过定稿自查：〔plan-spec checklist 逐条〕。\"",
 }
 
-const orphanId = (warning) => warning.match(/「(.+?)」/)[1]
+/** 三键的序列化快照（现读加载器那一端）。 */
+const templateTextsOf = (templates) => Object.fromEntries(
+	Object.keys(TEMPLATE_SNAPSHOT).map((key) => [key, JSON.stringify(templates[key])]),
+)
 
-test('盘上真数据加载即用：21 形态／11 配对行／11 节奏／6 阶段／13 节，warnings 只收两条预期孤儿', () => {
+/** 加载结果那一端：把已加载的数据归成与快照同形的计数。 */
+const countsOf = (data) => ({
+	forms: data.forms.forms.length,
+	principles: data.forms.principles.length,
+	rejected: data.forms.rejected.length,
+	rows: data.pairing.rows.length,
+	rhythm: data.pairing.rhythm.length,
+	stages: data.lifecycle.stages.length,
+	blocks: data.planSpec.blocks.length,
+	checklist: data.planSpec.checklist.length,
+})
+
+/**
+ * 盘上那一端：直接解析五份 JSON 数条目，**不经加载器**。
+ *
+ * 「必须不经加载器」不是洁癖：三个来源（快照／加载器／盘面）塌成两个时，两边都是同一段读法的
+ * 产物，单侧变异全部放行——实测过，加载器少读一条 rhythm 时若盘面那端也走加载器，这条用例照样
+ * 全绿，只有「数据与加载器同时变」的复合变异才红得了。三条腿各走各的路，对账才有对账的形状。
+ */
+const countsOnDisk = (dir = DEFAULT_DATA_DIR) => {
+	const read = (file) => JSON.parse(readFileSync(join(dir, file), 'utf8'))
+	return {
+		forms: read('forms.json').forms.length,
+		principles: read('forms.json').principles.length,
+		rejected: read('forms.json').rejected.length,
+		rows: read('pairing.json').rows.length,
+		rhythm: read('pairing.json').rhythm.length,
+		stages: read('lifecycle.json').stages.length,
+		blocks: read('plan-spec.json').blocks.length,
+		checklist: read('plan-spec.json').checklist.length,
+	}
+}
+
+test('盘上真数据加载即用：五份数据的计数与数据文件现读对账（快照一致＋加载器与盘上一致），warnings 只收两条预期孤儿', () => {
 	const data = loadDispatchData()
 	assert.deepEqual(Object.keys(data).sort(), ['forms', 'lifecycle', 'pairing', 'planSpec', 'templates', 'warnings'])
-	assert.equal(data.forms.forms.length, 21)
-	assert.equal(data.pairing.rows.length, 11)
-	assert.equal(data.pairing.rhythm.length, 11)
-	assert.equal(data.lifecycle.stages.length, 6)
-	assert.equal(data.planSpec.blocks.length, 13)
+	// 对账式而非钉死式：数据是 SSOT，测试守「快照与源同步」不守「数不变」。加一条形态、改一条节奏
+	// 条目都该由这一条红着告诉人「快照该更新了」，而不是让人自己数一遍五个数字对不对
+	assert.deepEqual(countsOf(data), COUNT_SNAPSHOT, '测试内快照与盘上现读一致（改数据时改这一处即可）')
+	assert.deepEqual(countsOf(data), countsOnDisk(), '加载器交出的条数与盘上 JSON 一致：加载器自己少读一条照样红')
 	assert.deepEqual(data.warnings.map(orphanId).sort(), ['设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦')
 	assert.ok(data.warnings.every((warning) => warning.includes('预期孤儿')), '孤儿告警带出该形态自己的 notes，说明它是刻意的')
 	// 加载出来的那份直接喂 core：这一条兜住「加载通过但核心函数吃不下」的缝
@@ -62,72 +107,87 @@ test('盘上真数据加载即用：21 形态／11 配对行／11 节奏／6 阶
 	assert.equal(output.briefs.length, 5)
 })
 
+test('三段阶段模板的正文与快照逐字一致（改模板＝改规则，红在这里指明该改快照）', () => {
+	// 两端分立：加载器返回的是解析后的值，快照是序列化文本，拿加载结果跟自己比恒真
+	const data = loadDispatchData()
+	assert.deepEqual(templateTextsOf(data.templates), TEMPLATE_SNAPSHOT, '模板正文与快照不一致：改模板正文＝改规则')
+	const onDisk = JSON.parse(readFileSync(join(DEFAULT_DATA_DIR, 'templates.json'), 'utf8'))
+	assert.deepEqual(templateTextsOf(onDisk), TEMPLATE_SNAPSHOT, '盘上现读的 templates.json 与快照一致：加载器自己改写正文照样红')
+})
+
 test('dataDir 省略或留空串＝模块同目录的 ./data/（Config 默认值走同一条路）', () => {
-	assert.equal(loadDispatchData({ dataDir: '' }).forms.forms.length, 21)
+	assert.deepEqual(countsOf(loadDispatchData({ dataDir: '' })), countsOnDisk(), '空串与省略走同一条路：拿到的就是盘上那份数据，一个条目不多不少')
 	assert.deepEqual(loadDispatchData({ dataDir: DEFAULT_DATA_DIR }).warnings, loadDispatchData().warnings)
 })
 
-test('坏 JSON 显式报错，错误里点得出是哪个文件', () => {
-	withDataDir(
-		(dir) => writeFileSync(join(dir, 'pairing.json'), '{ "rows": [ '),
-		(dir) => assert.throws(() => loadDispatchData({ dataDir: dir }), /pairing\.json 不是合法 JSON/),
-	)
-	withDataDir((dir) => rmSync(join(dir, 'templates.json')), (dir) => {
+test('坏 JSON 显式报错，错误里点得出是哪个文件', (t) => {
+	withDataDir(t, (dir) => {
+		writeFileSync(join(dir, 'pairing.json'), '{ "rows": [ ')
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /pairing\.json 不是合法 JSON/)
+	})
+	withDataDir(t, (dir) => {
+		rmSync(join(dir, 'templates.json'))
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /dispatch 数据读取失败.*templates\.json/, '文件读不到也要报出路径，不静默出空数据')
 	})
 })
 
-test('形状不合显式报错，错误点名文件与字段（缺字段／类型错／枚举越界／多出字段）', () => {
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => delete forms.rejected), (dir) => {
+test('形状不合显式报错，错误点名文件与字段（缺字段／类型错／枚举越界／多出字段）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => delete forms.rejected)
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /forms\.json 缺字段「rejected」/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate1 = '锚点核对' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate1 = '锚点核对' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /pairing\.json\.rows\[0\]\.gate1 须是 string\[\]/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => { pairing.rows[5].kind = 'addonn' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => { pairing.rows[5].kind = 'addonn' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /rows\[5\]\.kind 须是 enum\(addon,special\)/)
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => { templates.checklistt = '拼错的键' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => { templates.checklistt = '拼错的键' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /多出未声明的模板键「checklistt」.*没有任何阶段会读到它/, '模板键的白名单＝lifecycle 各行的 templateKey 加那几张辅助页（拼错的键没有任何阶段会读到它）')
 	})
 })
 
-test('配对指向未定义形态＝加载失败（悬空即错：静默出稿的代价是漏派一整门复核）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate2[0] = '没定过的形态' }), (dir) => {
+test('配对指向未定义形态＝加载失败（悬空即错：静默出稿的代价是漏派一整门复核）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate2[0] = '没定过的形态' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /悬空引用.*纯后端管线批.*没定过的形态/)
 	})
 })
 
-test('去掉一条配对引用不失败：该形态进 warnings，数据照常返回', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		for (const row of pairing.rows) {
-			for (const column of GATE_COLUMNS) {
-				if (row[column] !== null) row[column] = row[column].filter((id) => id !== '砍刀')
-			}
-		}
-	}), (dir) => {
-		const data = loadDispatchData({ dataDir: dir })
-		assert.equal(data.forms.forms.length, 21, '孤儿只报不拦：三份数据照常返回，装配层继续可用')
-		assert.ok(data.warnings.some((warning) => orphanId(warning) === '砍刀'), '无引用（且自己没写 notes）的形态也进 warnings')
-		assert.deepEqual(data.warnings.filter((warning) => warning.includes('预期孤儿')).map(orphanId).sort(), ['设计七维', '证伪复核'])
-	})
+test('去掉一条配对引用不失败：该形态进 warnings，数据照常返回', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+				for (const row of pairing.rows) {
+					for (const column of GATE_COLUMNS) {
+						if (row[column] !== null) row[column] = row[column].filter((id) => id !== '砍刀')
+					}
+				}
+			})
+			const data = loadDispatchData({ dataDir: dir })
+			assert.deepEqual(countsOf(data), countsOnDisk(dir), '孤儿只报不拦：三份数据照常返回（被形变的是引用，不是条目本身），装配层继续可用')
+			assert.ok(data.warnings.some((warning) => orphanId(warning) === '砍刀'), '无引用（且自己没写 notes）的形态也进 warnings')
+			assert.deepEqual(data.warnings.filter((warning) => warning.includes('预期孤儿')).map(orphanId).sort(), ['设计七维', '证伪复核'])
+		})
 })
 
-test('改文件后下次调用取新值（现读不被偷偷改成 import 缓存）', () => {
-	withDataDir(undefined, (dir) => {
+test('改文件后下次调用取新值（现读不被偷偷改成 import 缓存）', (t) => {
+	withDataDir(t, (dir) => {
 		const first = loadDispatchData({ dataDir: dir })
 		editData(dir, 'forms.json', (forms) => {
-			forms.forms.find((form) => form.id === '砍刀').catches = '改写后的专抓文案'
+				forms.forms.find((form) => form.id === '砍刀').catches = '改写后的专抓文案'
+			})
+			const second = loadDispatchData({ dataDir: dir })
+			assert.equal(second.forms.forms.find((form) => form.id === '砍刀').catches, '改写后的专抓文案', '同一次进程内两次加载取到不同值')
+			assert.notEqual(second.forms, first.forms, '每次调用现读现解析，不复用同一份对象')
+			const combo = computeCombo(second, { batchType: '用户可见功能批', stage: '门一' })
+			assert.equal(combo.find((entry) => entry.form === '砍刀').reason, '改写后的专抓文案', '改动随装配结果走：组合理由取的就是改后的 catches')
 		})
-		const second = loadDispatchData({ dataDir: dir })
-		assert.equal(second.forms.forms.find((form) => form.id === '砍刀').catches, '改写后的专抓文案', '同一次进程内两次加载取到不同值')
-		assert.notEqual(second.forms, first.forms, '每次调用现读现解析，不复用同一份对象')
-		const combo = computeCombo(second, { batchType: '用户可见功能批', stage: '门一' })
-		assert.equal(combo.find((entry) => entry.form === '砍刀').reason, '改写后的专抓文案', '改动随装配结果走：组合理由取的就是改后的 catches')
-	})
 })
 
-test('空集下限：forms／rows／rhythm／stages／blocks／checklist 任一被清空＝加载失败（规则面装不出东西却装得上＝有人整段删了规则没报错）', () => {
+test('空集下限：forms／rows／rhythm／stages／blocks／checklist 任一被清空＝加载失败（规则面装不出东西却装得上＝有人整段删了规则没报错）', (t) => {
 	for (const [file, mutate, where] of [
 		['forms.json', (value) => { value.forms = [] }, /forms\.json 的 forms/],
 		['pairing.json', (value) => { value.rows = [] }, /pairing\.json 的 rows/],
@@ -136,182 +196,210 @@ test('空集下限：forms／rows／rhythm／stages／blocks／checklist 任一�
 		['plan-spec.json', (value) => { value.blocks = [] }, /plan-spec\.json 的 blocks/],
 		['plan-spec.json', (value) => { value.checklist = [] }, /plan-spec\.json 的 checklist/],
 	]) {
-		withDataDir((dir) => editData(dir, file, mutate), (dir) => {
+		withDataDir(t, (dir) => {
+			editData(dir, file, mutate)
 			assert.throws(() => loadDispatchData({ dataDir: dir }), where)
 		})
 	}
 })
 
-test('唯一性：行名或形态 id 重名＝加载失败（重名那条等于悄悄失效）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows.push(structuredClone(pairing.rows[0]))
-	}), (dir) => {
+test('唯一性：行名或形态 id 重名＝加载失败（重名那条等于悄悄失效）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows.push(structuredClone(pairing.rows[0]))
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /pairing\.json 的批型行名.*出现两次「纯后端管线批」/)
 	})
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		forms.forms.push(structuredClone(forms.forms[0]))
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			forms.forms.push(structuredClone(forms.forms[0]))
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /forms\.json 的形态 id.*出现两次「锚点核对」/)
 	})
 })
 
-test('主行的 gate 列写成空数组＝告警不拦（有意免派该门请写 null，空数组疑似漏配）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[0].gate2 = []
-	}), (dir) => {
+test('主行的 gate 列写成空数组＝告警不拦（有意免派该门请写 null，空数组疑似漏配）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[0].gate2 = []
+		})
 		const data = loadDispatchData({ dataDir: dir })
 		assert.ok(data.warnings.some((warning) => warning.includes('批型「纯后端管线批」') && warning.includes('空数组疑似漏配')))
 		assert.equal(data.pairing.rows[0].gate2.length, 0, '数据照常返回，装配层把这一趟出成空组合')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[8].gate2 = []
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[8].gate2 = []
+		})
 		assert.ok(!loadDispatchData({ dataDir: dir }).warnings.some((warning) => warning.includes('空数组疑似漏配')), 'needsBase 行本来就走 base 行解析，空列不算漏配')
 	})
 })
 
-test('门别交叉核：gate1 列混进门二形态＝加载失败（错了门＝派错形态，主会话看不出来）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[0].gate1 = ['设计七维·终审']
-	}), (dir) => {
+test('门别交叉核：gate1 列混进门二形态＝加载失败（错了门＝派错形态，主会话看不出来）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[0].gate1 = ['设计七维·终审']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /门别不合.*纯后端管线批.*gate1.*设计七维·终审/)
 	})
 })
 
-test('阶段表专核：stage id／order 重名、复核阶段不在门别映射内＝加载失败（阶段表是 stage 词表与必填矩阵的单源，坏行等于静默失效）', () => {
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages.push(structuredClone(lifecycle.stages[0]))
-	}), (dir) => {
+test('阶段表专核：stage id／order 重名、复核阶段不在门别映射内＝加载失败（阶段表是 stage 词表与必填矩阵的单源，坏行等于静默失效）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages.push(structuredClone(lifecycle.stages[0]))
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json 的 stage id.*出现两次「方案」/)
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[2].order = 2
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[2].order = 2
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json 的 order.*出现两次「2」/)
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[1].id = '形式审查'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[1].id = '形式审查'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /门别不明.*复核阶段「形式审查」.*门一、门二/, '复核阶段反查不到配对列就出空组合，那一门复核等于没派')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[0].requires = 'subject'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[0].requires = 'subject'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json\.stages\[0\]\.requires 须是 string\[\]/)
 	})
 })
 
-test('阶段表专核：order 非正整数、requires 重复或域外、gate 与 kind 不等价＝加载失败（都是「改了不报错」那一类）', () => {
+test('阶段表专核：order 非正整数、requires 重复或域外、gate 与 kind 不等价＝加载失败（都是「改了不报错」那一类）', (t) => {
 	for (const [order, where] of [[0, '须是正整数'], [-1, '须是正整数'], [1.5, '须是正整数']]) {
-		withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => { lifecycle.stages[0].order = order }), (dir) => {
+		withDataDir(t, (dir) => {
+			editData(dir, 'lifecycle.json', (lifecycle) => { lifecycle.stages[0].order = order })
 			assert.throws(() => loadDispatchData({ dataDir: dir }), new RegExp(`stage「方案」order ${where}`), `order=${order}：阶段先后与词表顺序都按它排，非正整数排出来的先后是任意的`)
 		})
 	}
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[1].requires = ['batchType', 'subject', 'intent', 'intent']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[1].requires = ['batchType', 'subject', 'intent', 'intent']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /stage「门一」的 requires 里出现两次「intent」/, '重复项让必填矩阵与消费集各算一次，两处结果可能不同')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[1].requires = ['batchType', 'subject', 'intent', '锚点']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[1].requires = ['batchType', 'subject', 'intent', '锚点']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /取值域外.*stage「门一」requires 含「锚点」.*参数名全集/, '凭空的必填名等于向调用方要一个不存在的参数')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '空 requires 是合法边界：提交/复盘两行就是（那两行归各自的工具，本工具不为它们要参数）')
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[1].gate = false
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[1].gate = false
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /门别表述不一致.*stage「门一」gate=false 而 kind='复核'.*复核阶段该置 true/, 'gate 与 kind 是同一件事的两处表述，互验后不会再各错一次')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[2].gate = true
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[2].gate = true
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /门别表述不一致.*stage「施工」gate=true 而 kind='施工'.*非复核阶段该置 false/)
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '提交那行 gate=true 而 kind=提交：互验只管本工具服务的那四行，提交/复盘的 gate 语义归各自的工具')
 })
 
-test('阶段表专核：uses 里的 plan-spec.json 与模板里的 plan-spec 占位双向互为充要（勾了不用、用了没勾都拦）', () => {
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[3].uses = ['plan-spec.json', 'pairing.json', 'templates.json']
-	}), (dir) => {
+test('阶段表专核：uses 里的 plan-spec.json 与模板里的 plan-spec 占位双向互为充要（勾了不用、用了没勾都拦）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[3].uses = ['plan-spec.json', 'pairing.json', 'templates.json']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /引用不一致.*stage「门二」uses 声明了 plan-spec\.json，模板里却没有 plan-spec 占位/, '勾了不用：清单说这一趟吃 plan-spec，正文里却没有它的位置')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[0].uses = ['templates.json']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[0].uses = ['templates.json']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /引用不一致.*stage「方案」模板里有 plan-spec 占位，uses 却没声明 plan-spec\.json/, '用了没勾：正文在吃 plan-spec，清单上查不到')
 	})
 })
 
-test('阶段表专核：core 的 CONSTRUCTION_STAGE 落在词表内＝改 id 不再静默失效（根因三行按 stage id 匹配，落空时 brief 看着完整）', () => {
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages.find((row) => row.id === '施工').id = '动手'
-	}), (dir) => {
+test('阶段表专核：core 的 CONSTRUCTION_STAGE 落在词表内＝改 id 不再静默失效（根因三行按 stage id 匹配，落空时 brief 看着完整）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages.find((row) => row.id === '施工').id = '动手'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /CONSTRUCTION_STAGE「施工」不在 lifecycle\.json 的 stage id.*动手/, '只改 lifecycle 不改 core：根因分类三行按 id 匹配，落空时施工 brief 末尾少三行而其余部分照样出稿')
 	})
 })
 
-test('阶段表专核：kind 落词表内且恰有一行 kind=提交＝加载失败（kind 决定 core 与台账各按哪种语义读这一行）', () => {
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[0].kind = '随便'
-	}), (dir) => {
+test('阶段表专核：kind 落词表内且恰有一行 kind=提交＝加载失败（kind 决定 core 与台账各按哪种语义读这一行）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[0].kind = '随便'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json\.stages\[0\]\.kind 须是 enum\(方案,复核,施工,提交,复盘\)，实得 "随便"/, 'kind 落域外：复核门按它反查配对列、台账按它筛行，认不出的值落在哪一档都是静默的')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages = lifecycle.stages.filter((row) => row.kind !== '提交')
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages = lifecycle.stages.filter((row) => row.kind !== '提交')
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /kind='提交' 的行须恰有一行，实得 0 行/, '没有提交行：台账判「在飞」的那道边界消失，记到收尾的批次永远算在飞')
 	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages.push({ ...structuredClone(lifecycle.stages.find((row) => row.kind === '提交')), id: '提交流', order: 7 })
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages.push({ ...structuredClone(lifecycle.stages.find((row) => row.kind === '提交')), id: '提交流', order: 7 })
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /kind='提交' 的行须恰有一行，实得 2 行/, '两行提交：门禁推进与在飞集合按最晚那行算，提交这一步可以被推到没有下一行的 order')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '盘上真数据恰有一行 kind=提交（提交/复盘两行没有模板，故不进模板那几道互验，进的是这一道）')
 })
 
-test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不同、缺一张、或分工句写反写重＝加载失败（两份页各写一次口径，改一处忘了另一处＝两个子代理对着两份 AGENTS 读同一批文件）', () => {
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates['AGENTS 必读链·施工'] += '\n汇报格式＝只报现象＋证据'
-	}), (dir) => {
+test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不同、缺一张、或分工句写反写重＝加载失败（两份页各写一次口径，改一处忘了另一处＝两个子代理对着两份 AGENTS 读同一批文件）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates['AGENTS 必读链·施工'] += '\n汇报格式＝只报现象＋证据'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*除「；只读禁写」外须整篇逐字相同.*第 3 行起/, '漂的是追加那几行：原用例按下标只比第 2 行，比不出这类漂移')
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates['AGENTS 必读链·施工'] = templates['AGENTS 必读链·施工'].replace('测试删减须显式申报', '测试可改可删')
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates['AGENTS 必读链·施工'] = templates['AGENTS 必读链·施工'].replace('测试删减须显式申报', '测试可改可删')
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*第 2 行起/, '硬约束那句是两份同源的口径，各改一处就等于给两边两套约束')
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		delete templates['AGENTS 必读链·施工']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			delete templates['AGENTS 必读链·施工']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /缺模板键「AGENTS 必读链·施工」/, '键白名单只查「多出来的键」，少写一张时那一路的 brief 静默少掉必读链与硬约束两句')
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates['AGENTS 必读链·复核'] = templates['AGENTS 必读链·复核'].split('；只读禁写').join('')
-		templates['AGENTS 必读链·施工'] += '；只读禁写'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates['AGENTS 必读链·复核'] = templates['AGENTS 必读链·复核'].split('；只读禁写').join('')
+			templates['AGENTS 必读链·施工'] += '；只读禁写'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /分工句走位.*须在「AGENTS 必读链·复核」里恰一次.*实得前者 0 次／后者 1 次/, '分工句写反：施工那一路拿到一条做不到的只读约束，而摘掉那句之后两页逐字相同，原先那道比对一声不响')
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates['AGENTS 必读链·复核'] += '；只读禁写'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates['AGENTS 必读链·复核'] += '；只读禁写'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /分工句走位.*实得前者 2 次/, '同一句写两次：比对摘的是全部出现处，写重的那处连同整行从比对里消失了')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '盘上真数据两页本来就只差「；只读禁写」那一句')
 })
 
-test('plan-spec 节 id 唯一：重名＝加载失败（查表取第一条，重名那条等于悄悄失效）', () => {
-	withDataDir((dir) => editData(dir, 'plan-spec.json', (planSpec) => {
-		planSpec.blocks.push({ ...structuredClone(planSpec.blocks[2]), title: '另一个写前必读' })
-	}), (dir) => {
+test('plan-spec 节 id 唯一：重名＝加载失败（查表取第一条，重名那条等于悄悄失效）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'plan-spec.json', (planSpec) => {
+			planSpec.blocks.push({ ...structuredClone(planSpec.blocks[2]), title: '另一个写前必读' })
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /plan-spec\.json 的节 id.*出现两次「read-first」/)
 	})
 })
 
-test('缺文件报错：五份数据任何一份读不到都带路径报错（lifecycle 与 planSpec 同样显式，不静默出空规则面）', () => {
+test('缺文件报错：五份数据任何一份读不到都带路径报错（lifecycle 与 planSpec 同样显式，不静默出空规则面）', (t) => {
 	for (const file of ['forms.json', 'pairing.json', 'templates.json', 'lifecycle.json', 'plan-spec.json']) {
-		withDataDir((dir) => rmSync(join(dir, file)), (dir) => {
+		withDataDir(t, (dir) => {
+			rmSync(join(dir, file))
 			assert.throws(
 				() => loadDispatchData({ dataDir: dir }),
 				new RegExp(`dispatch 数据读取失败.*${file.replace('.', '\\.')}`),
@@ -321,125 +409,141 @@ test('缺文件报错：五份数据任何一份读不到都带路径报错（li
 	}
 })
 
-test('节奏谓词取值交叉核：batchType／stage 拼错＝加载失败（拼错的谓词永不命中＝规则静默失效）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm[0].when.batchType = ['修副批']
-	}), (dir) => {
+test('节奏谓词取值交叉核：batchType／stage 拼错＝加载失败（拼错的谓词永不命中＝规则静默失效）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm[0].when.batchType = ['修副批']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词取值不存在.*when\.batchType.*修副批/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm[6].when.stage = ['施攻']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm[6].when.stage = ['施攻']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词取值不存在.*when\.stage.*施攻/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm[6].when.batchType = ['纯后端管线批']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm[6].when.batchType = ['纯后端管线批']
+		})
 		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), 'provider 是自由文本（两机各自的模型 id），无词表可核；batchType 与 stage 有词表才核')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm[6].when.stage = ['提交']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm[6].when.stage = ['提交']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词取值不存在.*when\.stage.*提交/, 'stage 谓词只对着本工具能出稿的阶段：提交归台账工具，以它为谓词值那条规则永不命中')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm[0].when.batchType = ['涉鉴权/上传/输入']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm[0].when.batchType = ['涉鉴权/上传/输入']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词取值不存在.*when\.batchType.*涉鉴权\/上传\/输入/, 'batchType 谓词只对着主行：addon 行不作 batchType，那条谓词永不命中')
 	})
 })
 
-test('安全五问按载体点名＋两处逐字同形：删判定／追加写岔段／锚整体换掉／载体改名／第三种念法，五种错法都加载失败', () => {
+test('安全五问按载体点名＋两处逐字同形：删判定／追加写岔段／锚整体换掉／载体改名／第三种念法，五种错法都加载失败', (t) => {
 	const carriers = loadDispatchData().forms.forms.filter((form) => form.role.includes(SAFETY_HEAD))
 	assert.deepEqual(carriers.map((form) => form.id), SAFETY_CARRIER_IDS, '盘上承载五问的形态＝data.js 登记的载体名单（名单单源，测试不再各抄一份）')
 	const cores = carriers.map((form) => form.role.slice(form.role.indexOf(SAFETY_HEAD), form.role.indexOf(SAFETY_TAIL) + SAFETY_TAIL.length))
 	assert.equal(cores[0], cores[1], '中间那串五问本体逐字相同')
 	const formOf = (forms, id) => forms.forms.find((form) => form.id === id)
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		formOf(forms, '安全清单行').role = formOf(forms, '安全清单行').role.replace('输入校验（长度/类型/格式/注入）', '输入校验')
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			formOf(forms, '安全清单行').role = formOf(forms, '安全清单行').role.replace('输入校验（长度/类型/格式/注入）', '输入校验')
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全清单行」与「安全专项」的安全五问核心串不逐字相同/, '少问一条——那一条永远漏查，且没有任何代码会报错')
 	})
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		const form = formOf(forms, '安全专项')
-		const original = form.role
-		const rewritten = original.slice(original.indexOf(SAFETY_HEAD)).replace('上传（类型/大小/路径）', '上传免了')
-		form.role = `${original}／补一段：${rewritten}`
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			const form = formOf(forms, '安全专项')
+			const original = form.role
+			const rewritten = original.slice(original.indexOf(SAFETY_HEAD)).replace('上传（类型/大小/路径）', '上传免了')
+			form.role = `${original}／补一段：${rewritten}`
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全专项」的安全五问锚点「此用户能操作此资源吗」在角色句里出现 2 次/, '追加一段写岔的五问：按切出来的那一串数只数到一次（两段文字本就不同），按锚点数才抓得住')
 	})
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		const form = formOf(forms, '安全专项')
-		form.role = form.role.replaceAll(SAFETY_HEAD, '该用户能操作此资源吗').replaceAll(SAFETY_TAIL, 'PII 会进日志吗')
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			const form = formOf(forms, '安全专项')
+			form.role = form.role.replaceAll(SAFETY_HEAD, '该用户能操作此资源吗').replaceAll(SAFETY_TAIL, 'PII 会进日志吗')
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全专项」的安全五问两端锚点不齐/, '锚被整体改掉时「按锚数载体」只剩零个，自比恒真放行——载体由名单点名，锚齐不齐才报得出来')
 	})
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		formOf(forms, '安全专项').id = '安全专项甲'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			formOf(forms, '安全专项').id = '安全专项甲'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /安全五问载体丢失：forms\.json 里没有形态「安全专项」/, '载体改名：登记的那个 id 不在了，而改名后的那个成了没人校验的载体')
 	})
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
-		formOf(forms, '事实校准').role = `${formOf(forms, '事实校准').role}／${SAFETY_HEAD}／${SAFETY_TAIL}`
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => {
+			formOf(forms, '事实校准').role = `${formOf(forms, '事实校准').role}／${SAFETY_HEAD}／${SAFETY_TAIL}`
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /意外的五问载体：forms\.json 的形态「事实校准」/, '第三个形态带锚＝第三种念法，它不受同形校验保护，两边迟早写岔')
 	})
 })
 
-test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字段写数组、max 非非负整数＝加载失败', () => {
+test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字段写数组、max 非非负整数＝加载失败', (t) => {
 	const entryWith = (pairing, field) => pairing.rhythm.find((entry) => entry.when[field] !== undefined)
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		entryWith(pairing, 'provider').when.provider = { max: 3 }
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'provider').when.provider = { max: 3 }
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.provider 须是 string\[\]，实得 \{"max":3\}/, 'provider 收区间加载通过又永不命中（provider 无词表可核，词表核那层拦不住——形态按字段类别守门才拦得住）')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		entryWith(pairing, 'diffLines').when.diffLines = ['5']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = ['5']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '规模字段收数组：比的是成员包含，本次参数是个数字，比出来恒不命中')
 	})
 	for (const max of [-1, 4.5]) {
-		withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-			entryWith(pairing, 'diffLines').when.diffLines = { max }
-		}), (dir) => {
+		withDataDir(t, (dir) => {
+			editData(dir, 'pairing.json', (pairing) => {
+				entryWith(pairing, 'diffLines').when.diffLines = { max }
+			})
 			assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines\.max 须是 非负整数/, `max=${max}：负数与小数都让阈值落在不存在的一档上`)
 		})
 	}
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		entryWith(pairing, 'diffLines').when.diffLines = { max: 5, min: 0 }
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { max: 5, min: 0 }
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 多出未声明字段「min」/, '区间只认 max 一个键：多写的那个不生效＝规则按一条不存在的口径出提示')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		entryWith(pairing, 'diffLines').when.diffLines = '5'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = '5'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '字符串数字两形都不是')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '真数据那条免派条目（stage＋diffLines/changedFiles 各收 {max}）加载得过')
 	// 配置侧 {max:N} 有意比输入侧（安全整数）宽一档：它量的是自配规则、只由本仓维护者改——
 	// 这条断言钉住这个不对称是有意的，后来者「统一两侧」时这里会红，先读 data.js 的 why 注释再动
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		entryWith(pairing, 'diffLines').when.diffLines = { max: 1e300 }
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { max: 1e300 }
+		})
 		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '配置侧收非负整数不设安全上限：1e300 也过——口径差是设计，不是漏洞')
 	})
 })
 
-test('模板键反向核：lifecycle 显式指了 templateKey 而 templates 没有这一键＝加载失败（拼错键名与忘了写模板长得一样）', () => {
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[3].templateKey = '门一正文'
-	}), (dir) => {
+test('模板键反向核：lifecycle 显式指了 templateKey 而 templates 没有这一键＝加载失败（拼错键名与忘了写模板长得一样）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages[3].templateKey = '门一正文'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /悬空引用：lifecycle\.json 的 stage「门二」指了 templateKey「门一正文」，templates\.json 里没有这一键/, '指错键名时出稿才报「没有按模板键写的模板」，那句话读不出是键拼错还是模板没写')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '提交/复盘两行没有 templateKey 也没有模板：缺省行不进这项核（它们归各自的工具）')
 })
 
-test('零读者字段可缺省：principles 与全部 produces 删干净仍加载得过（人读价值留、必填负担去）', () => {
-	withDataDir((dir) => {
+test('零读者字段可缺省：principles 与全部 produces 删干净仍加载得过（人读价值留、必填负担去）', (t) => {
+	withDataDir(t, (dir) => {
 		editData(dir, 'forms.json', (forms) => { delete forms.principles })
 		editData(dir, 'lifecycle.json', (lifecycle) => { for (const row of lifecycle.stages) delete row.produces })
 		editData(dir, 'pairing.json', (pairing) => { for (const row of pairing.rows) delete row.note })
-	}, (dir) => {
 		const loaded = loadDispatchData({ dataDir: dir })
 		assert.equal(loaded.forms.principles, undefined)
 		assert.ok(loaded.lifecycle.stages.every((row) => row.produces === undefined))
@@ -447,48 +551,53 @@ test('零读者字段可缺省：principles 与全部 produces 删干净仍加�
 	})
 })
 
-test('谓词交集可达性：stage 与 batchType 各限一批而两者不相交＝加载失败（谓词值各自合法但永不命中）', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm.push({ when: { batchType: ['修复批'], stage: ['方案'] }, note: '永不可达条目' })
-	}), (dir) => {
+test('谓词交集可达性：stage 与 batchType 各限一批而两者不相交＝加载失败（谓词值各自合法但永不命中）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm.push({ when: { batchType: ['修复批'], stage: ['方案'] }, note: '永不可达条目' })
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词永不可达.*永不可达条目.*不会同时成立/, '方案那一趟不判批型，两个在字段的交集为空——这条规则在任何调用下都不命中')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm.push({ when: { batchType: ['修复批'], stage: ['施工'] }, note: '可达条目' })
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm.push({ when: { batchType: ['修复批'], stage: ['施工'] }, note: '可达条目' })
+		})
 		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '交集非空即放行：施工判批型，那一趟两个在字段同时成立')
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rhythm.push({ when: { stage: ['方案'] }, note: '只限阶段的条目' })
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rhythm.push({ when: { stage: ['方案'] }, note: '只限阶段的条目' })
+		})
 		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '只有一个在字段时按它自己核，不因另一字段缺省而判不可达')
 	})
 })
 
-test('模板键白名单：lifecycle 声明过的键放行（加阶段不改代码），没声明的键＝加载失败', () => {
-	withDataDir((dir) => {
+test('模板键白名单：lifecycle 声明过的键放行（加阶段不改代码），没声明的键＝加载失败', (t) => {
+	withDataDir(t, (dir) => {
 		editData(dir, 'lifecycle.json', (lifecycle) => lifecycle.stages.push({
 			id: '验收', order: 7, gate: false, kind: '方案', requires: ['subject', 'intent'], produces: ['验收结论'], uses: [],
 		}))
 		editData(dir, 'templates.json', (templates) => { templates.验收 = '验收结论：〔subject〕。' })
-	}, (dir) => {
 		const data = loadDispatchData({ dataDir: dir })
 		assert.equal(assembleDispatch(data, { stage: '验收', subject: '净 diff', intent: '验收' }).briefs[0].text, '验收结论：净 diff。', '加 stage 只改 JSON：新阶段经真加载就能出稿')
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => { templates.门三 = '没人会读它：〔subject〕。' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => { templates.门三 = '没人会读它：〔subject〕。' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /多出未声明的模板键「门三」.*没有任何阶段会读到它/, '闭集照旧拦新模板：多出来的键没有任何阶段会读到它')
 	})
 })
 
-test('占位登记校验：模板里出现未登记的占位＝加载失败（留到渲染期才炸＝规则删了不报错）', () => {
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates.门一 = templates.门一.replace('〔intent〕', '〔本批想要什么〕')
-	}), (dir) => {
+test('占位登记校验：模板里出现未登记的占位＝加载失败（留到渲染期才炸＝规则删了不报错）', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates.门一 = templates.门一.replace('〔intent〕', '〔本批想要什么〕')
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /占位未登记.*templates\.json.*门一.*本批想要什么/)
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates.施工 = `${templates.施工}\n收尾句：〔逐条列出来〕。`
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => {
+			templates.施工 = `${templates.施工}\n收尾句：〔逐条列出来〕。`
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /占位未登记.*施工.*逐条列出来/)
 	})
 	const taskBook = assembleDispatch(loadDispatchData(), { stage: '方案', subject: '方案.md 批 1', intent: '出方案' }).briefs[0]
@@ -496,47 +605,54 @@ test('占位登记校验：模板里出现未登记的占位＝加载失败（�
 	assert.ok(taskBook.text.includes('## 根设计原则') && taskBook.text.includes('①软前提两档制'))
 })
 
-test('formNotes：限定句的值须是字符串，键须是 forms 定义过的形态 id', () => {
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[2].formNotes.连带面 = '   '
-	}), (dir) => {
+test('formNotes：限定句的值须是字符串，键须是 forms 定义过的形态 id', (t) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[2].formNotes.连带面 = '   '
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /formNotes\.连带面 须是 string/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[2].formNotes['没定过的形态'] = '限定句安在没定义的形态上'
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[2].formNotes['没定过的形态'] = '限定句安在没定义的形态上'
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /悬空引用.*formNotes.*没定过的形态/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
-		pairing.rows[2].formNotes = ['连带面']
-	}), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			pairing.rows[2].formNotes = ['连带面']
+		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /formNotes 须是 stringMap/)
 	})
 })
 
-test('元素级与空白级校验：数组里有空串／空白串／非串元素即报错（数据里的空字段多半是漏写）', () => {
+test('元素级与空白级校验：数组里有空串／空白串／非串元素即报错（数据里的空字段多半是漏写）', (t) => {
 	for (const [value, pattern] of [
 		[['锚点核对', ''], /rows\[0\]\.gate1 须是 string\[\]/],
 		[['锚点核对', '   '], /rows\[0\]\.gate1 须是 string\[\]/],
 		[['锚点核对', 7], /rows\[0\]\.gate1 须是 string\[\]/],
 	]) {
-		withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate1 = value }), (dir) => {
+		withDataDir(t, (dir) => {
+			editData(dir, 'pairing.json', (pairing) => { pairing.rows[0].gate1 = value })
 			assert.throws(() => loadDispatchData({ dataDir: dir }), pattern)
 		})
 	}
-	withDataDir((dir) => editData(dir, 'forms.json', (forms) => { forms.forms[0].role = '' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => { forms.forms[0].role = '' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /forms\[0\]\.role 须是 string/)
 	})
-	withDataDir((dir) => editData(dir, 'templates.json', (templates) => { templates.checklist = '  ' }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'templates.json', (templates) => { templates.checklist = '  ' })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /templates\.json\.checklist 须是 string/)
 	})
-	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => { delete pairing.rhythm[0].note }), (dir) => {
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => { delete pairing.rhythm[0].note })
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /rhythm\[0\] 缺字段「note」/)
 	})
 })
 
-test('现读的深等价：两次加载内容逐字一致，且首份返回值被深改不影响次次', () => {
-	withDataDir(undefined, (dir) => {
+test('现读的深等价：两次加载内容逐字一致，且首份返回值被深改不影响次次', (t) => {
+	withDataDir(t, (dir) => {
 		const first = loadDispatchData({ dataDir: dir })
 		const second = loadDispatchData({ dataDir: dir })
 		assert.deepEqual(first.forms, second.forms, '同内容两次现读深等价')

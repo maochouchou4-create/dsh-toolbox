@@ -7,13 +7,11 @@
  * 版本失配——它们各自对应一种真实事故（重复登记、合并乱序、门漏记、台账被手写坏、JSON 粘连、
  * 并发覆盖），改坏其中任何一条时本文件必须先红。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import {
 	advanceEvent,
 	appendEvent,
@@ -29,8 +27,9 @@ import {
 } from '../lib/dispatch/batch.js'
 import { loadDispatchData, loadDispatchTables, readDataBytes } from '../lib/dispatch/data.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { copyDataFiles, DISPATCH_DATA_DIR, tempRoot } from './helpers.js'
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
+const dataDir = DISPATCH_DATA_DIR
 const data = loadDispatchData({ dataDir })
 const port = createNodeFsPort()
 /** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTables，测试直接取已读好的真数据）。 */
@@ -54,12 +53,8 @@ const appendRaw = (event) => appendEvent({ port, path: ledger, event })
 const lines = () => (existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter((line) => line !== '') : [])
 const parsedLines = () => lines().map((line) => JSON.parse(line))
 
-before(() => {
-	root = mkdtempSync(join(tmpdir(), 'dsh-dispatch-batch-'))
-})
-
-after(() => {
-	rmSync(root, { recursive: true, force: true })
+before((t) => {
+	root = tempRoot(t, 'dispatch-batch')
 })
 
 test('台账路径：显式配置优先，空串按 memoryRoot 推导到习惯层底目录的 data/ 下（两机共享的那一层）', () => {
@@ -76,9 +71,7 @@ test('rules 指纹＝pairing＋forms 的原始字节按固定顺序拼一次 sha
 	assert.match(rulesHashOf({ dataDir }), /^[0-9a-f]{8}$/)
 	assert.equal(rulesHashOf({ dataDir }), rulesHashOf({ dataDir }), '逐次现读，同一份字节给同一个值')
 	// 改的是字节不是语义：同一个 JSON 末尾多一个换行，指纹就变——这正是「规则版本」能分组的原因
-	const copy = join(root, 'data-copy')
-	mkdirSync(copy)
-	for (const file of ['pairing.json', 'forms.json']) writeFileSync(join(copy, file), readFileSync(join(dataDir, file)))
+	const copy = copyDataFiles(join(root, 'data-copy'), ['pairing.json', 'forms.json'])
 	const unchanged = rulesHashOf({ dataDir: copy })
 	writeFileSync(join(copy, 'pairing.json'), `${readFileSync(join(copy, 'pairing.json'), 'utf8')}\n`)
 	assert.notEqual(rulesHashOf({ dataDir: copy }), unchanged)
@@ -537,9 +530,7 @@ test('start 自建台账走的是 createIfAbsent 分支（在场走 replaceIfVer
 })
 
 test('rules 指纹真现读：同一个 dataDir，两次调用之间改了文件，指纹就变', () => {
-	const copy = join(root, 'data-现读')
-	mkdirSync(copy)
-	for (const file of ['pairing.json', 'forms.json']) writeFileSync(join(copy, file), readFileSync(join(dataDir, file)))
+	const copy = copyDataFiles(join(root, 'data-现读'), ['pairing.json', 'forms.json'])
 	const before = rulesHashOf({ dataDir: copy })
 	writeFileSync(join(copy, 'forms.json'), `${readFileSync(join(copy, 'forms.json'), 'utf8')}\n`)
 	const after = rulesHashOf({ dataDir: copy })

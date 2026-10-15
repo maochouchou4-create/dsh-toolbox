@@ -4,10 +4,10 @@
  * 夹具在临时目录搭建，测后清理；写侧（upsert/edit/delete/lint）在 write.test.js。
  * 每个用例独占一个根目录——避免目录内容互相牵连。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { HEAD_CHUNK_BYTES } from '../lib/head-read.js'
 import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
@@ -15,28 +15,18 @@ import { DEFAULT_MEMORY_ROOT, resolveRoot, workspaceSlug } from '../lib/memory-r
 import { composeMemory, readCapped, scanLayer } from '../lib/memory/assemble.js'
 import { FRONTMATTER_HEAD_MAX_BYTES, isEntryName } from '../lib/memory/frontmatter.js'
 import { readOptions } from '../scripts/checks.mjs'
-import { entry } from './helpers.js'
+import { entry, memoryTree, tempRoot } from './helpers.js'
 
 let base
 let memoryRoot
 
-before(() => {
-	base = join(tmpdir(), `dsh-memory-test-${process.pid}`)
+before((t) => {
+	base = tempRoot(t, 'memory-core')
 	memoryRoot = join(base, 'memory')
-	mkdirSync(base, { recursive: true })
 })
 
-after(() => {
-	rmSync(base, { recursive: true, force: true })
-})
-
-/** 独立根目录：建 habit 层，可选建工作桶；返回根与各目录。 */
-const fixture = (name) => {
-	const root = join(base, name)
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
-	return { root, profile }
-}
+/** 独立根目录：建 habit 层，可选建工作桶；返回根与各目录。造法在 helpers.memoryTree（三处同款）。 */
+const fixture = (name) => memoryTree(base, name)
 
 test('workspaceSlug：分隔符归一、折叠、去首尾、不小写', () => {
 	assert.equal(workspaceSlug('/home/nvse/code'), 'home-nvse-code')

@@ -7,10 +7,10 @@
  * 证的是「四个 action 同一口径」，拆到三个文件里就散成三条各自为政的断言。
  * 每个用例独立临时根，互不共享状态。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING } from '../lib/memory/core.js'
@@ -19,18 +19,13 @@ import { deleteEntry } from '../lib/memory/delete.js'
 import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, groupTitlesByTitle, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
 import { editEntry, upsertEntry } from '../lib/memory/write.js'
-import { entry } from './helpers.js'
+import { entry, tempRoot } from './helpers.js'
 
 let base
 const port = createNodeFsPort()
 
-before(() => {
-	base = join(tmpdir(), `dsh-memory-write-test-${process.pid}`)
-	mkdirSync(base, { recursive: true })
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
+before((t) => {
+	base = tempRoot(t, 'memory-write')
 })
 
 /* ===================== frontmatter 契约 ===================== */

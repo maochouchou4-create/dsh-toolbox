@@ -6,22 +6,17 @@
  * 对 ctx.fs 替身对象的调用——能把「守卫、策略、中断有没有真的传下去」钉住，钉不住
  * 真实后端的行为。别把它读成宿主通道已验证。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHostFsPort, createNodeFsPort, versionOf } from '../lib/fs-port.js'
+import { tempRoot } from './helpers.js'
 
 let base
 
-before(() => {
-	base = join(tmpdir(), `dsh-fs-port-test-${process.pid}`)
-	mkdirSync(base, { recursive: true })
-})
-
-after(() => {
-	rmSync(base, { recursive: true, force: true })
+before((t) => {
+	base = tempRoot(t, 'fs-port')
 })
 
 /** 每个用例一个独立文件，避免共用同一路径让守卫断言互相污染。 */
