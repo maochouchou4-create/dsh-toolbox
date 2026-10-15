@@ -13,9 +13,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
+import { LIB_DIR } from './helpers.js'
 
-const libDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib')
+const libDir = LIB_DIR
 const loadModule = (file) => import(pathToFileURL(join(libDir, file)).href)
 const readLib = (file) => readFileSync(join(libDir, file), 'utf8')
 
@@ -202,6 +203,10 @@ const NODE_FS_DIRECT = new Map([
 	['fs-guard.js', false],
 	['head-read.js', true],
 	['index.js', false],
+	// schema 形状工厂：三族工具共用的 object/stringList 构造处，纯数据形状、零 I/O——
+	// 把它漏登记的话，「新增文件漏定性」那条承诺对它就不成立，而它恰好是三族输出 schema
+	// 汇进去的那一格
+	['tool-schema.js', false],
 ])
 
 /**

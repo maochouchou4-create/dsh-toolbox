@@ -8,12 +8,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { CONDITION_PARAMS, NUMERIC_PARAMS, PARAM_FIELDS, RHYTHM_FIELDS, dispatchStages, stageVocabulary, validateParams } from '../lib/dispatch/core.js'
-import { dispatchParameters } from '../lib/dispatch/parameters.js'
+import { join } from 'node:path'
+import { CONDITION_PARAMS, NUMERIC_PARAMS, PARAM_FIELDS, RHYTHM_FIELDS, dispatchStages, mainBatchTypes, stageVocabulary, validateParams } from '../lib/dispatch/core.js'
+import { batchParameters, dispatchParameters } from '../lib/dispatch/parameters.js'
+import { DISPATCH_DIR } from './helpers.js'
 
-const dispatchDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch')
+const dispatchDir = DISPATCH_DIR
 const dataDir = join(dispatchDir, 'data')
 const parametersPath = join(dispatchDir, 'parameters.js')
 const readData = (name) => JSON.parse(readFileSync(join(dataDir, name), 'utf8'))
@@ -26,6 +26,7 @@ const data = {
 }
 
 const parameters = dispatchParameters(data)
+const batch = batchParameters(data)
 
 test('参数面的键集＝core 的参数名全集（两份名单同源，多一个少一个都红）', () => {
 	assert.deepEqual(Object.keys(parameters), PARAM_FIELDS)
@@ -104,6 +105,29 @@ test('stage 取值清单＝本工具能出稿的阶段，按 lifecycle 的 order
 		assert.ok(!listed.includes(out), `${out} 不在本工具的服务范围内，列进去等于让模型照着调一个出不了稿的阶段`)
 	}
 	assert.ok(!parameters.stage.description.includes(' | 提交'), '清单里不许出现不可达阶段')
+})
+
+test('两件工具的 enum 都对着生产词表现读：dispatch 收可服务阶段/主行批型，dispatch_batch 收全阶段（advance 要能记提交与复盘）', () => {
+	// enum 从描述升进 schema 之后，参数面这一格就是判据本身，故两端同一个函数、手抄即漂。
+	// 两件工具的词表**故意不同**：dispatch 出不了稿（收全阶段＝放行一个必然在运行期报未知 stage
+	// 的值），而 dispatch_batch 的 advance 要把提交与复盘记进台账——那一侧收 dispatchStages 就会把
+	// 「记到收尾」这一步挡在门外，那是台账生命周期里正当的一步。
+	assert.deepEqual(parameters.stage.enum, dispatchStages(data), 'dispatch 的 stage enum＝dispatchStages')
+	assert.deepEqual(parameters.batchType.enum, mainBatchTypes(data), 'dispatch 的 batchType enum＝mainBatchTypes（addon 行不在内）')
+	assert.deepEqual(batch.stage.enum, stageVocabulary(data), 'dispatch_batch 的 stage enum＝stageVocabulary 全量（含提交/复盘）')
+	assert.deepEqual(batch.batchType.enum, mainBatchTypes(data), 'dispatch_batch 的 batchType enum 同为 mainBatchTypes：台账按批型名索引，两件工具认的必须是同一份名字')
+	// enum 与描述必须说同一份词表：一边描述 A 一边校验 B，模型照描述选了 B 而校验按 A 拒，报错还
+	// 带着 A 的清单。判据取「enum 每个值都在描述里出现过」而不是两边切分后比集合——两处的分隔符
+	// 本来就不同（stage 用「 | 」、批型那几句用顿号拼），切分比不了，而「值被描述点名」正是那条
+	// 不变量本身：模型能从描述里认出的每个合法值都得在 enum 里，反之 enum 里的每个值都得能被描述
+	// 指出来（描述里没有而 enum 收着的值＝模型没有任何路径得知它）
+	for (const [name, parametersOfTool] of [['dispatch', parameters], ['dispatch_batch', batch]]) {
+		for (const field of ['stage', 'batchType']) {
+			for (const value of parametersOfTool[field].enum) {
+				assert.ok(parametersOfTool[field].description.includes(value), `${name} 的 ${field} enum 收了「${value}」而描述里没点名它：模型没有任何路径得知这个合法值`)
+			}
+		}
+	}
 })
 
 test('回填面四格都不标必填（宿主按 schema 拦必填发生在进 execute 之前，台账回填就永远到不了；必填判定归 core.validateParams）', () => {

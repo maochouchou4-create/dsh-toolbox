@@ -107,7 +107,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 | 面 | 载体 | 什么时候被读 | 改它要不要重启 |
 |---|---|---|---|
 | 常驻召回面 | 三个工具的 `description`（`dispatch`/`dispatch_batch`/`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
-| 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效 |
+| 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效（例外：参数面的 `enum` 是注册期快照，新增合法值要重启才进词表，见下节） |
 | 追加面 | 台账 `profile-memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、`dispatch`/`dispatch_lessons` 读 | 不要 |
 
 现读面五份：
@@ -150,7 +150,8 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 静默放过。
 
 **改规则＝改 JSON，下一次调用即生效，不发版不重启；需要重启的只有代码改动**（本仓被
-宿主按模块代缓存）。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
+宿主按模块代缓存）——外加一处例外：参数面的 `enum` 是注册期快照（工具定义定型那一刻冻结），
+新增的合法值要重启才进词表，而调用侧立刻认新值；那半句见下节「enum 参数面」一节。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
 形态，一律带文件名（与字段路径）报错不静默出稿；阶段表另核一批互验（id/order 唯一、order 正
 整数、kind 落在词表内、复核阶段的门别可反查、gate 与 kind 等价、requires 无重复且在参数名全集内、
 uses 声明与模板占位互为充要，施工那行的 id 与 kind=提交 那行各与代码里的常量互认——逐条清单见
@@ -172,6 +173,28 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 行与形态的判断理由进 `note`/`notes`，预期例外（如上面那两个孤儿形态）也在 `notes` 里点明；
 代码注释只写代码自己的 why。改配对规则时「为什么这么派」与「为什么这么排」因此跟着规则走，
 不用另找一份散文对齐。追加面见下节。
+
+## dispatch 的 enum 参数面：注册期快照与运行期现读是两速
+
+`dispatch` 的 `stage`/`batchType` 两个参数除了描述里那份词表，还带着 schema 的 `enum`
+（宿主 `defineTool` 在 execute 之前按它逐值校验，不过就抛 `ToolArgsError` 并把合法值清单带出来）。
+两处都现读同一份词表：`stage` 取 `core.js` 的 `dispatchStages`（本工具出得了稿的阶段，
+提交/复盘归另外两件工具），`batchType` 取 `mainBatchTypes`（配对表主行行名，含带
+`needsBase`/`needsRootCause` 的特殊行；**addon 行不作 batchType**，只能经 `addons` 参数加挂）。
+
+**两速的含义**：注册期工具定义定型，参数面（含 `enum`）就在那一刻冻结成一份快照；而 execute
+每次调用现读数据。所以运行中往 `lifecycle.json`/`pairing.json` 加一个新阶段或新批型时——
+**调用立刻认它**（那一趟的判定与出稿都按新值走），但新值要等**重启宿主**才进 enum 词表，
+在那之前传它会被参数校验按「不在词表内」挡下。这是宿主「参数面注册期冻结」这一层架构的使然，
+不是缺陷：想要合法值立刻进词表，重启即可（改 JSON 本身不用重启，两速说的就是这一层差别）。
+描述那份词表不受此限——它随注册期那份定义走，与 enum 同速。`dispatch_batch` 的 `stage`/
+`batchType` 同款带 enum（`stage` 那一侧收的是**全量**阶段词表：它的 `advance` 要把提交与复盘
+记进台账，而那两步是生命周期里正当的一步）。单测里两件工具的 enum 都逐字对着
+`dispatchStages`/`stageVocabulary`/`mainBatchTypes` 的现读结果核（注册快照 ≡ 当刻盘面）。
+
+加阶段时连带要动的不止 lifecycle.json：新阶段还得在 `templates.json` 里有模板（键＝stage id 或
+该行的 `templateKey`），否则加载期的模板键双向核当场拦下（显式指了键却没有那份模板＝拼错键名与
+忘了写模板长得一样，分不开）。
 
 **复盘修订配对的入口＝`dispatch_lessons`**：它读追加面那一整份台账，按点位（攒 5–8 批
 覆盖 ≥3 批型，判据单源＝`lifecycle.json` 复盘行的 `point` 字段）判断该不该复，到了出草稿——
@@ -253,6 +276,7 @@ lib/value.js            跨工具族的值判据原语（isNonBlankString：非�
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/fs-port.js           包级 fs 端口：宿主 ctx.fs 与 node:fs 收敛成同一组方法，写侧 I/O 的唯一通道（memory 与 dispatch 共用这一份）。落 lib 根因为第二个工具族也要它——留在 lib/memory/ 就是 memory 私产，另一族 import 它等于跨族借私产
 lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路径共用一份，零 node:fs——并进端口会把直连拖进 write.js 的本地导入闭包，写侧「I/O 只经端口」当场失效）
+lib/tool-schema.js       工具 schema 的共用形状工厂（stringList／objectShape，三族工具的输出 schema 共用）。object 节点默认闭集、每次返回新对象、假值入参当场拒；「形状写一份」是宿主要求（object 节点缺 additionalProperties 整件工具注册失败，症状是工具从上下文里消失而不是某字段被拒）
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/memory-root.js       记忆根默认值与归一、工作区路径→桶名、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与桶名」，谁要谁向下指
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住

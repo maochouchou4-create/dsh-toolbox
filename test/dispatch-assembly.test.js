@@ -11,19 +11,24 @@
  * hooks 是进程级的，故本文件里注册之后不要再 import 别的宿主相关模块；node --test 每个测试文件
  * 一个进程，互不影响。
  */
-import { after, before, test } from 'node:test'
+import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { transcribe } from '../lib/see-image/vision.js'
+import { objectShape, stringList } from '../lib/tool-schema.js'
+import { dispatchStages, mainBatchTypes } from '../lib/dispatch/core.js'
+import { loadDispatchData } from '../lib/dispatch/data.js'
+import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
 
-const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const STUBBED = new Map([
-	['@deepseek-ai/dsh-tools', join(fixtures, 'host-dsh-tools-stub.mjs')],
-	['@deepseek-ai/schemastery', join(fixtures, 'host-schemastery-stub.mjs')],
+	['@deepseek-ai/dsh-tools', join(FIXTURES_DIR, 'host-dsh-tools-stub.mjs')],
+	['@deepseek-ai/schemastery', join(FIXTURES_DIR, 'host-schemastery-stub.mjs')],
+	// see_image 从 dsh-llm 导入 BlockAssembler：静态自查要注册那一件，而注册期不需要真攒块器
+	['@deepseek-ai/dsh-llm', join(FIXTURES_DIR, 'host-dsh-llm-stub.mjs')],
 ])
 registerHooks({
 	resolve(specifier, context, nextResolve) {
@@ -34,6 +39,8 @@ registerHooks({
 })
 
 const { registerDispatch, registerDispatchBatch, registerDispatchLessons, configShape } = await import('../lib/dispatch/index.js')
+const { registerMemory } = await import('../lib/memory/index.js')
+const { registerSeeImage } = await import('../lib/see-image/index.js')
 
 let root
 let tools
@@ -57,18 +64,29 @@ const hostFsOf = () => {
 	}
 }
 
+/**
+ * 宿主上下文的替身：tools.register 收下定义（五个注册入口都要它），fs 走本仓 node 端口，
+ * logger 与 systemPrompt 在此只为让 memory 的注册入口跑完——它注册期要挂一段注入块文本，
+ * 那段文本本文件的用例都不执行，故给空实现即可。get 返回 undefined 是「按需服务取不到」的
+ * 正常态（沙箱策略缺失时生产也走这条），不是替身偷懒。
+ */
 const ctxOf = () => {
 	const registered = []
-	return { ctx: { fs: hostFsOf(), get: () => undefined, tools: { register: (definition) => registered.push(definition) } }, registered }
+	return {
+		ctx: {
+			fs: hostFsOf(),
+			get: () => undefined,
+			logger: { warn: () => {} },
+			systemPrompt: { context: () => {} },
+			tools: { register: (definition) => registered.push(definition) },
+		},
+		registered,
+	}
 }
 
-before(() => {
-	root = mkdtempSync(join(tmpdir(), 'dsh-dispatch-assembly-'))
+before((t) => {
+	root = tempRoot(t, 'dispatch-assembly')
 	ledger = join(root, 'dispatch-ledger.jsonl')
-})
-
-after(() => {
-	rmSync(root, { recursive: true, force: true })
 })
 
 test('装配层冒烟：三件工具注册得出来，且 execute 真被调过一次（纯函数用例照不到的那一层）', async () => {
@@ -168,45 +186,211 @@ test('复盘那一趟拿到的是只读门面：宿主 fs 的 writeText 就算�
 	assert.ok(value.suggestions.length > 0)
 	// 接线那一步本身：门面造出来了不等于真传下去了，而「这一趟一次都没写」只证明现在没写。
 	// 少了这行，把原端口原样传下去也不会红——那时边界又退回「靠记着别写」
-	const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'index.js'), 'utf8')
+	const source = readFileSync(join(DISPATCH_DIR, 'index.js'), 'utf8')
 	assert.ok(
 		/createReadOnlyPort\(createHostFsPort\(/.test(source),
 		'复盘那一趟的端口须过只读门面：装配层把原端口传下去就等于没有这层保证',
 	)
 })
 
-test('宿主 schema 编译的静态自查：三件工具的每个 object 节点都显式声明 additionalProperties', () => {
+test('宿主 schema 编译的静态自查：全仓五件工具的每个 object 节点都显式声明 additionalProperties，工厂产物同样过这道', () => {
 	// 这一条是替身够不到的那层：夹具的 defineTool 原样交回定义，把宿主的 schema 编译替身吃掉了，
 	// 而真宿主在 object 节点没显式声明 additionalProperties 时整件工具注册失败（「unsupported JSON
-	// schema」）——不在这里静态钉住，就只能等下次宿主启动才发现 dispatch_batch 整件缺席
+	// schema」）——不在这里静态钉住，就只能等下次宿主启动才发现那一件整件缺席（缺席的是整件工具，
+	// 不是某个字段被拒，从症状上看不出是 schema 的问题）。
+	// 覆盖面＝本包登记的全部工具（胶水 FEATURES 那五件）：漏注册一件，下面那次遍历对它空转而本
+	// 条照样全绿，故工具名单照写不抄、并且断言它与胶水的 FEATURES 一致（imports.test.js 那条核 FEATURES）
+	const memoryCtx = ctxOf()
+	registerMemory(memoryCtx.ctx, { memoryRoot: join(root, 'memory-registration') })
+	const seeImageCtx = ctxOf()
+	registerSeeImage(seeImageCtx.ctx, {})
 	const ctx = ctxOf()
 	registerDispatch(ctx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const batchCtx = ctxOf()
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const lessonsCtx = ctxOf()
 	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	for (const definition of [ctx.registered[0], batchCtx.registered[0], lessonsCtx.registered[0]]) {
-		const bare = []
-		const walk = (node, where) => {
-			if (node === null || typeof node !== 'object') return
-			if (Array.isArray(node)) {
-				node.forEach((item, index) => walk(item, `${where}[${index}]`))
-				return
-			}
-			if (node.type === 'object' && typeof node.additionalProperties !== 'boolean') bare.push(where)
-			for (const [key, value] of Object.entries(node)) walk(value, `${where}.${key}`)
+	const definitions = [memoryCtx, seeImageCtx, ctx, batchCtx, lessonsCtx].flatMap((one) => one.registered)
+	assert.deepEqual(
+		definitions.map((definition) => definition.name).sort(),
+		['dispatch', 'dispatch_batch', 'dispatch_lessons', 'memory', 'see_image'],
+		'五件都在扫描面里：本包多注册一件工具而这张名单没跟上，下面的遍历对它空转而本条照样全绿',
+	)
+	const bare = []
+	const walk = (node, where) => {
+		if (node === null || typeof node !== 'object') return
+		if (Array.isArray(node)) {
+			node.forEach((item, index) => walk(item, `${where}[${index}]`))
+			return
 		}
+		if (node.type === 'object' && typeof node.additionalProperties !== 'boolean') bare.push(where)
+		for (const [key, value] of Object.entries(node)) walk(value, `${where}.${key}`)
+	}
+	for (const definition of definitions) {
 		walk(definition.parameters, `${definition.name}.parameters`)
 		walk(definition.output.schema, `${definition.name}.output.schema`)
-		assert.deepEqual(bare, [], `${definition.name} 有 object 节点没显式 additionalProperties`)
 	}
+	// 工厂产物单独过一次：那两件是三族输出 schema 汇进去的地方，它哪天坏了，上面五件会一起红而
+	// 报错路径指向的是消费方（看不出是哪一档形状先坏的）。开口那一档也过——它就是当前 BATCH
+	// 输出里事件行/摘要行在用的形状
+	walk(objectShape({ form: { type: 'string' } }), 'objectShape(缺省)')
+	walk(objectShape(undefined, { additionalProperties: true }), 'objectShape(显式开口)')
+	walk(stringList(), 'stringList()')
+	assert.deepEqual(bare, [], '有 object 节点没显式 additionalProperties（路径前缀即工具名）')
+
+	// 开口那一档的两个刻度：缺省必须是闭集（意外字段被拒），显式开口不得顺带吐一个空 properties
+	// 键进宿主 schema——那是把「形状规格」变成第二个真相源，宿主照着编出来的类型会跟着变形
+	assert.equal(objectShape({}).additionalProperties, false, 'objectShape 缺省闭集：开口是个决定，不是个缺省值')
+	const open = objectShape(undefined, { additionalProperties: true })
+	assert.equal(open.additionalProperties, true)
+	assert.ok(!('properties' in open), '空壳 object 节点不带 properties 键（键集由写侧事件构造处决定）')
+	// 「每次新对象」这条须在**同参**上比。拿不同入参比（objectShape({}) 与 objectShape(undefined)）
+	// 对「同参 memo 一份单例」恒真：那正是要防的写法，而两次入参不同，样本本来就不可能同一份，
+	// 比出来的 green 说明不了任何事。同参两次身份不同、深相等——前者防共用，后者防「每次造一个
+	// 形状不一样的东西」
+	assert.notEqual(objectShape({}), objectShape({}), 'objectShape 同参两次不得是同一份对象：共用一份时某处就地改写会顺着对象身份漏到别族')
+	assert.notEqual(stringList(), stringList(), 'stringList 同理：它此前是 dispatch/index.js 的模块级 const，返回共用份时某族就地改写会顺着对象身份漏到另外两族')
+	assert.deepEqual(objectShape({}), objectShape({}), '同参两次深相等：每次新对象是身份不同，不是形状不同')
+	// 假值 fail fast：null/0/'' 都曾经能过（落进 properties 或被 spread 吞掉），症状是宿主照着一份
+	// 不是键值包的东西编 schema，或者编出来少一截字段——两个都不在那条用例的名字上
+	for (const bad of [null, 0, '']) {
+		assert.throws(() => objectShape(bad), /properties 包须是键值对象/, `objectShape(${JSON.stringify(bad)}) 要当场报错：拼错的入参不该安静造出一份形状不对的 schema`)
+	}
+})
+
+test('参数面 enum 与生产词表现读对齐：stage＝dispatchStages、batchType＝mainBatchTypes（addon 行只进描述）', () => {
+	// 加 enum 的收益在宿主调用边界（dsh-tools 的 defineTool 先 validate(args)，不过就抛
+	// ToolArgsError 并把合法值清单带出来），而夹具的 defineTool 替身把那层吃掉了——所以这条断言
+	// 钉的是「enum 收的范围对不对」这一侧，且两侧都对着**生产函数**核。手抄一份派生式就是判据的
+	// 第三处表述：lifecycle 调序（dispatchStages 按 order 排）时它与生产说岔，症状是「数据没改错、
+	// 测试先红」，而报错指向的是一个不存在的方向。enum 从描述升进 schema 之后参数面这一格就是判据
+	// 本身，故两端同一个函数。
+	const ctx = ctxOf()
+	registerDispatch(ctx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	const parameters = ctx.registered[0].parameters
+	const data = loadDispatchData()
+	for (const field of ['stage', 'batchType']) {
+		assert.ok(Array.isArray(parameters[field].enum) && parameters[field].enum.length > 0, `${field} 的词表要进 schema（宿主 StringValueSchemaSpec 收 enum，且逐值核）`)
+		assert.ok(parameters[field].enum.every((value) => typeof value === 'string'), `${field}.enum 的成员须全是字符串`)
+	}
+	// stage 只收出得了稿的那几个阶段（提交/复盘归 dispatch_batch/dispatch_lessons，本工具对它们报
+	// 未知 stage，收进来等于放行一个必然在运行期才报的值）。收哪几个由 dispatchStages 单源定，故
+	// 这里不再手抄「哪几个该在」那份名单——它会随数据调序而与生产说岔。
+	assert.deepEqual(parameters.stage.enum, dispatchStages(data), 'stage enum 逐字等于 dispatchStages(data)：出得了稿的阶段，按 order 排')
+	// batchType 收配对表主行行名（含 needsBase/needsRootCause 的特殊行，只排除 addon 行）
+	assert.deepEqual(parameters.batchType.enum, mainBatchTypes(data), 'batchType enum 逐字等于 mainBatchTypes(data)：特殊行在内、addon 行不在')
+	// addon 行不是 batchType 的合法值：收进 enum 就是让模型照着合法调用传一个必然被运行期拒的名字。
+	// 名单从数据面现读（配对表增删 addon 行时这条跟着走），不在测试里手抄一份
+	const addonNames = data.pairing.rows.filter((row) => row.kind === 'addon').map((row) => row.batchType)
+	assert.ok(addonNames.length > 0, '配对表里真得有几行 addon，否则这条断言空转')
+	for (const name of addonNames) {
+		assert.ok(!parameters.batchType.enum.includes(name), `batchType enum 收了 addon 行「${name}」——加挂行只能经 addons 参数，不作 batchType`)
+		assert.ok(parameters.batchType.description.includes(name) && parameters.batchType.description.includes('addons'), `描述里要点名 addon 行「${name}」并说清走 addons 参数：它不在 enum 里，模型只能从描述那条通道知道往哪填`)
+	}
+})
+
+test('替身攒块器与 see_image 的消费面吻合：push 喂流、finish 判终态、blocks() 取正文（vision.js 真消费面实跑）', async () => {
+	// 静态自查那层照不到消费面：它只看注册期定型的 schema，而 see_image 真正攒块是在 execute 里。
+	// 替身先前给的是 add()/blocks 属性/text 取值器——三个成员没有一个是 vision.js 调的那个形状，
+	// 于是任何走到消费面的用例都会在第一条 chunk 上炸，而报错指向 lib/see-image/vision.js。
+	// 方法面照真宿主（dsh-llm 的 BlockAssembler）逐字对齐：push 是方法、blocks 是方法、finish 是
+	// 取值器（没有 finish chunk 时给 {kind:'stop'}，不是 finish() 方法也不是 undefined）
+	const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
+	const assembler = new BlockAssembler()
+	assert.equal(typeof assembler.push, 'function', 'push(chunk) 是方法：vision.js 逐 chunk 喂它')
+	assert.equal(typeof assembler.blocks, 'function', 'blocks() 是方法不是属性：vision.js 取正文靠调它')
+	assert.deepEqual(assembler.finish, { kind: 'stop' }, 'finish 是取值器且缺省给 stop：终态映射按它判空转述与出错')
+
+	// 真消费面实跑：下面这段流与 assembler 就是 see_image execute 里那两次调用的形状（execute 还要
+	// 宿主通道的 llm 服务，故这里钉到 transcribe 那一层——它在同一条路上，且是唯一碰 assembler 的地方）
+	assert.equal(await transcribe({
+		stream: streamOf([
+			{ type: 'block-start', index: 0, blockType: 'text' },
+			{ type: 'text-delta', index: 0, text: '  图里写着 ' },
+			{ type: 'text-delta', index: 0, text: '三行字  ' },
+			{ type: 'finish', reason: { kind: 'stop' } },
+		]),
+		assembler,
+	}), '图里写着 三行字', 'text-delta 攒起来、去空白后交出正文')
+	await assert.rejects(
+		() => transcribe({ stream: streamOf([{ type: 'block-start', index: 0, blockType: 'reasoning' }]), assembler: new BlockAssembler() }),
+		/空正文/,
+		'没有 text 块即空转述：这条消费面同样要走到（只有方法名对而行为没验，等于替身与消费面各说各话）',
+	)
+})
+
+/**
+ * 替身与真宿主在攒块语义上的三处对拍，逐条一个用例。它们都不是「方法名在不在」那一层：宿主那边
+ * 换了语义而替身没跟，用例照样全绿，而症状是某条视觉输出少了半句或整段转述变空——那两样在生产
+ * 里都表现为「转述结果不如预期」，没有一个指向「攒块器没对齐」。
+ * 参照是真宿主 dsh-llm 的 BlockAssembler.push（lib/index.js）。
+ */
+const streamOf = (chunks) => (async function* () {
+	for (const chunk of chunks) yield chunk
+})()
+
+test('替身攒块语义对拍①：裸 text-delta（无 block-start）也攒出正文（真宿主按 delta 种类自动建块）', async () => {
+	const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
+	// 真宿主对「没开过块的 index」是 ensure 自动建块（块类型按 delta 种类定），不是丢弃：丢掉的话
+	// 适配层走 delta-only 协议时正文恒空，而症状是「视觉模型明明回了字、转述却是空正文」
+	const description = await transcribe({
+		stream: streamOf([
+			{ type: 'text-delta', index: 0, text: '裸 delta ' },
+			{ type: 'text-delta', index: 0, text: '也出正文' },
+		]),
+		assembler: new BlockAssembler(),
+	})
+	assert.equal(description, '裸 delta 也出正文')
+})
+
+test('替身攒块语义对拍②：裸 block-end（无 block-start）以整块交出正文', async () => {
+	const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
+	const description = await transcribe({
+		stream: streamOf([{ type: 'block-end', index: 0, block: { type: 'text', text: '整块正文' } }]),
+		assembler: new BlockAssembler(),
+	})
+	assert.equal(description, '整块正文')
+})
+
+test('替身攒块语义对拍③：block-end 的整块优先于此前累积的 text，收尾后到达的 delta 不改变正文', async () => {
+	const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
+	// **这条只钉可观测的那一半**：blocks() 在 partial 已收尾时交出整块，所以「收尾后到达的 delta
+	// 不改正文」与「整块优先于累积 text」是同一条事实的两个说法。宿主那边那条 delta 守卫
+	// （partial.block 存在即 return）本身在这条消费面上**不可观测**——去掉它之后 blocks() 交出的
+	// 仍是那一整块（实测过：带守卫与不带守卫，输出逐字相同），它防的是畸形流把半成品撑大或写脏，
+	// 属内部状态那一层。所以别把这条用例当成「守卫在」的证据：它能变红的情形是 blocks() 改成
+	// 优先累积 text，那时它该红。
+	const description = await transcribe({
+		stream: streamOf([
+			{ type: 'block-start', index: 0, blockType: 'text' },
+			{ type: 'text-delta', index: 0, text: '累积的半成品' },
+			{ type: 'block-end', index: 0, block: { type: 'text', text: '正文（定稿）' } },
+			{ type: 'text-delta', index: 0, text: '迟到的碎片' },
+		]),
+		assembler: new BlockAssembler(),
+	})
+	assert.equal(description, '正文（定稿）', '整块优先于累积 text，收尾后到达的 delta 不进正文')
+})
+
+test('替身攒块语义对拍④：不认识的 chunk 类型当场抛错（真宿主是 assertNever，替身吞掉即协议漂移无声）', async () => {
+	const { BlockAssembler } = await import('@deepseek-ai/dsh-llm')
+	// 静默吞掉的症状最难查：适配层改了 chunk 协议而替身不报，跑出来是「少了一段转述」而不是任何
+	// 报错；真宿主那一侧是 assertNever 抛的，替身也该在同一条路上炸
+	await assert.rejects(
+		() => transcribe({
+			stream: streamOf([{ type: 'brand-new-chunk-type', index: 0 }]),
+			assembler: new BlockAssembler(),
+		}),
+		/替身不认识的 chunk 类型.*brand-new-chunk-type/,
+		'未知 chunk 类型要当场抛：吞掉的话协议漂移无声，症状是转述少一段而不是报错',
+	)
 })
 
 test('模板坏了不连坐台账工具：注册期只读配对表/形态表/阶段表，status 照常可用', () => {
 	// 断的是「模板坏了 → 台账查询一起失败」这条连坐：台账记的是已经发生的批次，与出稿模板无关。
 	// 对照组是 dispatch 工具——它出稿要用模板，模板坏了就该注册失败（缺了它不如缺席）
 	const brokenData = join(root, 'data-broken')
-	cpSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data'), brokenData, { recursive: true })
+	cpSync(DISPATCH_DATA_DIR, brokenData, { recursive: true })
 	writeFileSync(join(brokenData, 'templates.json'), '{ 这不是 JSON')
 	const batchCtx = ctxOf()
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: brokenData, dispatchLedgerPath: ledger })
