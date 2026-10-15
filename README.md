@@ -1,7 +1,7 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前四件：
+单个工具初始化失败只丢那一件，不连坐整包。当前五件：
 
 - **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
   附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
@@ -15,6 +15,10 @@
 - **dispatch_batch**：批次台账。按 `start`/`advance`/`status`/`list` 把一个批次的
   一生记成结构化事件，状态从事件现推；`dispatch(batch=…)` 从台账回填该批的批型、意图、对象与
   拍板清单（只填这一趟真正消费的那几格，显式传参优先、与台账说岔了即报错）。见下节。
+- **dispatch_lessons**：复盘辅助。读台账全量事件，按点位（攒 5–8 批覆盖 ≥3 批型）判断
+  是不是到了复盘点（这三档阈值的单源是 `lifecycle.json` 复盘行的 `point` 字段，这里是它的
+  快照）；到了出配对规则的**修订建议草稿**——只出建议给主会话裁决，
+  **不自动改配对表、不落盘**（装配层只把端口的读方法传给它，写方法不在那个对象上，见下节）。
 
 ## memory 的索引与条目契约
 
@@ -42,7 +46,7 @@ frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错—
 read 工具取现文）；两条以上时 edit 改任一条都会被另一条挡住，须先 delete 掉多余的，
 剩最后一条再 edit。修好之后该层立即恢复。
 
-## memory 写侧的文件策略边界
+## memory 与 dispatch 写侧的文件策略边界
 
 memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏；而记忆文件按设计住在
 工作目录之外（`~/.dsh/memory`），所以写记忆要求 `danger-full-access`（本 profile 的
@@ -50,6 +54,11 @@ memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏
 会被宿主判成越界而拒——设计后果，不是故障。delete 与 lint 两族因宿主 fs 契约没有
 删除能力而留在 node:fs，不受该围栏约束，但 delete 同样受只读策略前检（只读会话
 一律拒写）。
+
+`dispatch_batch` 的写侧同通道同前置：台账落在记忆根的 `data/` 下、同样在工作目录之外，
+`workspace-write` 的会话里记账一样会被当场拒——那是同一个前提，不是这个工具多要的一份
+权限。`dispatch_lessons` 只读台账，不受这条约束——装配层传给它的端口上压根没有写方法
+（`fs-port.js` 的只读门面），边界是结构性的而不是靠记着别写。
 
 ## see_image 通道说明
 
@@ -89,23 +98,31 @@ accepts text only; attachment sha256:053eb17e]`——`see_image(attachment="053e
 MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」）。给纯文本
 模型喂图的正路＝磁盘路径：`see_image(path=…)`。
 
-## dispatch 数据资产
+## dispatch 数据资产（三面结构）
 
-`dispatch` 的规则不在代码里，在 `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs
-现读）：
+`dispatch` 族的规则与数据不在代码里，按**读取时机**分三面：
+
+| 面 | 载体 | 什么时候被读 | 改它要不要重启 |
+|---|---|---|---|
+| 常驻召回面 | 三个工具的 `description`（`dispatch`/`dispatch_batch`/`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
+| 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效 |
+| 追加面 | 台账 `profile-memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、`dispatch`/`dispatch_lessons` 读 | 不要 |
+
+现读面五份：
 
 - `forms.json`：21 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
-  另有 `principles` 与 `rejected`（不做清单）。
-- `pairing.json`：`rows` 十条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
-  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 九条节奏
+  另有 `principles` 与 `rejected`（不做清单）。形态 id 全集在这里，别的文件按它校验。
+- `pairing.json`：`rows` 11 条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
+  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 10 条节奏
   谓词（`when` 的每个字段＝本次调用参数值 ∈ 数组，全命中才输出）。
 - `templates.json`：九键——门一/门二/施工/修复批增量/方案任务书/横切判据/checklist/
   裁决/事件字段。模板里的 `〔…〕` 占位带各自的省略规则（空则整行省略）。
 - `lifecycle.json`：`stages` 阶段表（`id`/`order`/`gate`/`kind`/`templateKey`（可缺省，
-  缺省＝stage id）/`requires`/`produces`/`uses`/`note`（可缺省））——阶段词表、模板键与
-  stage 级必填参数的单源，core 现算；加阶段＝改这份 JSON。其中 `gate` 与 `produces`
-  是给 `dispatch_batch` 台账预留的两列，本工具不读：加载期只对四行互验 `gate` 等于
-  「kind 是复核」，提交/复盘两行的门别语义归各自的工具（两行不由本工具出稿）。
+  缺省＝stage id）/`requires`/`produces`/`uses`/`note`（可缺省）/`point`（可缺省，只有复盘那行
+  有：`minBatches`/`minBatchTypes`/`upperBatches`））——阶段词表、模板键、stage 级必填参数与
+  **复盘点位判据**的单源，core 与 dispatch_lessons 现算；加阶段、改阈值＝改这份 JSON。
+  其中 `gate` 与 `produces` 是给 `dispatch_batch` 台账预留的两列，本工具不读：加载期只对四行互验
+  `gate` 等于「kind 是复核」，提交/复盘两行的门别语义归各自的工具（两行不由本工具出稿）。
 - `plan-spec.json`：`blocks` 十三节方案规范正文＋`checklist` 定稿自查 11 条——阶段＝方案
   时装配「方案任务书」的正文与清单尾。11 条＝剪切 8 条＋新增 3 条（术语只定义一次／判据
   两列齐／读我层不夹带用户没拍过的新决策），来源＝规范「拍板方可读性」节。
@@ -119,7 +136,21 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 交集非空（谓词值各自合法但永不相交＝那条规则永不命中）。反方向（定义了却
 没有任何配对行引用＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着
 的预期孤儿，来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
-第五面（追加面）台账见下节。
+
+**why 写进数据、不写进注释**：JSON 没有注释位，所以设计意图与踩过的坑落成结构化字段——
+行与形态的判断理由进 `note`/`notes`，预期例外（如上面那两个孤儿形态）也在 `notes` 里点明；
+代码注释只写代码自己的 why。改配对规则时「为什么这么派」与「为什么这么排」因此跟着规则走，
+不用另找一份散文对齐。追加面见下节。
+
+**复盘修订配对的入口＝`dispatch_lessons`**：它读追加面那一整份台账，按点位（攒 5–8 批
+覆盖 ≥3 批型，判据单源＝`lifecycle.json` 复盘行的 `point` 字段）判断该不该复，到了出草稿——
+各形态 findings 数、组合采纳率（分母＝事件 `recommended` 逐事件求和且按集合去重，事件没自存
+推荐时输出注明不可算）、推荐与实派的差（裁剪/加派记录）、修复轮数收敛（从门二事件数推导）、
+双报重叠的捕获-再捕获估算（两路有交集且交集不大于次大那路才成立）、漏网清单，后两条按批型
+聚合成一两条并报「另有 M 条」而不是逐事件铺开；全部统计按事件里的规则版本分组报（不跨版本
+平均），同一份台账两次读出逐字相同（行序不依赖事件先后与时间戳并列）。统计分组这件事本身
+也是 rules 字段存在的唯一理由。`force=true` 跳过点位判断直接出草稿。**它只读**：装配层传给它
+的是只读端口（写方法不在那个对象上），建议给主会话裁决，改配对表是主会话的动作。
 
 ## dispatch_batch 批次台账
 
@@ -194,14 +225,15 @@ lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路�
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具与批次台账工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录那一族
-装配两件工具，故导出 `registerDispatch` 与 `registerDispatchBatch` 两个注册函数、共用一张
-`configShape`——胶水的 FEATURES 表按工具逐条 try/catch，一件起不来不连坐另一件）。
+装配三件工具，故导出 `registerDispatch`、`registerDispatchBatch` 与 `registerDispatchLessons`
+三个注册函数、共用一张 `configShape`——胶水的 FEATURES 表按工具逐条 try/catch，一件起不来
+不连坐另一件）。
 纯函数文件零宿主依赖，可直接单测；含宿主 import 的装配文件由 test/imports.test.js
 静态解析钉住接线（防搬家断链、防 inject 漏声明）。
 

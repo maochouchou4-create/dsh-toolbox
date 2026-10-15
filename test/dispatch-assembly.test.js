@@ -33,7 +33,7 @@ registerHooks({
 	},
 })
 
-const { registerDispatch, registerDispatchBatch, configShape } = await import('../lib/dispatch/index.js')
+const { registerDispatch, registerDispatchBatch, registerDispatchLessons, configShape } = await import('../lib/dispatch/index.js')
 
 let root
 let tools
@@ -71,15 +71,19 @@ after(() => {
 	rmSync(root, { recursive: true, force: true })
 })
 
-test('装配层冒烟：两件工具注册得出来，且 execute 真被调过一次（纯函数用例照不到的那一层）', async () => {
+test('装配层冒烟：三件工具注册得出来，且 execute 真被调过一次（纯函数用例照不到的那一层）', async () => {
 	const dispatchCtx = ctxOf()
 	const batchCtx = ctxOf()
+	const lessonsCtx = ctxOf()
 	registerDispatch(dispatchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const dispatchTool = dispatchCtx.registered[0]
 	const batchTool = batchCtx.registered[0]
+	const lessonsTool = lessonsCtx.registered[0]
 	assert.equal(dispatchTool.name, 'dispatch')
 	assert.equal(batchTool.name, 'dispatch_batch')
+	assert.equal(lessonsTool.name, 'dispatch_lessons')
 	assert.deepEqual(Object.keys(configShape), ['dispatchDataDir', 'dispatchLedgerPath'], 'Config 两个键：数据目录与台账路径')
 
 	const exec = { signal: undefined, agent: { session: 'smoke' } }
@@ -126,9 +130,52 @@ test('装配层冒烟：两件工具注册得出来，且 execute 真被调过�
 	const cross = await dispatchTool.execute({ stage: '门一', batch: 'smoke-batch' }, exec)
 	assert.ok(cross.briefs[0].text.includes('对象：README 装配层。'), `回填的对象要进 brief：${cross.briefs[0].text}`)
 	assert.ok(cross.briefs[0].text.includes('本批意图一句话：台账落共享层。'), `回填的意图要进 brief：${cross.briefs[0].text}`)
+
+	// 复盘那一趟：读的是刚才写进同一台账的事件——端口、路径、词法三段接线错任何一段都在这里红
+	const pending = await lessonsTool.execute({}, exec)
+	assert.equal(pending.due, false, '一个批次不到复盘点（批数与批型数双门槛）')
+	assert.match((await lessonsTool.output.render({}, structuredClone(pending)))[0].text, /^未到复盘点（/)
+	const forced = await lessonsTool.execute({ force: true }, exec)
+	assert.equal(forced.due, true)
+	assert.ok(forced.suggestions.length > 0, 'force 跳过点位也要出草稿')
+	assert.match(
+		(await lessonsTool.output.render({ force: true }, structuredClone(forced)))[0].text,
+		/建议给主会话裁决，不自动改配对表/,
+		'复盘的返回值深拷贝后照样渲染（渲染输入在值自己身上）',
+	)
+	assert.equal(lines().length, beforeCount, '复盘这一趟不写台账：出建议，不落盘')
 })
 
-test('宿主 schema 编译的静态自查：两工具定义里每个 object 节点都显式声明 additionalProperties', () => {
+test('复盘那一趟拿到的是只读门面：宿主 fs 的 writeText 就算会写也摸不到（边界是结构性的，不是纪律）', async () => {
+	// 同一份 ctx 只把 writeText 换成会抛的替身：装配层要是把原端口原样传下去，往哪儿写都拦不住，
+	// 而「只出建议不落盘」正是这套工具最贵的那条边界——它一破，复盘就开始自动改配对表
+	const registered = []
+	const ctx = {
+		fs: {
+			...hostFsOf(),
+			// 五个形参照契约写齐（端口按洞位判形状），但一被调用就炸：这样「真的写了」与「碰都没碰」
+			// 在同一份替身上分得开——门面漏传时代码走不到这里，两处都摸不到才是那个断点
+			writeText: (target, content, intent, signal, sandboxPolicy) => {
+				throw new Error('复盘工具不许写')
+			},
+		},
+		get: () => undefined,
+		tools: { register: (definition) => registered.push(definition) },
+	}
+	registerDispatchLessons(ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	const value = await registered[0].execute({ force: true }, { signal: undefined, agent: { session: 'smoke' } })
+	assert.equal(value.due, true, '只读门面上照样跑得出复盘结果')
+	assert.ok(value.suggestions.length > 0)
+	// 接线那一步本身：门面造出来了不等于真传下去了，而「这一趟一次都没写」只证明现在没写。
+	// 少了这行，把原端口原样传下去也不会红——那时边界又退回「靠记着别写」
+	const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'index.js'), 'utf8')
+	assert.ok(
+		/createReadOnlyPort\(createHostFsPort\(/.test(source),
+		'复盘那一趟的端口须过只读门面：装配层把原端口传下去就等于没有这层保证',
+	)
+})
+
+test('宿主 schema 编译的静态自查：三件工具的每个 object 节点都显式声明 additionalProperties', () => {
 	// 这一条是替身够不到的那层：夹具的 defineTool 原样交回定义，把宿主的 schema 编译替身吃掉了，
 	// 而真宿主在 object 节点没显式声明 additionalProperties 时整件工具注册失败（「unsupported JSON
 	// schema」）——不在这里静态钉住，就只能等下次宿主启动才发现 dispatch_batch 整件缺席
@@ -136,7 +183,9 @@ test('宿主 schema 编译的静态自查：两工具定义里每个 object 节�
 	registerDispatch(ctx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const batchCtx = ctxOf()
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	for (const definition of [ctx.registered[0], batchCtx.registered[0]]) {
+	const lessonsCtx = ctxOf()
+	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	for (const definition of [ctx.registered[0], batchCtx.registered[0], lessonsCtx.registered[0]]) {
 		const bare = []
 		const walk = (node, where) => {
 			if (node === null || typeof node !== 'object') return
