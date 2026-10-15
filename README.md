@@ -11,7 +11,9 @@
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
 - **dispatch**：派发装配器。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的
   brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段；阶段＝方案时
-  出方案任务书（十三节规范骨架＋定稿自查）。规则面是数据不是代码，见下节。
+  出方案任务书（十三节规范骨架＋定稿自查）。两个可选规模参数 `diffLines`/`changedFiles`
+  喂节奏谓词：小规模时额外出那条「建议直修不派复核」的提示（提示层，不阻断出稿）。
+  规则面是数据不是代码，见下节。
 - **dispatch_batch**：批次台账。按 `start`/`advance`/`status`/`list` 把一个批次的
   一生记成结构化事件，状态从事件现推；`dispatch(batch=…)` 从台账回填该批的批型、意图、对象与
   拍板清单（只填这一趟真正消费的那几格，显式传参优先、与台账说岔了即报错）。见下节。
@@ -111,29 +113,54 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 现读面五份：
 
 - `forms.json`：21 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
-  另有 `principles` 与 `rejected`（不做清单）。形态 id 全集在这里，别的文件按它校验。
+  另有 `principles`（可缺省·只给人读）与 `rejected`（不做清单）。形态 id 全集在这里，
+  别的文件按它校验。
 - `pairing.json`：`rows` 11 条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
-  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 10 条节奏
-  谓词（`when` 的每个字段＝本次调用参数值 ∈ 数组，全命中才输出）。
-- `templates.json`：九键——门一/门二/施工/修复批增量/方案任务书/横切判据/checklist/
-  裁决/事件字段。模板里的 `〔…〕` 占位带各自的省略规则（空则整行省略）。
+  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填；行上的 `note` 可缺省·
+  只给人读）＋`rhythm` 11 条节奏谓词：`when` 的每个字段都要命中才输出该 `note`，取值两形，
+  形态按字段类别守门——枚举字段（`batchType`/`stage`/`provider`）收字符串数组（本次参数值 ∈
+  数组），规模字段（`diffLines`/`changedFiles`）收 `{max:N}`（本次参数 ≤ N，`diffLines=5`
+  那种边界含在内，`max` 须非负整数，缺参不命中）。两类写反当场报错：那种写法能加载通过又永不
+  命中，是静默失效而不是坏数据。
+- `templates.json`：九键——门一/施工/修复批增量/方案任务书/AGENTS 必读链·复核/
+  AGENTS 必读链·施工/横切判据/checklist/裁决。门二那行 `templateKey` 指向门一，故模板表
+  里没有第二份逐字同文（将来两门要分叉＝改回自键＋补一份模板）。两张必读链辅助页分成复核
+  版与施工版：复核那版带「只读禁写」，施工那版不带（施工者要动工）。模板里的 `〔…〕` 占位
+  带各自的省略规则（空则整行省略）。
 - `lifecycle.json`：`stages` 阶段表（`id`/`order`/`gate`/`kind`/`templateKey`（可缺省，
-  缺省＝stage id）/`requires`/`produces`/`uses`/`note`（可缺省）/`point`（可缺省，只有复盘那行
+  缺省＝stage id）/`requires`（必填·stage 级必填矩阵的单源）/`produces`（可缺省·只给人读）/
+  `uses`/`note`（可缺省·只给人读）/`point`（可缺省，只有复盘那行
   有：`minBatches`/`minBatchTypes`/`upperBatches`））——阶段词表、模板键、stage 级必填参数与
   **复盘点位判据**的单源，core 与 dispatch_lessons 现算；加阶段、改阈值＝改这份 JSON。
-  其中 `gate` 与 `produces` 是给 `dispatch_batch` 台账预留的两列，本工具不读：加载期只对四行互验
-  `gate` 等于「kind 是复核」，提交/复盘两行的门别语义归各自的工具（两行不由本工具出稿）。
+  `gate` 是「这一行是门阶段」的第二处表述：判组合出不出走的是 `kind`，这一列由 `dispatch_batch`
+  的门禁推导读，加载期只对本工具出稿的四行互验 `gate` 等于「kind 是复核」——提交/复盘两行不由
+  本工具出稿，它们的门别语义归各自的工具。`produces` 是给台账预留的产物面，本工具不读。
 - `plan-spec.json`：`blocks` 十三节方案规范正文＋`checklist` 定稿自查 11 条——阶段＝方案
   时装配「方案任务书」的正文与清单尾。11 条＝剪切 8 条＋新增 3 条（术语只定义一次／判据
   两列齐／读我层不夹带用户没拍过的新决策），来源＝规范「拍板方可读性」节。
+
+**追加面的台账事件字段**（台账一行一事件，字段与 `dispatch_batch` 的 `start`/`advance` 参数
+一字同源，`rules` 由工具自动记）：两种事件各有 `t`（ISO-8601 带显式时区偏移）、`batch`、
+`action`（`start|advance`）、`rules`；`start` 再带 `batchType`、`baseBatchType`（缺原批型写空串）、
+`intent`、`subject`（缺省写空串）、`decisions`（缺省写空数组）；`advance` 再带 `stage`、`combo`、
+`recommended`（当趟推荐组合 id 列表，未裁剪＝`combo`）、`perFormCounts`（形态 id → findings 数）、
+`adopted`、`overlap`、`missed`、`note`——后八项的数字与短串缺省即写 0／空串，不省略。
+**读法钉死：`fold` 与复盘读事件时，可选字段缺失＝零值**（数字缺失作 0、字符串作 ''、数组作 []、
+对象作 {}），与写侧「0 写 0」的口径对称，历史事件不必补写；坏行由读面带行号报错，不按缺字段
+静默放过。
 
 **改规则＝改 JSON，下一次调用即生效，不发版不重启；需要重启的只有代码改动**（本仓被
 宿主按模块代缓存）。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
 形态，一律带文件名（与字段路径）报错不静默出稿；阶段表另核六处（id/order 唯一、order 正
 整数、复核阶段的门别可反查、gate 与 kind 等价、requires 无重复且在参数名全集内、uses 声明
-与模板占位互为充要）；模板键的白名单＝lifecycle 各行的 templateKey 加那几张辅助页（多出来的
-键没有任何阶段会读到它）；节奏谓词的 stage／batchType 取值对着可达词表核，且两个在字段的
-交集非空（谓词值各自合法但永不相交＝那条规则永不命中）。反方向（定义了却
+与模板占位互为充要）；模板键的双向核＝白名单（lifecycle 各行的 templateKey 加那几张辅助页，
+多出来的键没有任何阶段会读到它）＋反向（某行显式指了 templateKey 却没有那份模板＝拼错键名
+与忘了写模板长得一样，加载期就分不开）；节奏谓词按字段类别守形态（枚举字段收数组、规模字段收
+非负整数的 `{max:N}`，写反当场报错），`stage`／`batchType` 的取值再对着可达词表核，且两个在
+字段的交集非空（谓词值各自合法但永不相交＝那条规则永不命中）；安全五问按载体点名——那两
+个 id（安全专项／安全清单行）必须在 forms 里且两端锚点齐全，带锚的第三个形态（＝第三种念法）
+当场报错；两个载体各自锚点只出现一次、两段核心串逐字同形（前缀框定语有意不同，中间那串
+五问本体不是）。反方向（定义了却
 没有任何配对行引用＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着
 的预期孤儿，来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
 
@@ -225,7 +252,7 @@ lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路�
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋10 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋11 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```

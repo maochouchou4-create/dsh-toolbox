@@ -10,9 +10,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assembleDispatch, computeCombo } from '../lib/dispatch/core.js'
-import { DEFAULT_DATA_DIR, loadDispatchData } from '../lib/dispatch/data.js'
+import { DEFAULT_DATA_DIR, SAFETY_CARRIER_IDS, loadDispatchData } from '../lib/dispatch/data.js'
 
 const GATE_COLUMNS = ['gate1', 'gate2']
+
+/** 安全五问的两端锚（data.js 里同名常量守的是数据面，这里钉的是盘上真数据确实用这两个短语起止）。 */
+const SAFETY_HEAD = '此用户能操作此资源吗'
+const SAFETY_TAIL = 'PII 与 token 进日志吗'
 
 /** 现读面的五份数据：少拷一份＝临时目录里那份读不到，用例全红在无关的原因上。 */
 const DATA_FILES = ['forms.json', 'pairing.json', 'templates.json', 'lifecycle.json', 'plan-spec.json']
@@ -43,12 +47,12 @@ const editData = (dir, file, mutate) => {
 
 const orphanId = (warning) => warning.match(/「(.+?)」/)[1]
 
-test('盘上真数据加载即用：21 形态／11 配对行／10 节奏／6 阶段／13 节，warnings 只收两条预期孤儿', () => {
+test('盘上真数据加载即用：21 形态／11 配对行／11 节奏／6 阶段／13 节，warnings 只收两条预期孤儿', () => {
 	const data = loadDispatchData()
 	assert.deepEqual(Object.keys(data).sort(), ['forms', 'lifecycle', 'pairing', 'planSpec', 'templates', 'warnings'])
 	assert.equal(data.forms.forms.length, 21)
 	assert.equal(data.pairing.rows.length, 11)
-	assert.equal(data.pairing.rhythm.length, 10)
+	assert.equal(data.pairing.rhythm.length, 11)
 	assert.equal(data.lifecycle.stages.length, 6)
 	assert.equal(data.planSpec.blocks.length, 13)
 	assert.deepEqual(data.warnings.map(orphanId).sort(), ['设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦')
@@ -290,6 +294,97 @@ test('节奏谓词取值交叉核：batchType／stage 拼错＝加载失败（�
 		pairing.rhythm[0].when.batchType = ['涉鉴权/上传/输入']
 	}), (dir) => {
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /谓词取值不存在.*when\.batchType.*涉鉴权\/上传\/输入/, 'batchType 谓词只对着主行：addon 行不作 batchType，那条谓词永不命中')
+	})
+})
+
+test('安全五问按载体点名＋两处逐字同形：删判定／追加写岔段／锚整体换掉／载体改名／第三种念法，五种错法都加载失败', () => {
+	const carriers = loadDispatchData().forms.forms.filter((form) => form.role.includes(SAFETY_HEAD))
+	assert.deepEqual(carriers.map((form) => form.id), SAFETY_CARRIER_IDS, '盘上承载五问的形态＝data.js 登记的载体名单（名单单源，测试不再各抄一份）')
+	const cores = carriers.map((form) => form.role.slice(form.role.indexOf(SAFETY_HEAD), form.role.indexOf(SAFETY_TAIL) + SAFETY_TAIL.length))
+	assert.equal(cores[0], cores[1], '中间那串五问本体逐字相同')
+	const formOf = (forms, id) => forms.forms.find((form) => form.id === id)
+	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
+		formOf(forms, '安全清单行').role = formOf(forms, '安全清单行').role.replace('输入校验（长度/类型/格式/注入）', '输入校验')
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全清单行」与「安全专项」的安全五问核心串不逐字相同/, '少问一条——那一条永远漏查，且没有任何代码会报错')
+	})
+	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
+		const form = formOf(forms, '安全专项')
+		const original = form.role
+		const rewritten = original.slice(original.indexOf(SAFETY_HEAD)).replace('上传（类型/大小/路径）', '上传免了')
+		form.role = `${original}／补一段：${rewritten}`
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全专项」的安全五问锚点「此用户能操作此资源吗」在角色句里出现 2 次/, '追加一段写岔的五问：按切出来的那一串数只数到一次（两段文字本就不同），按锚点数才抓得住')
+	})
+	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
+		const form = formOf(forms, '安全专项')
+		form.role = form.role.replaceAll(SAFETY_HEAD, '该用户能操作此资源吗').replaceAll(SAFETY_TAIL, 'PII 会进日志吗')
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /形态「安全专项」的安全五问两端锚点不齐/, '锚被整体改掉时「按锚数载体」只剩零个，自比恒真放行——载体由名单点名，锚齐不齐才报得出来')
+	})
+	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
+		formOf(forms, '安全专项').id = '安全专项甲'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /安全五问载体丢失：forms\.json 里没有形态「安全专项」/, '载体改名：登记的那个 id 不在了，而改名后的那个成了没人校验的载体')
+	})
+	withDataDir((dir) => editData(dir, 'forms.json', (forms) => {
+		formOf(forms, '事实校准').role = `${formOf(forms, '事实校准').role}／${SAFETY_HEAD}／${SAFETY_TAIL}`
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /意外的五问载体：forms\.json 的形态「事实校准」/, '第三个形态带锚＝第三种念法，它不受同形校验保护，两边迟早写岔')
+	})
+})
+
+test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字段写数组、max 非非负整数＝加载失败', () => {
+	const entryWith = (pairing, field) => pairing.rhythm.find((entry) => entry.when[field] !== undefined)
+	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+		entryWith(pairing, 'provider').when.provider = { max: 3 }
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.provider 须是 string\[\]，实得 \{"max":3\}/, 'provider 收区间加载通过又永不命中（provider 无词表可核，词表核那层拦不住——形态按字段类别守门才拦得住）')
+	})
+	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+		entryWith(pairing, 'diffLines').when.diffLines = ['5']
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '规模字段收数组：比的是成员包含，本次参数是个数字，比出来恒不命中')
+	})
+	for (const max of [-1, 4.5]) {
+		withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { max }
+		}), (dir) => {
+			assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines\.max 须是 非负整数/, `max=${max}：负数与小数都让阈值落在不存在的一档上`)
+		})
+	}
+	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+		entryWith(pairing, 'diffLines').when.diffLines = { max: 5, min: 0 }
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 多出未声明字段「min」/, '区间只认 max 一个键：多写的那个不生效＝规则按一条不存在的口径出提示')
+	})
+	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+		entryWith(pairing, 'diffLines').when.diffLines = '5'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '字符串数字两形都不是')
+	})
+	assert.doesNotThrow(() => loadDispatchData(), '真数据那条免派条目（stage＋diffLines/changedFiles 各收 {max}）加载得过')
+})
+
+test('模板键反向核：lifecycle 显式指了 templateKey 而 templates 没有这一键＝加载失败（拼错键名与忘了写模板长得一样）', () => {
+	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
+		lifecycle.stages[3].templateKey = '门一正文'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /悬空引用：lifecycle\.json 的 stage「门二」指了 templateKey「门一正文」，templates\.json 里没有这一键/, '指错键名时出稿才报「没有按模板键写的模板」，那句话读不出是键拼错还是模板没写')
+	})
+	assert.doesNotThrow(() => loadDispatchData(), '提交/复盘两行没有 templateKey 也没有模板：缺省行不进这项核（它们归各自的工具）')
+})
+
+test('零读者字段可缺省：principles 与全部 produces 删干净仍加载得过（人读价值留、必填负担去）', () => {
+	withDataDir((dir) => {
+		editData(dir, 'forms.json', (forms) => { delete forms.principles })
+		editData(dir, 'lifecycle.json', (lifecycle) => { for (const row of lifecycle.stages) delete row.produces })
+		editData(dir, 'pairing.json', (pairing) => { for (const row of pairing.rows) delete row.note })
+	}, (dir) => {
+		const loaded = loadDispatchData({ dataDir: dir })
+		assert.equal(loaded.forms.principles, undefined)
+		assert.ok(loaded.lifecycle.stages.every((row) => row.produces === undefined))
+		assert.ok(assembleDispatch(loaded, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }).briefs.length > 0, '缺省不是「加载得过但出不了稿」：出稿链照常走')
 	})
 })
 

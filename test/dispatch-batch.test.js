@@ -690,6 +690,74 @@ test('foldBatch 直喂乱序数组：内部自己按事件时间定序（不经 
 	assert.equal(ordered.latestNote, '第二轮的注', '尾注同样按时间取末')
 })
 
+test('门别判定读的是 lifecycle 数据：把那行改成非门阶段，门禁推导跟着变（不按代码里那张自持表）', () => {
+	// 门行判定与门列反查都取自 lifecycle 那几行。代码里另抄一份「门一是门一、门二是门二」的自持
+	// 表，真数据与临时数据就此分家，而分家的那处不报错——门一照样被当成更早的门推、门二照样被
+	// 当成 ahead 门列出去，而这条用例正是按那份自持表写的才留得住它
+	const opened = startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T09:00:00Z') })
+	const reviewed = advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { '设计七维·终审': 1 }, adopted: 1, now: new Date('2026-10-15T11:00:00Z') })
+	const derelisted = structuredClone(data)
+	const gate1 = derelisted.lifecycle.stages.find((row) => row.id === '门一')
+	gate1.kind = '施工'
+	gate1.gate = false
+	const state = foldBatch([opened, reviewed], derelisted)
+	assert.equal(state.warnings.filter((warning) => warning.includes('门一')).length, 0, '门一那行不再是门阶段：它不再被当作「更早的门」推缺记录')
+	assert.deepEqual(state.gatesAhead, ['提交'], '门行集合只按数据里的 gate 算，不按写死的门名名单')
+	const real = foldBatch([opened, reviewed], data)
+	assert.ok(real.warnings.some((warning) => warning.includes('门一 缺记录')), '真数据里门一就是门阶段：同一组事件照旧报缺记录（上面那条不是恒真断言）')
+})
+
+test('门别反查表两门都在：落回的门列为空才免门，反查不到的那道门一律保守当走', () => {
+	// 反查表少一门 → stageId 反查不到列就出 yes，免门批型照甩假警。落在「落回行该列为 null」
+	// 这一档上才看得出差别：只查有门列的那种，反查表少写一门照样全绿
+	const events = [
+		startEvent({ ...START, batchType: '修复批', baseBatchType: '新功能·形态未定', rules: 'a1b2c3d4', now: new Date('2026-10-15T09:00:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '提交', rules: 'a1b2c3d4', now: new Date('2026-10-15T11:00:00Z') }),
+	]
+	const state = foldBatch(events, data)
+	assert.ok(state.warnings.some((warning) => warning.includes('门一 缺记录')), '落回行 gate1 非空 ⇒ 这批走门一 ⇒ 该报缺记录')
+	assert.ok(!state.warnings.some((warning) => warning.includes('门二 缺记录')), '落回行 gate2 是 null ⇒ 这批不走门二 ⇒ 不报（反查表少一门的话这里会变成一条假警）')
+})
+
+test('foldBatch 的阶段序按 order 排：lifecycle 的行序打乱也不改推导结果', () => {
+	// 行序与阶段先后是两件事：JSON 里谁写在前面不承重，按行序排就等于多一份真相源
+	const scrambled = structuredClone(data)
+	scrambled.lifecycle.stages.reverse()
+	const events = [
+		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T09:00:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 1 }, adopted: 1, now: new Date('2026-10-15T10:00:00Z') }),
+	]
+	const ordered = foldBatch(events, data)
+	const out = foldBatch(events, scrambled)
+	assert.deepEqual(out.stages.map((row) => row.id), ordered.stages.map((row) => row.id), '阶段行仍按 order 排（方案→门一→施工→门二→提交→复盘）')
+	assert.deepEqual(out.stages.map((row) => row.order), ordered.stages.map((row) => row.order))
+	assert.equal(out.furthest.id, ordered.furthest.id, 'furthest 取「已记录里 order 最大者」，不取最后一行')
+	assert.equal(out.next.id, ordered.next.id, 'next 是 furthest 之后 order 最小者')
+	assert.deepEqual(out.gatesAhead, ordered.gatesAhead)
+	assert.deepEqual(out.warnings, ordered.warnings)
+	assert.notDeepEqual(scrambled.lifecycle.stages.map((row) => row.id), data.lifecycle.stages.map((row) => row.id), '前提：夹具的行序确实被打乱了（否则上面全是恒真断言）')
+})
+
+test('台账事件字段＝README「追加面的台账事件字段」记的那份清单：键集逐字对账', () => {
+	// 事件字段的清单落点是 README（数据面 pages 删掉后那里是唯一一处），纯文档就会被改漂。
+	// 键集是唯一可机判的那半：字段增删改名，文档还留着旧清单时这里先红
+	const started = startEvent({ batch: START.batch, batchType: START.batchType, intent: START.intent })
+	const advanced = advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4' })
+	assert.deepEqual(Object.keys(started).sort(), ['action', 'baseBatchType', 'batch', 'batchType', 'decisions', 'intent', 'rules', 'subject', 't'], 'start 事件＝公共四字段＋batchType/baseBatchType/intent/subject/decisions')
+	assert.deepEqual(Object.keys(advanced).sort(), ['action', 'adopted', 'batch', 'combo', 'missed', 'note', 'overlap', 'perFormCounts', 'recommended', 'rules', 'stage', 't'], 'advance 事件＝公共四字段＋stage/combo/recommended/perFormCounts/adopted/overlap/missed/note')
+	// 缺省写零值不省略：省略等于让读方在「没统计到」与「统计出零」之间猜（README 同一段的话）
+	assert.equal(started.baseBatchType, '')
+	assert.equal(started.subject, '')
+	assert.deepEqual(started.decisions, [])
+	assert.equal(advanced.combo, '')
+	assert.equal(advanced.recommended, '')
+	assert.deepEqual(advanced.perFormCounts, {})
+	assert.equal(advanced.adopted, 0)
+	assert.equal(advanced.overlap, 0)
+	assert.equal(advanced.missed, '')
+	assert.equal(advanced.note, '')
+})
+
 test('list 降序：最近动过的批次排前面（排序键是 lastT）', async () => {
 	// 显式给 t 而不是连着跑三次：事件时间是秒级 ISO，同一秒写下的三条 lastT 相等，
 	// 排出来看着「对」其实是平局的插入序——那种用例钉不住排序键

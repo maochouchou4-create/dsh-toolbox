@@ -15,7 +15,6 @@ import {
 	assembleBrief,
 	assembleDispatch,
 	computeCombo,
-	conditionalConsumers,
 	consumedParams,
 	dispatchStages,
 	matchRhythm,
@@ -198,13 +197,41 @@ test('门一 brief：固定段一条不缺（角色句／必读链／横切判�
 	assert.ok(!brief.text.includes('〔'), '占位须全部替换，不留半截模板')
 })
 
-test('门一与门二同款模板；带 extras 的形态把三件套只附在自己那路', () => {
+test('门二的模板键落在门一那份（两门正文合一，模板表里没有「门二」这一键）；带 extras 的形态把三件套只附在自己那路', () => {
+	assert.equal(templateKeyOf(data, '门二'), '门一', '落点由数据表达：门二那行写 templateKey＝门一')
+	assert.equal(data.templates['门二'], undefined, '模板表里不再有第二份逐字同文——「同款」是模板键指出来的，不是两份正文凑出来的')
+	assert.ok(!data.lifecycle.stages.some((row) => row.id === '门一' && 'templateKey' in row), '合一的方向只能是门二指向门一')
 	const gate2 = assembleBrief(data, { stage: '门二', batchType: '用户可见功能批', subject: 'git diff HEAD~1', intent: '终审实现' })
 	assert.ok(gate2.find((brief) => brief.form === 'GUI 目检').text.includes('GUI 目检五组清单'))
 	assert.ok(!gate2.find((brief) => brief.form === '连带面').text.includes('GUI 目检五组清单'))
 	assert.ok(gate2.every((brief) => brief.text.includes('先读用户级 ~/.dsh/AGENTS.md 全文')))
 	const walk = assembleBrief(data, { stage: '门一', batchType: '用户可见功能批', subject: '方案.md', intent: '场景走查' })
 	assert.ok(walk.find((brief) => brief.form === '场景走查·升级版').text.includes('出路质量判定'), '场景走查三件套逐字带进那路 brief')
+})
+
+test('必读链·复核版守门：门一模板指向复核那张辅助页，页里带「只读禁写」（复核者只读，两版混用会给施工者一条做不到的约束）', () => {
+	assert.ok(data.templates['门一'].includes('〔AGENTS 必读链·复核〕'), '门一模板引的是复核版占位')
+	assert.ok(!data.templates['门一'].includes('〔AGENTS 必读链·施工〕'), '门一模板不引施工版：两张混着用等于随机给一份错分工的纪律')
+	const page = data.templates['AGENTS 必读链·复核']
+	assert.ok(page.includes('（无则跳过）；只读禁写。'), '复核版那句带只读禁写')
+	for (const stage of ['门一', '门二']) {
+		for (const brief of assembleBrief(data, { stage, batchType: '纯后端管线批', subject: 'x', intent: 'y' })) {
+			assert.ok(brief.text.includes(page), `${stage}/${brief.form} 的必读链逐字取自复核版辅助页`)
+			assert.ok(brief.text.includes('（无则跳过）；只读禁写。'), `${stage}/${brief.form} 带只读禁写`)
+		}
+	}
+})
+
+test('必读链·施工版守门：施工模板指向施工那张辅助页，页里不带「只读禁写」（施工者要动工）', () => {
+	assert.ok(data.templates['施工'].includes('〔AGENTS 必读链·施工〕'), '施工模板引的是施工版占位')
+	assert.ok(!data.templates['施工'].includes('〔AGENTS 必读链·复核〕'), '施工模板不引复核版')
+	const page = data.templates['AGENTS 必读链·施工']
+	assert.ok(page.includes('（无则跳过）。'), '施工版那句到「（无则跳过）。」为止')
+	assert.ok(!page.includes('只读禁写'), '复核者才只读——施工者拿到这句等于一条做不到的约束')
+	const [brief] = assembleBrief(data, construction())
+	assert.ok(brief.text.includes(page), '施工 brief 的必读链逐字取自施工版辅助页')
+	assert.ok(!brief.text.includes('只读禁写'), '施工 brief 里不得出现只读禁写')
+	assert.equal(page.split('\n')[1], data.templates['AGENTS 必读链·复核'].split('\n')[1], '两版除分工那一句外逐字同形：硬约束那句两份同源，不各写一套口径')
 })
 
 test('decisions 空则整行省略，非空则逐条带入', () => {
@@ -504,9 +531,9 @@ test('P9 必填全枚举：每个必填槽位单独删掉都点名（stage 级�
 })
 
 test('P10 模板与必填矩阵对齐：每阶段模板的非可选占位都落在该阶段的必填槽位上（否则必有一处静默渲染空段）', () => {
-	// 这些占位的值不来自本次调用：形态角色句取自 forms.json、下文四条原文取自 templates.横切判据、
-	// 两条 plan-spec 占位取自 plan-spec.json（方案任务书正文与自查清单都在那份数据里）
-	const dataBacked = ['形态角色句', '下文四条原文', 'plan-spec']
+	// 这些占位的值不来自本次调用：形态角色句取自 forms.json、下文四条原文与两张必读链辅助页取自
+	// templates.json、两条 plan-spec 占位取自 plan-spec.json（任务书正文与自查清单在那份数据里）
+	const dataBacked = ['形态角色句', '下文四条原文', 'AGENTS 必读链', 'plan-spec']
 	for (const stage of dispatchStages(data)) {
 		const allowed = [...stageRequires(data, stage), ...dataBacked]
 		for (const token of placeholderTokens(data.templates[templateKeyOf(data, stage)])) {
@@ -556,6 +583,65 @@ test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数
 	assert.ok(!hits({ stage: '门一', batchType: '纯后端管线批' }), 'stage 不合即不出')
 	assert.ok(!hits({ stage: '门二', batchType: '用户可见功能批' }), 'batchType 不合即不出')
 	assert.ok(matchRhythm(data, { stage: '门一', batchType: '纯后端管线批' }).every((note) => note.includes('施工走查')), '真数据里门一纯后端管线批只命中走查通用提示（放宽基线也随之更新）')
+})
+
+test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚举混用、0 也算给了、只对门二出', () => {
+	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
+	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note'
+	const hits = (params) => matchRhythm(data, params).includes(exempt)
+	assert.ok(hits({ ...base, diffLines: 5, changedFiles: 1 }), '边界：正好等于阈值命中')
+	assert.ok(!hits({ ...base, diffLines: 6, changedFiles: 1 }), '超一行即不出（免派口径对齐几行级小修）')
+	assert.ok(!hits({ ...base, diffLines: 5, changedFiles: 2 }), '两个区间字段都命中才出：文件数超了同样不算小规模')
+	assert.ok(hits({ ...base, diffLines: 0, changedFiles: 0 }), '0 也算「给了」并落在阈值内——空判据读不出 0，而零行净 diff正是免派那一档')
+	assert.ok(!hits(base), '不传规模参数＝没有免派提示（缺参不命中，不当默认值）')
+	assert.ok(!hits({ ...base, diffLines: '5', changedFiles: 1 }), '字符串数字不比大小：拿字符串比大小会静默得出「不在阈值内」')
+	for (const stage of ['方案', '施工', '门一']) {
+		assert.ok(!hits({ ...base, stage, diffLines: 3, changedFiles: 1 }), `${stage} 那一趟不出免派提示：那条判据限门二（提交前那道），其余阶段还没到派不派的裁量点`)
+	}
+	const withScale = matchRhythm(data, { ...base, diffLines: 3, changedFiles: 1 })
+	const withoutScale = matchRhythm(data, base)
+	assert.ok(withoutScale.every((note) => withScale.includes(note)), '加规模参数只增不减：原命中的枚举条目一条不少（区间形与枚举形各按各的判据）')
+	assert.deepEqual(withScale.filter((note) => !withoutScale.includes(note)), [exempt], '增量恰为免派那一条——多出别的就是谓词互相污染，差集比整体相等更能指出来')
+	assert.throws(
+		() => validateParams(data, { ...base, diffLines: '5' }),
+		/参数「diffLines」须是非负整数/,
+		'规模参数按非负整数收：类型错当场点名，不留到「提示没出」那种看不出原因的结果里',
+	)
+	for (const value of [-1, 4.5]) {
+		assert.throws(() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }), /参数「diffLines」须是非负整数/, `diffLines=${value}：负数与小数按 ≤max 一比照样「命中」，等于按一个不存在的规模发了免派建议`)
+	}
+	assert.doesNotThrow(() => validateParams(data, { ...base, diffLines: 0, changedFiles: 0 }), '0 不触发「不消费该槽位」')
+	assert.doesNotThrow(
+		() => validateParams(data, { stage: '方案', subject: 'x', intent: 'y', diffLines: 3, changedFiles: 1 }),
+		'规模参数不进任何模板，但 rhythm 谓词在每一趟都读它，故各阶段都消费它（provider 同款——漏登记消费面会撞「不消费该槽位」）',
+	)
+})
+
+test('规模参数只给一半＝出一条告警：按不命中是静默的，调用方看不出是自己少传了一个参数', () => {
+	const params = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
+	const warningsOf = (extra) => assembleDispatch(data, { ...params, ...extra }).warnings
+	assert.deepEqual(warningsOf({ diffLines: 3 }), ['规模参数只给了 diffLines——免派判据取交集（diffLines 与 changedFiles 成对给），只给一半按不命中：本次不出免派提示'])
+	assert.deepEqual(warningsOf({ changedFiles: 1 }), ['规模参数只给了 changedFiles——免派判据取交集（diffLines 与 changedFiles 成对给），只给一半按不命中：本次不出免派提示'])
+	assert.deepEqual(warningsOf({ diffLines: 3, changedFiles: 1 }), [], '成对给了就没有这条：告警只说「少给了哪一个」，不预判那一趟该不该出提示')
+	assert.deepEqual(warningsOf({}), [], '一个都不给同样不报——那是没有规模判据要判，不是给漏了')
+})
+
+test('免派条的阶段限定读的是配对表那份数据：把它挪到施工，免派提示就跟着搬走', () => {
+	// 阶段限定若写死在 core 里（"只对门二出"），改配对表改不动它，两处就此分家且都不报错：
+	// 数据面说这条判据限门二，代码说限死门二，加载期无从发现
+	const params = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
+	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note'
+	const moved = withLoadedData({
+		'pairing.json': (value) => {
+			const rule = value.rhythm.find((entry) => entry.when?.diffLines?.max === 5)
+			rule.when.stage = ['施工']
+		},
+	}, (loaded) => [
+		matchRhythm(loaded, { ...params, diffLines: 3, changedFiles: 1 }).includes(exempt),
+		matchRhythm(loaded, { ...params, stage: '施工', diffLines: 3, changedFiles: 1 }).includes(exempt),
+	])
+	assert.deepEqual(moved, [false, true], '配对表把那条判据挪到施工：门二这一趟不再出免派提示，施工那一趟出——提示随数据搬走，不是代码里钉死的那一趟')
+	assert.ok(matchRhythm(data, { ...params, diffLines: 3, changedFiles: 1 }).includes(exempt), '真数据那条仍限门二（上面那条不是恒真断言）')
 })
 
 test('P15 core 无突变：数据深冻后五个入口都不抛；rejected 是拷贝，调用方改不动规则面', () => {
@@ -737,7 +823,7 @@ test('槽位消费完备：全阶段×全参数矩阵——不消费的参数收
 	const values = {
 		batchType, subject: 'x', intent: 'y', baseBatchType: '纯后端管线批', batch: 'dispatch-plugin-b4',
 		forbidden: '禁区', verifyCmd: 'npm test', rootCause: '错行', provider: 'minimax-cn',
-		decisions: ['拍板'], addons: ['涉鉴权/上传/输入'], anchors: ['a'],
+		decisions: ['拍板'], addons: ['涉鉴权/上传/输入'], anchors: ['a'], diffLines: 3, changedFiles: 1,
 	}
 	for (const stage of dispatchStages(data)) {
 		const consumed = consumedParams(data, stage, batchType)
@@ -763,7 +849,8 @@ test('槽位消费完备：全阶段×全参数矩阵——不消费的参数收
 	assert.deepEqual(stagesConsuming(data, 'decisions'), ['门一', '施工', '门二'], 'decisions 按模板占位消费：方案任务书没有拍板清单那一行（方案是给用户拍板的输入，不是已拍板的载体）')
 	assert.deepEqual(stagesConsuming(data, 'provider'), ['方案', '门一', '施工', '门二'], 'provider 由 rhythm 谓词消费，与阶段无关')
 	assert.deepEqual(stagesConsuming(data, 'batch'), ['方案', '门一', '施工', '门二'], 'batch 是台账回填入口，装配层拿到就拉台账，与这一趟出不出稿无关')
-	assert.deepEqual([...consumedParams(data, '方案')], ['subject', 'intent', 'provider', 'batch'], '方案那一趟消费的槽位只有这四个：模板占位＋必填矩阵＋通用槽位（provider 供 rhythm 谓词读、batch 是台账回填入口），无门列故不消费组合那三项，任务书无拍板清单行故不消费 decisions')
+	assert.deepEqual(stagesConsuming(data, 'diffLines'), ['方案', '门一', '施工', '门二'], '规模参数与 provider 同款：只被 rhythm 谓词读，与阶段无关')
+	assert.deepEqual([...consumedParams(data, '方案')], ['subject', 'intent', 'provider', 'batch', 'diffLines', 'changedFiles'], '方案那一趟消费的槽位只有这六个：模板占位＋必填矩阵＋通用槽位（provider 与两个规模参数供 rhythm 谓词读、batch 是台账回填入口），无门列故不消费组合那三项，任务书无拍板清单行故不消费 decisions')
 })
 
 test('decisions 按模板占位消费：方案那一趟传它即报错并说清为什么（方案是给用户拍板的输入，不是已拍板的载体）', () => {
@@ -799,9 +886,6 @@ test('批型条件槽位的点名带条件：门一传 baseBatchType／rootCause
 		/stage=施工 不消费 rootCause——这一趟的批型行没标 needsRootCause，施工模板不追加根因分类那三行/,
 		'施工+非修复批传根因分类同样点名（修复批那一趟才追加那三行）',
 	)
-	assert.deepEqual(conditionalConsumers(data, 'rootCause'), { condition: 'needsRootCause', holders: ['修复批'], stages: ['施工'] })
-	assert.deepEqual(conditionalConsumers(data, 'baseBatchType').stages, ['门一', '门二'])
-	assert.equal(conditionalConsumers(data, 'decisions'), null, 'decisions 不是批型条件槽位，按模板占位消费')
 	assert.doesNotThrow(() => validateParams(data, { stage: '门二', batchType: '修复批', baseBatchType: '纯后端管线批', subject: 'x', intent: 'y' }), 'needsBase 行在有门列的阶段仍然消费它')
 })
 
