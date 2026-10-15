@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHostFsPort, createNodeFsPort, versionOf } from '../lib/memory/fs-port.js'
+import { createHostFsPort, createNodeFsPort, versionOf } from '../lib/fs-port.js'
 
 let base
 

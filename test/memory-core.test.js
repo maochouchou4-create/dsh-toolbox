@@ -9,9 +9,9 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
+import { HEAD_CHUNK_BYTES } from '../lib/head-read.js'
 import { DEFAULT_MEMORY_ROOT, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget, resolveRoot, workspaceSlug } from '../lib/memory/core.js'
 import { composeMemory, readCapped } from '../lib/memory/assemble.js'
-import { HEAD_CHUNK_BYTES } from '../lib/memory/head-read.js'
 import { entry } from './helpers.js'
 
 let base

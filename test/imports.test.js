@@ -101,7 +101,7 @@ test('memory 工具参数面与写侧函数签名一致（action→入参字段�
 	// execute 的分派面按模块归属一起核。动作模块的集合现场扫出来而不是手写枚举：枚举
 	// 漏登记一个文件时不会红，而分派面恰恰靠「全部动作模块导出面的并集」才查得全
 	const memoryDir = join(libDir, 'memory')
-	const actionFiles = readdirSync(memoryDir).filter((file) => file.endsWith('.js') && file !== 'index.js' && file !== 'fs-port.js')
+	const actionFiles = readdirSync(memoryDir).filter((file) => file.endsWith('.js') && file !== 'index.js')
 	const writeSide = {}
 	for (const file of actionFiles) Object.assign(writeSide, await loadModule(join('memory', file)))
 	for (const fn of ['upsertEntry', 'editEntry', 'deleteEntry', 'lintMemory']) {
@@ -173,9 +173,6 @@ const NODE_FS_DIRECT = new Map([
 	['memory/lint.js', true],
 	['memory/assemble.js', true],
 	['memory/layers.js', true],
-	['memory/fs-port.js', true],
-	['memory/fs-guard.js', false],
-	['memory/head-read.js', true],
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],
@@ -186,6 +183,9 @@ const NODE_FS_DIRECT = new Map([
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
+	['fs-port.js', true],
+	['fs-guard.js', false],
+	['head-read.js', true],
 	['index.js', false],
 ])
 
