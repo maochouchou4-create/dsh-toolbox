@@ -1,7 +1,7 @@
 {
 	"name": "dsh-toolbox",
-	"version": "0.2.0",
-	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）。单包多工具，逐工具隔离激活。",
+	"version": "0.3.0",
+	"description": "DSH 个人工具箱：memory（两层记忆读注入＋写侧工具）＋see_image（图片交视觉模型转述）＋dispatch（派发装配：按批型配对复核形态＋现成 brief）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",
 	"main": "lib/index.js",
@@ -40,7 +40,8 @@
 		"cordis",
 		"plugin",
 		"memory",
-		"vision"
+		"vision",
+		"dispatch"
 	],
 	"peerDependencies": {
 		"@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.3.0",

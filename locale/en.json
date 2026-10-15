@@ -1,6 +1,6 @@
 {
 	"meta": {
 		"title": "DSH Toolbox",
-		"description": "Personal tool pack: two-layer memory injection + memory write tool, and see_image (vision model transcription via host LLM channel)."
+		"description": "Personal tool pack: two-layer memory injection + memory write tool, see_image (vision model transcription via host LLM channel), and dispatch (assembles review-form combos and ready-made briefs per batch type; its rules live in JSON read fresh on every call)."
 	}
 }

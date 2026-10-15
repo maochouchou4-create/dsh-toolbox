@@ -60,7 +60,7 @@ function consumedServices(source) {
 test('胶水→工具模块的导入名在目标 export 语句内（防搬家断链）', () => {
 	const glue = readLib('index.js')
 	const imports = parseLocalImports(glue)
-	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js'), '胶水须装配 memory 与 see_image 两模块')
+	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/index.js'), '胶水须装配 memory、see_image、dispatch 三模块')
 	for (const [specifier, names] of imports) {
 		const exported = parseExportNames(readLib(specifier.replace('./', '')))
 		for (const name of names) {
@@ -73,6 +73,7 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
+		['dispatch/index.js', ['registerDispatch', 'configShape']],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -121,6 +122,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// see-image/vision.js），DOA 要到运行期才炸，而这条用例正是提前拦住它的那道
 	const used = new Set([
 		...consumedServices(glue),
+		...consumedServices(readLib('dispatch/index.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
@@ -139,7 +141,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 「没问题」，而这正是本用例的立身之本（少声明＝DOA）
 	assert.ok(used.has('sandboxPolicy'), "memory/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
 
-	for (const file of ['memory/index.js', 'see-image/index.js']) {
+	for (const file of ['memory/index.js', 'see-image/index.js', 'dispatch/index.js']) {
 		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
 	}
 })
@@ -177,6 +179,9 @@ const NODE_FS_DIRECT = new Map([
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],
+	['dispatch/core.js', false],
+	['dispatch/data.js', true],
+	['dispatch/index.js', false],
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
@@ -184,11 +189,11 @@ const NODE_FS_DIRECT = new Map([
 ])
 
 /**
- * 定性表必须覆盖到的模块域：lib/ 根与两个子目录。每个域下的 .js 都要在表上定性过——
+ * 定性表必须覆盖到的模块域：lib/ 根与三个子目录。每个域下的 .js 都要在表上定性过——
  * 覆盖只到一部分时，「新增文件漏定性」就只在那部分成立，文档承诺比机器口径宽，
  * 读到的人会以为全仓都有牙。
  */
-const NODE_FS_SCOPES = ['.', 'memory', 'see-image']
+const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch']
 
 /**
  * node:fs 的同步调用面：全量符号集（fs 同步 API，含 openSync/readSync/closeSync 这类

@@ -1,7 +1,7 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前两件：
+单个工具初始化失败只丢那一件，不连坐整包。当前三件：
 
 - **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
   附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
@@ -9,6 +9,9 @@
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
+- **dispatch**：派发装配器。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的
+  brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段。规则面
+  是数据不是代码，见下节。
 
 ## memory 的索引与条目契约
 
@@ -83,6 +86,27 @@ accepts text only; attachment sha256:053eb17e]`——`see_image(attachment="053e
 MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」）。给纯文本
 模型喂图的正路＝磁盘路径：`see_image(path=…)`。
 
+## dispatch 数据资产
+
+`dispatch` 的规则不在代码里，在 `lib/dispatch/data/` 下三份 JSON（每次调用经 node:fs
+现读）：
+
+- `forms.json`：20 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
+  另有 `principles` 与 `rejected`（不做清单）。
+- `pairing.json`：`rows` 十条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
+  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 九条节奏
+  谓词（`when` 的每个字段＝本次调用参数值 ∈ 数组，全命中才输出）。
+- `templates.json`：九键——门一/门二/施工/修复批增量/方案任务书/横切判据/checklist/
+  裁决/事件字段。模板里的 `〔…〕` 占位带各自的省略规则（空则整行省略）。
+
+**改规则＝改 JSON，下一次调用即生效，不发版不重启；需要重启的只有代码改动**（本仓被
+宿主按模块代缓存）。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
+形态，一律带文件名（与字段路径）报错不静默出稿；反方向（定义了却没有任何配对行引用
+＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着的预期孤儿，
+来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
+批 2 会在这份数据面上加 `plan-spec.json`（方案任务书规范正文）与 `lifecycle.json`
+（阶段词表与必填参数的单源），批 4 加追加面台账 `dispatch-ledger.jsonl`。
+
 ## 安装（本地仓直装）
 
 ```text
@@ -120,6 +144,7 @@ lib/value.js            跨工具族的值判据原语（isNonBlankString：非�
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口 + fs-guard.js（写侧 I/O 前置守卫与错误码，零 node:fs 以免拖进写侧闭包）+ head-read.js（分块头读，端口适配器与读侧共用）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
+lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ data.js（现读三份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（20 形态／10 配对行＋9 节奏／九键模板）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```
