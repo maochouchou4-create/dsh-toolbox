@@ -194,6 +194,24 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 「恒缺席」那一层不归文档管：可缺省只保证写回去也装得上，写回盘上要由 dispatch-data 的用例对着
 真盘面反钉（红的时候自问「它有消费者吗」）。追加面见下节。
 
+## dispatch 的 workflow 消费（批量派发）
+
+`dispatch` 门二输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核，替代逐路 subagent 手工派发。脚本骨架：
+
+```js
+const briefs = args.briefs;                    // 从 dispatch 输出值转抄 briefs 数组
+const results = await parallel(briefs.map(b => async () => {
+  try {
+    return { form: b.form, ok: true, out: await agent(b.text, {
+      label: b.form, provider: '…', model: '…',   // 显式指派，走授权路线
+      schema: { /* findings 结构化校验 */ }
+    }) };
+  } catch (e) { return { form: b.form, ok: false, error: String(e) }; }
+}));
+```
+
+三个坑（实测踩过）：①workflow 返回值严格 JSON 校验——成功分支不要带 `error: undefined` 这类字段，整趟直接拒；②`parallel` 里 throwing thunk 解析为 `null`——先 filter 再取字段，失败路单独收进「failed_routes」保住「各路成功失败分开可查」；③`briefs` 在输出值（value）里不在 render 文本里，转抄进脚本 `args` 是手工步骤。首单实测（2026-10，批 G）：双路并行 270s、零失败、结构化 findings 20 条（含对已过双路门二对象的第三轮增量 8 处）——报告见当批实施方案目录。
+
 ## dispatch 的 enum 参数面：注册期快照与运行期现读是两速
 
 `dispatch` 的 `stage`/`batchType` 两个参数除了描述里那份词表，还带着 schema 的 `enum`
