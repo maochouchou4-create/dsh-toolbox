@@ -129,6 +129,20 @@ test('装配层冒烟：三件工具注册得出来，且 execute 真被调过�
 	// snapshotToolValue＋deepFreeze），按对象身份的缓存在那条路上必然 miss（曾经有个 WeakMap
 	// 渲染模型，真宿主上永远不命中）。现在两条视图的推导输入都在值自己身上：单批与写动作带
 	// events，多批带 rows 摘要——深拷贝后渲染照常出文本。
+	// 输出 schema 顶层闭集：text 是必填那一格。少了 required:true，值里没带 text 时宿主不会
+	// 当场拒，而是把这份值递到 render——那时抛的是渲染层的错，报的还是同一件事，查起来却绕了一圈
+	assert.equal(batchTool.output.schema.properties.text.required, true, 'text 在输出 schema 里必填（顶层闭集，多带/少带字段都是契约变更）')
+	assert.equal(batchTool.output.schema.properties.text.type, 'string')
+	assert.equal(batchTool.output.schema.additionalProperties, false, '顶层闭集：execute 交出表以外的字段即契约变更')
+	for (const [名字, 值] of [['status(batch)', status], ['list', list]]) {
+		assert.equal(值.text, (await batchTool.output.render({}, structuredClone(值)))[0].text, `${名字}：render 投影的就是值里那份 text`)
+	}
+	assert.throws(
+		() => batchTool.output.render({ action: 'status', batch: 'smoke-batch' }, { ok: true, batch: 'smoke-batch', events: [] }),
+		/batchToolRender|不带 text/u,
+		'值里没有 text 即抛，不静默出空文本：空文本看不出是值少了一格',
+	)
+
 	const clonedList = await batchTool.execute({ action: 'list' }, exec).then((value) => structuredClone(value))
 	assert.ok(Array.isArray(clonedList.rows) && clonedList.rows.length > 0, '多批视图的结构化值带 rows 摘要：渲染的推导输入在值自己身上')
 	assert.match((await batchTool.output.render({ action: 'list' }, clonedList))[0].text, /smoke-batch/, '多批视图深拷贝后照样渲染出正确文本（从值里的 rows 映射，不再依赖对象身份）')

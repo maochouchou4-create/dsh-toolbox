@@ -23,8 +23,8 @@ import { DISPATCH_DATA_DIR, DISPATCH_DIR, makeEvent, seedLedger, tempRoot } from
 
 const dataDir = DISPATCH_DATA_DIR
 const data = loadDispatchData({ dataDir })
-/** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTables，测试直接取已读好的真数据）。 */
-const loadTables = ({ names }) => Object.fromEntries(names.map((name) => [name, data[name]]))
+/** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTablesWithBytes 交回 { tables, bytes }，这趟不记规则指纹，只取表那一半）。 */
+const loadTables = ({ names }) => ({ tables: Object.fromEntries(names.map((name) => [name, data[name]])), bytes: {} })
 
 const vocabulary = data.forms.forms.map((form) => form.id)
 const port = createNodeFsPort()

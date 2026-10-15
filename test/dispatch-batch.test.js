@@ -25,15 +25,31 @@ import {
 	runBatchAction,
 	startEvent,
 } from '../lib/dispatch/batch.js'
-import { loadDispatchData, loadDispatchTables, readDataBytes } from '../lib/dispatch/data.js'
+import { DATA_FILES, loadDispatchData, loadDispatchTables, readDataBytes } from '../lib/dispatch/data.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { copyDataFiles, DISPATCH_DATA_DIR, tempRoot } from './helpers.js'
 
 const dataDir = DISPATCH_DATA_DIR
 const data = loadDispatchData({ dataDir })
 const port = createNodeFsPort()
-/** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTables，测试直接取已读好的真数据）。 */
-const loadTables = ({ names }) => Object.fromEntries(names.map((name) => [name, data[name]]))
+/** 按动作注入它要的那几份数据面（生产走 data.js 的 loadDispatchTablesWithBytes，测试直接取已读好的真表，字节现读真文件——advance 的规则指纹就靠这一半）。 */
+const loadTables = ({ names }) => ({
+	tables: Object.fromEntries(names.map((name) => [name, data[name]])),
+	// 文件名对 DATA_FILES 派生而非拼 `${name}.json`——数据面改文件名时这里 ENOENT 当场响，与下方指纹文件同一条纪律
+	bytes: readDataBytes({ dataDir, files: names.map((name) => DATA_FILES.find((one) => one.name === name).file) }),
+})
+/**
+ * 指纹覆盖哪两份规则面：名字在这里声明，文件名对着数据面派生——写死文件名的话，数据面改个名
+ * （pairing.json 改成别的）这里就悄悄读着另一张表，而断言照样绿。
+ */
+const 指纹规则名 = ['pairing', 'forms']
+const 指纹文件 = () => {
+	const files = DATA_FILES.filter((one) => 指纹规则名.includes(one.name)).map((one) => one.file)
+	assert.equal(files.length, 指纹规则名.length, `数据面里少了 ${指纹规则名.join('、')} 中的某一份：指纹要覆盖的是这两份规则`)
+	return files
+}
+/** 指纹收的是字节不是 dataDir：测试里现读那两份当输入（生产走 advance 那趟读表顺带回的字节）。 */
+const rulesFingerprint = (dir = dataDir) => rulesHashOf({ bytes: readDataBytes({ dataDir: dir, files: 指纹文件() }) })
 
 let root
 /** 台账路径随用例换新：共用一个文件时前一条留下的事件会污染后一条的推导结果。 */
@@ -67,14 +83,23 @@ test('rules 指纹＝pairing＋forms 的原始字节按固定顺序拼一次 sha
 	const expected = createHash('sha256')
 		.update(Buffer.concat([readFileSync(join(dataDir, 'pairing.json')), readFileSync(join(dataDir, 'forms.json'))]))
 		.digest('hex').slice(0, 8)
-	assert.equal(rulesHashOf({ dataDir }), expected, '顺序固定＝pairing 在前、forms 在后；解析后重新序列化会改字节，指纹就不再跨机一致')
-	assert.match(rulesHashOf({ dataDir }), /^[0-9a-f]{8}$/)
-	assert.equal(rulesHashOf({ dataDir }), rulesHashOf({ dataDir }), '逐次现读，同一份字节给同一个值')
+	assert.equal(rulesFingerprint(), expected, '顺序固定＝pairing 在前、forms 在后；解析后重新序列化会改字节，指纹就不再跨机一致')
+	assert.match(rulesFingerprint(), /^[0-9a-f]{8}$/)
+	assert.equal(rulesFingerprint(), rulesFingerprint(), '同一份字节给同一个值——指纹不自己读盘，读的是调用方这一趟已经拿在手上的那份')
 	// 改的是字节不是语义：同一个 JSON 末尾多一个换行，指纹就变——这正是「规则版本」能分组的原因
-	const copy = copyDataFiles(join(root, 'data-copy'), ['pairing.json', 'forms.json'])
-	const unchanged = rulesHashOf({ dataDir: copy })
+	const copy = copyDataFiles(join(root, 'data-copy'), 指纹文件())
+	const unchanged = rulesFingerprint(copy)
 	writeFileSync(join(copy, 'pairing.json'), `${readFileSync(join(copy, 'pairing.json'), 'utf8')}\n`)
-	assert.notEqual(rulesHashOf({ dataDir: copy }), unchanged)
+	assert.notEqual(rulesFingerprint(copy), unchanged)
+})
+
+test('rules 指纹：字节表入参不合法即点名（不是字节表／缺份各一条）——旧调用方拿 dataDir 或文件名数组来的，到不了哈希那一步', () => {
+	const bytes = readDataBytes({ dataDir, files: 指纹文件() })
+	for (const 实得 of [undefined, null, 'pairing.json', ['pairing.json', 'forms.json']]) {
+		assert.throws(() => rulesHashOf({ bytes: 实得 }), /bytes 得是本趟读到的字节表/, `实得 ${JSON.stringify(实得) ?? String(实得)} 即报错`)
+	}
+	assert.throws(() => rulesHashOf({}), /bytes 得是本趟读到的字节表/u, '漏传第二参也落进同一条：undefined 不是「没传就按目录读」')
+	assert.throws(() => rulesHashOf({ bytes: { [指纹文件()[0]]: bytes[指纹文件()[0]] } }), new RegExp(`这次读到的字节里没有 ${指纹文件()[1].replace('.', '\\.')}`), '缺份要点名缺的是哪一份：拿 undefined 去拼 Buffer 只会抛一个原生 TypeError')
 })
 
 test('事件时间＝ISO-8601 带显式时区偏移（两机读同一份台账不必心算 UTC 偏移才看先后）', () => {
@@ -120,7 +145,7 @@ test('start 的必填与词表：batch/intent 缺一即点名，batchType 须是
 	await start()
 	const [event] = parsedLines()
 	assert.deepEqual(event.decisions, START.decisions, '拍板清单逐条原文落盘')
-	assert.equal(event.rules, rulesHashOf({ dataDir }), '工具自动记规则版本，调用方不用也不许自己填')
+	assert.equal(event.rules, rulesFingerprint(), '工具自动记规则版本，调用方不用也不许自己填')
 	assert.equal(event.subject, '', '未传的字符串缺省写空串而不是省略——读方不必猜「没传」还是「传了空」')
 })
 
@@ -133,7 +158,7 @@ test('advance 追加事件，缺省数字字段写 0/空串不省略（读方统
 	assert.equal(event.missed, '')
 	assert.equal(event.note, '')
 	assert.equal(event.recommended, '锚点核对 事实校准', '推荐组合逐事件记：复盘算裁剪率的分母靠它')
-	assert.equal(event.rules, rulesHashOf({ dataDir }))
+	assert.equal(event.rules, rulesFingerprint())
 })
 
 test('advance 的参数边界：stage 对词表、perFormCounts 对形态词表、计数非负、批次未登记即拒', async () => {
@@ -531,9 +556,9 @@ test('start 自建台账走的是 createIfAbsent 分支（在场走 replaceIfVer
 
 test('rules 指纹真现读：同一个 dataDir，两次调用之间改了文件，指纹就变', () => {
 	const copy = copyDataFiles(join(root, 'data-现读'), ['pairing.json', 'forms.json'])
-	const before = rulesHashOf({ dataDir: copy })
+	const before = rulesFingerprint(copy)
 	writeFileSync(join(copy, 'forms.json'), `${readFileSync(join(copy, 'forms.json'), 'utf8')}\n`)
-	const after = rulesHashOf({ dataDir: copy })
+	const after = rulesFingerprint(copy)
 	assert.notEqual(after, before, '现读不缓存：缓存住的指纹会让事件里的规则版本永远停在注册那一刻')
 })
 
@@ -600,7 +625,7 @@ test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order�
 			dataDir,
 			action: 'status',
 			params: {},
-			loadTables: ({ names }) => Object.fromEntries(names.map((name) => [name, name === 'lifecycle' ? truncated.lifecycle : data[name]])),
+			loadTables: ({ names }) => ({ tables: Object.fromEntries(names.map((name) => [name, name === 'lifecycle' ? truncated.lifecycle : data[name]])) }),
 		}),
 		/lifecycle 无 kind='提交' 行（或不止一行），实得 0 行.*数据未过加载校验/,
 		'缺提交行不兜底：退化全量的症状是所有批次都还堵着，而真正的原因是数据没过加载校验',
@@ -612,7 +637,7 @@ test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order�
 			dataDir,
 			action: 'status',
 			params: {},
-			loadTables: ({ names }) => Object.fromEntries(names.map((name) => [name, name === 'lifecycle'
+			loadTables: ({ names }) => ({ tables: Object.fromEntries(names.map((name) => [name, name === 'lifecycle'
 				? {
 					stages: [...data.lifecycle.stages, {
 						...data.lifecycle.stages.find((row) => row.kind === '提交'),
@@ -620,7 +645,7 @@ test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order�
 						order: 7,
 					}],
 				}
-				: data[name]])),
+				: data[name]])) }),
 		}),
 		/实得 2 行/,
 		'两行提交同样当场抛：多出来的那行会把提交这一步推到没有下一行的 order，加载期那道拦的是同一件事',
@@ -827,19 +852,98 @@ test('list 不带 batch 参数：带了即报错（与 dispatch「不消费的�
 	await assert.rejects(() => run('list', { batch: START.batch }), /list 无 batch 参数/)
 })
 
-test('写动作的返回值直接渲染得出来（渲染模型与 status/list 同款，render 不现读台账）', async () => {
+test('渲染输入在值自己身上：text 随值一起交出，render 只投影它（render 不现读台账、不重折）', async () => {
 	freshLedger('写动作渲染')
 	const started = await start()
-	assert.ok(renderBatchResult(started, data).includes('下一步：方案'), `登记完那一趟渲染出的是状态本身：${renderBatchResult(started, data)}`)
+	assert.ok(started.text.includes('下一步：方案'), `登记完那一趟交出的文本就是状态本身：${started.text}`)
 	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1, note: '过了' })
-	const text = renderBatchResult(advanced, data)
-	assert.ok(text.includes('已记录：门一 第 1 轮') && text.includes('下一步：施工') && text.includes('附注：过了'), text)
+	assert.ok(advanced.text.includes('已记录：门一 第 1 轮') && advanced.text.includes('下一步：施工') && advanced.text.includes('附注：过了'), advanced.text)
 	assert.equal(advanced.next, '施工', 'next 进结构化值')
-	// 渲染不现读台账：execute 那一次已经把推导好的状态挂在结果上，渲染是纯投影。台账删掉之后
-	// 照样渲染得出来——渲染时再去读一次，那份文本就是「读到什么算什么」，同一批两次渲染能不一样
+	assert.equal(renderBatchResult(started, data), started.text, '算式与值同源：值里那份 text 就是按那份算式现算出来的那份，两处不会各说一套')
+	// 渲染是纯投影：execute 那一次就把文本定下来了。之后台账删掉、数据面读不动，投影照样出得来
+	// ——render 里再去读一次或重折一遍，那份文本就是「读到什么算什么」，同一批两次渲染能不一样
 	rmSync(ledger, { force: true })
-	assert.match(renderBatchResult(started, data), /批次 dispatch-plugin-b4（纯后端管线批）/, '台账已删仍渲染得出：状态挂在 execute 那一次的结果上')
-	assert.match(renderBatchResult(advanced, data), /已记录：门一 第 1 轮/, '同上')
+	assert.match(started.text, /批次 dispatch-plugin-b4（纯后端管线批）/u, '台账已删，值里那份文本照旧')
+	assert.match(advanced.text, /已记录：门一 第 1 轮/u, '同上')
+	assert.throws(
+		() => renderBatchResult({ ...started, text: undefined, events: undefined }, data),
+		RenderModelMissingError,
+		'推导输入被抽掉即抛：渲染拿不到输入时给的是错，不是一份看不出丢了什么的空视图',
+	)
+})
+
+test('五个入口交出的 text 就是那份值现算出来的展示文本（值自带，不是渲染时补的）', async () => {
+	freshLedger('五入口text')
+	const 入口 = [
+		await start(),
+		await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1 }),
+		await run('status', { batch: START.batch }),
+		await run('list'),
+		await run('status'),
+	]
+	const 名字 = ['start', 'advance', 'status(batch)', 'list', 'status(无 batch)']
+	for (const [序号, value] of 入口.entries()) {
+		assert.equal(typeof value.text, 'string', `${名字[序号]}：text 进结构化值`)
+		assert.ok(value.text.length > 0, `${名字[序号]}：text 不是空串`)
+		assert.equal(value.text, renderBatchResult(value, data), `${名字[序号]}：值里那份 text 与「拿这份值现算」逐字相同——两边各算一遍就会漂`)
+	}
+})
+
+test('空态那句话进结构化值（两种空态分两句：台账空／全收尾），不只活在文本里', async () => {
+	// list：台账一条事件都没有
+	const 空台账 = join(root, '空台账.jsonl')
+	writeFileSync(空台账, '', 'utf8')
+	const 空清单 = await runBatchAction({ port, path: 空台账, loadTables, dataDir, action: 'list', params: {} })
+	assert.deepEqual(空清单.rows, [])
+	assert.equal(空清单.emptyText, '台账里还没有任何批次（先 dispatch_batch start 登记）', '空态那句话是结构化值的一格，程序侧读的是它')
+	assert.equal(空清单.text, 空清单.emptyText, '文本照值说话')
+
+	// status（无批次）：有批次但全部走到提交那一步
+	freshLedger('全收尾')
+	await start()
+	await advance({ batch: START.batch, stage: '提交', perFormCounts: { '设计七维·终审': 1 }, adopted: 1 })
+	const 收干净 = await run('status')
+	assert.deepEqual(收干净.rows, [])
+	assert.equal(收干净.emptyText, '没有在飞批次（全部已提交或已复盘）', '「该登记没登记」与「活干完了」是两件事，混成一句会把前者读成后者')
+	// 同一份台账 list 仍然列得出来——list 走全量，不是在飞视图
+	assert.equal((await run('list')).rows.length, 1, '全收尾的批在 list 里照样在（它只是不在飞了）')
+	assert.equal((await run('list')).emptyText, undefined, '有行就不带空态那句话')
+})
+
+test('两个视图给出的行摘要逐字段相同（list 与不带批次的 status 是同一张折好的表的两种投影）', async () => {
+	freshLedger('两视图一致')
+	await start()
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 1, overlap: 1, note: '注一' })
+	const 清单 = await run('list')
+	const 全量 = await run('status')
+	assert.deepEqual(全量.rows, 清单.rows, '同一份事件、同一次折叠，两个视图的行摘要逐字段相同')
+	const 单批 = await run('status', { batch: START.batch })
+	const 行 = 清单.rows.find((one) => one.batch === START.batch)
+	assert.equal(单批.next, 行.next, '单批视图的 next 与行摘要里的 next 同源')
+	assert.deepEqual(单批.events.map((one) => one.t), [单批.events[0].t, 单批.events[1].t], '单批视图交的是该批的事件原样（渲染与复算都靠它）')
+	assert.equal(foldBatch(单批.events, data).next?.id, 行.next, '拿单批视图自带的事件复算出的 next 与行摘要一致——两处不是两套推导')
+})
+
+test('status 不带 batch：在飞集合与行摘要共用同一次 fold（折一次＝读一次 pairing，各折一遍就是两倍）', async () => {
+	freshLedger('fold共用')
+	for (const name of ['fold-甲', 'fold-乙', 'fold-丙']) {
+		await appendRaw(startEvent({ ...START, batch: name, rules: 'a1b2c3d4' }))
+	}
+	// 数 data 面被读的次数来数折叠次数：foldBatch 每次入口解构一次 data（pairing 只在那儿读一次），
+	// 所以这个计数就是折了几遍——比断输出强，两遍算出来的结果与一遍一样，看输出看不出双算
+	let pairingReads = 0
+	const counted = {
+		get pairing() {
+			pairingReads += 1
+			return data.pairing
+		},
+		lifecycle: data.lifecycle,
+		forms: data.forms,
+	}
+	const value = await runBatchAction({ port, path: ledger, dataDir, action: 'status', params: {}, loadTables: () => ({ tables: counted, bytes: {} }) })
+	assert.equal(value.rows.length, 3, '三批都在飞（三批都只登记没记阶段）')
+	assert.deepEqual([...value.rows].map((row) => row.batch).sort(), ['fold-丙', 'fold-乙', 'fold-甲'].sort())
+	assert.equal(pairingReads, 3, '折了三遍（每批一遍）而不是六遍：在飞集合与行摘要读的是同一张折好的表')
 })
 
 test('逐阶段那两格 note/missed 不再各存一份（渲染读的是跨阶段取末的 latestNote/latestMissed）', async () => {
@@ -862,5 +966,5 @@ test('数据面读不出来时点名文件与原因（两处读法各带一条�
 	mkdirSync(empty, { recursive: true })
 	assert.throws(() => loadDispatchTables({ dataDir: empty, names: ['pairing'] }), /dispatch 数据读取失败/, '目录在、表不在：点名路径，不返回空表')
 	assert.throws(() => readDataBytes({ dataDir: empty, files: ['pairing.json'] }), /dispatch 数据读取失败.*pairing\.json/s)
-	assert.throws(() => rulesHashOf({ dataDir: empty }), /dispatch 数据读取失败/, '指纹那条读法也点同一个名——两条读法坏在同一处时看得见是哪一处')
+	assert.throws(() => rulesFingerprint(empty), /dispatch 数据读取失败/, '指纹那条读法也点同一个名——两条读法坏在同一处时看得见是哪一处')
 })

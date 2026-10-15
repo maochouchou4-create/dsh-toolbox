@@ -6,13 +6,13 @@
  */
 import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { HEAD_CHUNK_BYTES } from '../lib/head-read.js'
-import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
+import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
-import { composeMemory, readCapped, scanLayer } from '../lib/memory/assemble.js'
+import { composeMemory, readCapped, readEntryHead, scanLayer } from '../lib/memory/assemble.js'
 import { FRONTMATTER_HEAD_MAX_BYTES, isEntryName } from '../lib/memory/frontmatter.js'
 import { readOptions } from '../scripts/checks.mjs'
 import { entry, memoryTree, tempRoot } from './helpers.js'
@@ -376,15 +376,178 @@ test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、
 	assert.ok(!text.includes('bare.md') && !text.includes('extra.md'), '不合规条目不占索引行')
 })
 
-test('composeMemory：改 frontmatter 后下一次装配就是新行（读侧无跨调用缓存，同长度改写也立刻可见）', () => {
+/** 把目录 mtime 拨成同一个固定值：让两棵树的指纹两维（mtime＋文件名列表）完全一致，键里剩下的挡路维度才显出来。 */
+const 同一目录时间 = new Date('2026-01-01T00:00:00Z')
+
+test('composeMemory：写侧原子发布（临时件＋改名）之后下一次装配就是新行（层目录 mtime 变即换键）', () => {
 	const { root, profile } = fixture('compose-refresh')
 	const path = join(profile, 'refreshed.md')
 	writeFileSync(path, entry('旧标题', '旧触发词'), 'utf8')
 	assert.ok(composeMemory({ memoryRoot: root }).includes('- [旧标题](refreshed.md) — 旧触发词'))
-	// 同长度改写：任何以「键含 size」的缓存都会漏掉这种改动，读侧不做缓存就没有这个面
-	writeFileSync(path, entry('新标题', '新触发词'), 'utf8')
-	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](refreshed.md) — 新触发词'), '改过 frontmatter 必须重扫')
+	// 同长度改写：任何以「键含文件 size」当失效判据的缓存都会漏掉它——而这条用例原先守的正是
+	// 这一点。改走写侧真实的发布路径（fs-port 的 writeFileAtomic：临时件＋改名），它动的是层
+	// 目录 mtime，而目录 mtime 在键里，故键必变
+	writeFileSync(join(profile, '.refreshed.md.tmp'), entry('新标题', '新触发词'), 'utf8')
+	renameSync(join(profile, '.refreshed.md.tmp'), path)
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](refreshed.md) — 新触发词'), '原子发布后必须重扫')
 	assert.ok(!composeMemory({ memoryRoot: root }).includes('旧标题'), '旧派生行不得残留')
+})
+
+test('composeMemory：层内加一条条目即重算（目录 mtime 变 → 键变 → 全量重扫）', () => {
+	const { root, profile } = fixture('compose-cache-added')
+	writeFileSync(join(profile, 'first.md'), entry('原有条目', '触发词'), 'utf8')
+	assert.ok(!composeMemory({ memoryRoot: root }).includes('[后来条目]'))
+	writeFileSync(join(profile, 'later.md'), entry('后来条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root })
+	assert.ok(text.includes('- [后来条目](later.md) — 触发词'), '新增条目后必须重扫')
+	assert.ok(text.includes('- [原有条目](first.md) — 触发词'), '邻近条目不受牵连')
+})
+
+test('composeMemory：目录 mtime 被钉在同一个时刻而名字集合变了仍重算（键里那一维是文件名列表）', () => {
+	const { root, profile } = fixture('compose-cache-names')
+	writeFileSync(join(profile, 'first.md'), entry('原有条目', '触发词'), 'utf8')
+	// 隔离：先把目录时刻钉死，**第一次装配之前**钉，且之后每次都用同一个 Date 拨回去。
+	// 「先 stat 出来再拨回去」看着等价其实不等价——本机 mtime 是纳秒精度而 Date 只到毫秒，
+	// 拨回去的那一刻 mtime 自己就变了，于是目录 mtime 那一维足以让这条用例变绿，它并没有
+	// 在考文件名列表。秒级 fs 上「同一秒内先删一个再补一个」是真实存在的，那一格只有名字
+	// 集合能判，故这一格得靠钉死时刻造出来
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	const 钉死的mtime = statSync(profile).mtimeMs
+	assert.ok(!composeMemory({ memoryRoot: root }).includes('[后来条目]'))
+	writeFileSync(join(profile, 'later.md'), entry('后来条目', '触发词'), 'utf8')
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	assert.equal(statSync(profile).mtimeMs, 钉死的mtime, '目录 mtime 确实没变——变了这条用例就只在考 mtime 那一维')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [后来条目](later.md) — 触发词'), '名字集合变了必须重算')
+})
+
+test('composeMemory：层目录 mtime 变了即重算（键里那一维是目录 mtime：原地改写后只拨目录时刻，名字集合不动）', () => {
+	const { root, profile } = fixture('compose-cache-mtime')
+	const path = join(profile, 'kept.md')
+	writeFileSync(path, entry('原标题', '原触发词'), 'utf8')
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	const first = composeMemory({ memoryRoot: root })
+	// 原地改写：不动目录 mtime、不动名字集合 → 键不动。这条断言顺带钉住「缓存真的存在」
+	// （上面那几条失效用例在「其实每次都重算」的实现下同样会绿，只有它会红）
+	writeFileSync(path, entry('新标题', '新触发词'), 'utf8')
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	assert.equal(composeMemory({ memoryRoot: root }), first, '陈旧窗口内复用上一次算出的块（窗口口径见 assemble.js 的 why）')
+	// 只拨目录时刻：名字集合没变、WRITING.md 那份指纹也没变（这个根没有纪律文件）→ 键必变
+	utimesSync(profile, 同一目录时间.getTime() + 60000, 同一目录时间.getTime() + 60000)
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [新标题](kept.md) — 新触发词'), '目录 mtime 变了必须重扫（键里目录指纹的 mtime 维）')
+})
+
+test('composeMemory：WRITING.md 那一份指纹两维各自能判（size 与 mtime 缺一即漏：长度变了靠 size，同长度改写靠 mtime）', () => {
+	const { root, profile } = fixture('compose-cache-rules')
+	const rules = join(profile, 'WRITING.md')
+	const 加长文 = '写侧纪律另外一篇更长的正文'
+	const 同长文 = `${加长文.slice(0, -1)}乙`
+	writeFileSync(rules, '写侧纪律正文', 'utf8')
+	// 隔离两件事：①纪律文件就住在层目录里，改它顺带动目录 mtime——不拨回去的话，目录那一维
+	// 足以让整条用例变绿，它其实没在考文件指纹；②拨回去用同一个固定时刻，不用 stat 出来的
+	// Date（纳秒精度 vs 毫秒精度，拨回去的那一刻自己就变了）
+	utimesSync(rules, 同一目录时间, 同一目录时间)
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	const 钉死的mtime = statSync(rules).mtimeMs
+	assert.ok(composeMemory({ memoryRoot: root }).includes('写侧纪律正文'))
+
+	// 杀 size 维：长度变了，把文件 mtime 拨回同一时刻——这一改只剩 size 那一维能判
+	writeFileSync(rules, 加长文, 'utf8')
+	utimesSync(rules, 同一目录时间, 同一目录时间)
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	assert.equal(statSync(rules).mtimeMs, 钉死的mtime, '文件 mtime 确实没变——变了这条用例就只在考 mtime 那一维')
+	const 加长 = composeMemory({ memoryRoot: root })
+	assert.ok(加长.includes(加长文), '长度变了必须重扫（键里文件指纹的 size 维）')
+	assert.ok(!加长.includes('写侧纪律正文'), '旧纪律正文不得残留')
+
+	// 杀 mtime 维：同长度改写（size 不变）——这一改只剩 mtime 那一维能判
+	assert.equal(Buffer.byteLength(同长文, 'utf8'), Buffer.byteLength(加长文, 'utf8'), '两段文字逐字节等长，size 那一维看不出变化')
+	writeFileSync(rules, 同长文, 'utf8')
+	utimesSync(profile, 同一目录时间, 同一目录时间)
+	assert.notEqual(statSync(rules).mtimeMs, 钉死的mtime, 'mtime 确实变了')
+	const 同长 = composeMemory({ memoryRoot: root })
+	assert.ok(同长.includes(同长文), '同长度改写也必须重扫（键里文件指纹的 mtime 维）')
+	assert.ok(!同长.includes(加长文), '旧纪律正文不得残留')
+})
+
+test('composeMemory：键未变的那次直接复用上一次的结果（原地改写条目在陈旧窗口内）', () => {
+	const { root, profile } = fixture('compose-cache-hit')
+	const path = join(profile, 'kept.md')
+	writeFileSync(path, entry('原标题', '原触发词'), 'utf8')
+	const first = composeMemory({ memoryRoot: root })
+	// 原地改写（不经写侧的原子发布）：既不动目录 mtime，也不改名字集合，键不动
+	writeFileSync(path, entry('新标题', '新触发词'), 'utf8')
+	// 这条钉的是「缓存真的存在」——上面那几条失效用例在「其实每次都重算」的实现下同样会绿，
+	// 而这里会红。陈旧窗口是本仓认下的取舍（见 assemble.js 缓存那段的 why）：窗口按「一行触发词
+	// 陈旧到下一次增删改名」计，不是「看不到条目」——条目正文本来就不注入
+	assert.equal(composeMemory({ memoryRoot: root }), first, '键未变即复用上一次算出的块')
+	// 窗口的边界：紧接着来一次层内增删（真实路径上每次写记忆都有），立刻重算且新行可见
+	writeFileSync(join(profile, 'trigger.md'), entry('触发改动', '触发词'), 'utf8')
+	assert.ok(composeMemory({ memoryRoot: root }).includes('- [触发改动](trigger.md) — 触发词'))
+})
+
+test('composeMemory：缓存容量封顶 8 —— 第 9 个键把最老的挤掉；挤掉后那一路再问即重可报（命中期不重报 issue）', () => {
+	// 每条路由备一个「frontmatter 不合规的条目」：issue 是「这一趟真的重算过」的旁证——命中
+	// 那条路明确不复报 issue（口径见 assemble.js 的 why），故计数从 0 跳回 1 即证明重算了。
+	// 盯内容盯不出来：被挤掉再问，内容与盘上一致，两种实现给出同一个块
+	const 造一路 = (序号) => {
+		const { root, profile } = fixture(`compose-cache-cap-${序号}`)
+		writeFileSync(join(profile, 'bad.md'), '---\ntitle: 缺第二键\n---\n正文\n', 'utf8')
+		const box = { root, issues: [] }
+		box.跑一趟 = () => {
+			box.issues.length = 0
+			return composeMemory({ memoryRoot: root, onIssue: (issue) => box.issues.push(issue) })
+		}
+		return box
+	}
+	const 八路 = Array.from({ length: 8 }, (_, i) => 造一路(i))
+	八路.forEach((one, i) => {
+		assert.equal(one.跑一趟().includes('缺第二键'), false, `第 ${i} 路：不合规条目不进索引——一条红了看不出是哪一路`)
+		assert.ok(one.issues.includes('entry-frontmatter'), `第 ${i} 路：首趟是满算，不合规条目报 entry-frontmatter`)
+	})
+	for (const one of 八路) {
+		one.跑一趟()
+		assert.deepEqual(one.issues, [], '8 键都在容量内，再问即命中；命中期不复报 issue（这也正是「真命中了」的证据）')
+	}
+	const 第九路 = 造一路(8)
+	第九路.跑一趟()
+	assert.ok(第九路.issues.includes('entry-frontmatter'), '新键那一趟是满算')
+	八路[0].跑一趟()
+	assert.ok(八路[0].issues.includes('entry-frontmatter'), '第 9 个键把最老的挤掉了：再问即重算并重新报 issue——否则拿到的是一份永不过期的块')
+})
+
+test('composeMemory：换记忆根不串块（两个根的指纹两维被拨成完全一样，挡路的只剩「根路径在键里」这一维）', () => {
+	const left = fixture('compose-cache-root-left')
+	const right = fixture('compose-cache-root-right')
+	// 两根放同一个文件名、同样的 WRITING.md，目录与该文件的 mtime 全拨成同一个值：指纹那几维
+	// （含 WRITING.md 读不到时那条带路径的报错消息）都分不开它们，键里剩下的挡路维度才是路径。
+	// 各写各的名字时删掉根路径照样绿——那样的用例看着在钉根路径，其实钉的是文件名列表
+	for (const [one, title] of [[left, '左根条目'], [right, '右根条目']]) {
+		writeFileSync(join(one.profile, 'shared.md'), entry(title, '触发词'), 'utf8')
+		writeFileSync(join(one.profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
+		utimesSync(one.profile, 同一目录时间, 同一目录时间)
+		utimesSync(join(one.profile, 'WRITING.md'), 同一目录时间, 同一目录时间)
+	}
+	const leftText = composeMemory({ memoryRoot: left.root })
+	assert.ok(leftText.includes('- [左根条目](shared.md) — 触发词'))
+	const rightText = composeMemory({ memoryRoot: right.root })
+	assert.ok(rightText.includes('- [右根条目](shared.md) — 触发词'), '另一个根必须重算，不能复用上一个根的块')
+	assert.ok(!rightText.includes('左根条目'), '跨根串块＝把不存在的条目注进了上下文')
+	assert.ok(composeMemory({ memoryRoot: left.root }).includes('左根条目'), '来回切换后各自仍取自己那份')
+})
+
+test('composeMemory：换会话 cwd 不串块（工作层按桶落盘，两个桶拨成一样的指纹，挡路的只剩桶路径）', () => {
+	const { root } = fixture('compose-cache-cwd')
+	for (const [slug, title] of [['home-nvse-code', '甲桶条目'], ['home-nvse-other', '乙桶条目']]) {
+		const bucket = join(root, 'workspaces', slug)
+		mkdirSync(bucket, { recursive: true })
+		writeFileSync(join(bucket, 'shared.md'), entry(title, '触发词'), 'utf8')
+		utimesSync(bucket, 同一目录时间, 同一目录时间)
+	}
+	const code = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	assert.ok(code.includes('甲桶条目') && !code.includes('乙桶条目'), '工作层只装本工作区那一桶')
+	const other = composeMemory({ memoryRoot: root, cwd: '/home/nvse/other' })
+	assert.ok(other.includes('乙桶条目') && !other.includes('甲桶条目'), '换工作区必须重算')
+	assert.ok(composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' }).includes('甲桶条目'), '来回切换后各自仍取自己那份')
 })
 
 test('composeMemory：CRLF 条目照样派生（家机 git checkout 的换行不得让围栏判空）', () => {
@@ -517,4 +680,126 @@ test('composeMemory：派生索引超预算时注入块带截断标注（预算�
 	assert.ok(!text.includes(`[条目${INDEX_LINE_BUDGET}]`), '超预算的第一条不注入')
 	assert.ok(text.includes(`[条目${INDEX_LINE_BUDGET - 1}]`), '预算内的最后一条照常注入')
 	assert.ok(existsSync(join(profile, `e${String(INDEX_LINE_BUDGET + 9).padStart(3, '0')}.md`)), '预算只作用于注入串，不动磁盘')
+})
+
+test('applyIndexBudget：报出实际装进去多少（keptLines/keptChars）——块尾那句「切在哪一重」要的就是这两个数', () => {
+	const 行分支 = applyIndexBudget(Array.from({ length: INDEX_LINE_BUDGET + 7 }, (_, i) => `line-${i}`).join('\n'))
+	assert.equal(行分支.keptLines, INDEX_LINE_BUDGET, '行分支：装进去的行数就是行预算')
+	assert.equal(行分支.keptChars, 注入正文段(行分支.text).length, '字符分支没走时，字符数就是注入正文段的长度')
+	const 每行 = Math.ceil(INDEX_CHAR_BUDGET / INDEX_LINE_BUDGET) + 20
+	const 字符分支 = applyIndexBudget(Array.from({ length: INDEX_LINE_BUDGET }, () => '字'.repeat(每行)).join('\n'))
+	assert.equal(字符分支.keptLines, INDEX_LINE_BUDGET, '行没超预算：装进去的行数就是原文行数')
+	assert.ok(字符分支.keptChars < 字符分支.origChars, '字符分支：装进去的字符数确实少于原文')
+	assert.equal(字符分支.keptChars, 注入正文段(字符分支.text).replace(/…$/, '').length, '报的字符数是原文实长（不含切点标记 …）')
+})
+
+test('composeMemory：语料长大时四条基线仍然成立（上界／恒等／前缀／单调——它们各自钉一种「越修越坏」）', () => {
+	const { root, profile } = fixture('compose-baseline')
+	const 铺一层 = (从, 到) => {
+		for (let i = 从; i < 到; i += 1) {
+			writeFileSync(join(profile, `n${String(i).padStart(3, '0')}.md`), entry(`条目${i}`, `触发词${'／'.repeat(i % 5)}${'x'.repeat(i % 23)}`), 'utf8')
+		}
+	}
+	铺一层(0, 20)
+	const 二十条 = composeMemory({ memoryRoot: root })
+	assert.equal(composeMemory({ memoryRoot: root }), 二十条, '前缀（幂等那面）：语料不动，块逐字相同——派生是语料的纯函数，缓存只是把这次算的留到下次')
+	铺一层(20, 30)
+	const 三十条 = composeMemory({ memoryRoot: root })
+	assert.ok(三十条.length > 二十条.length, '单调：加条目只增不减，块长不许倒退（倒退即某条索引行被悄悄吞了）')
+	铺一层(30, 80)
+	const 八十条 = composeMemory({ memoryRoot: root })
+	assert.ok(八十条.length <= BLOCK_CHAR_BUDGET, `上界：块不超过整块定档（实得 ${八十条.length}）`)
+
+	const 注入行 = 八十条.split('\n').filter((line) => line.startsWith('- ['))
+	assert.ok(注入行.length <= INDEX_LINE_BUDGET, `上界：层内索引行数不超过行预算（实得 ${注入行.length}）`)
+	assert.ok(注入行.join('\n').length <= INDEX_CHAR_BUDGET, '上界：层内索引字符不超过字符预算')
+	// 单条派生行长度不在基线里：deriveIndexLine 不截断（行字符预算是 lint 的 warn-only 口径），
+	// 在这里断言「≤160」钉住的只是本夹具的生成器——真超长行由 memory 工具 lint 报，不归注入路径管
+
+	// 恒等与前缀各自拿独立算的一份当答案：scanLayer 是无缓存那条路，它扫出的全量行序就是
+	// 「注入的应当是它的前 N 行」这句话的另一半。前缀性只在行预算截断下成立（行截断只切整行）；
+	// 字符预算截断的末行是回退到行边界补「…」的残行，那个形态由 cutAtLineBoundary 的用例钉
+	const 全量行 = scanLayer(profile, { read: readEntryHead }).lines
+	assert.deepEqual(注入行, 全量行.slice(0, 注入行.length), '前缀：截断只切尾，注入的每一行都是全量的前 N 行、行序也不变')
+	const 盘上 = new Set(readdirSync(profile))
+	for (const line of 注入行) {
+		const 文件 = /\]\(([^)]+)\)/u.exec(line)[1]
+		assert.ok(盘上.has(文件), `恒等：注入的每一行都对应盘上真实存在的条目——凭空多出来的一行就是「语料之外的内容进了上下文」（${文件}）`)
+	}
+	assert.ok(全量行.length > 注入行.length, '这一份语料确实撞上了行预算：上面那些性质是在截断状态下验的，没截断的形态另有前面几条用例')
+})
+
+test('applyIndexBudget：没超限时 keptLines/keptChars 就是原文（承重：它们不是「取预算内的那部分」）', () => {
+	const 合规 = ['- [a](a.md) — x', '- [b](b.md) — y'].join('\n')
+	const r = applyIndexBudget(合规)
+	assert.equal(r.truncated, false)
+	assert.equal(r.keptLines, r.origLines, '没超行预算时装进去的就是全部行——防的是「恒取行预算」那种写法（已由截断用例杀死）；min(行数, 预算) 与本式恒等、本就正确，不防')
+	assert.equal(r.keptChars, r.origChars, '字符同理')
+	assert.deepEqual(r.cuts, [], '没截断就没有 cuts')
+	assert.equal(r.cutLabel, '', '没截断就没有 cutLabel：块尾那句总结靠它判「没截断就不出现」')
+	assert.equal(注入正文段(r.text), 合规, '预算内原样返回')
+})
+
+test('composeMemory：字符预算那一重也报得出来（行数没撞、字符撞了 → 块尾那行说字符，不说行）', () => {
+	const { root, profile } = fixture('compose-cut-chars')
+	// 35 条、每条 description 200 字符：派生行各自被单行预算压到上限，35 行在行预算内，
+	// 而总字符越过字符预算 → 撞的是字符那一重。行预算那一重由上一条用例打，这里不打同一枪
+	const 描述 = '描'.repeat(200)
+	for (let i = 0; i < 35; i += 1) {
+		writeFileSync(join(profile, `c${String(i).padStart(3, '0')}.md`), entry(`条目${i}`, 描述), 'utf8')
+	}
+	const text = composeMemory({ memoryRoot: root })
+	assert.match(text, /本次注入有 1 层索引超预算已截断：习惯层（跨机同步） \d+→\d+ 字符/u, '撞的是字符那一重，块尾就报字符')
+	assert.doesNotMatch(text, /本次注入有[^\n]*\d+→\d+ 行/u, '行预算没撞上就别报行——把没撞上的那一重也算进去，那句话就永远说不清是哪一重')
+	// 同一份语料的层内标注与块尾总结同源：都出自 applyIndexBudget 的 cuts
+	assert.match(text, /仅注入前 \d+ 字符/u)
+})
+
+test('composeMemory：同一层行、字符两重都撞 → 块尾同一层名下两段都报（行在前、字符在后）', () => {
+	const { root, profile } = fixture('compose-cut-both')
+	// 45 条、每条 description 180 字符：45 行越过行预算、总量 ~8K 越过字符预算——两重同撞。
+	// 常态增长区正落在这里（习惯层现均长 ~130，长到 40 条即两重同撞），只报一重＝把切了几重说少
+	const 描述 = '述'.repeat(180)
+	for (let i = 0; i < 45; i += 1) {
+		writeFileSync(join(profile, `b${String(i).padStart(3, '0')}.md`), entry(`双撞${i}`, 描述), 'utf8')
+	}
+	const text = composeMemory({ memoryRoot: root })
+	assert.match(
+		text,
+		/本次注入有 1 层索引超预算已截断：习惯层（跨机同步） \d+→40 行、\d+→\d+ 字符/u,
+		'两重都切就两段都报：漏掉「行」那一重（cuts 只剩字符）或只取最后一重，这句都会少说一重',
+	)
+	assert.match(text, /仅注入前 40 行、\d+ 字符/u, '层内标注两重同报（keptLabel 同源）')
+})
+
+test('composeMemory：逐层截断真发生 → 块尾收一句总的（几层、切在哪一重）；没截断就不出现那行', () => {
+	const { root, profile } = fixture('compose-cut-note')
+	const bucket = join(root, 'workspaces', 'home-nvse-code')
+	mkdirSync(bucket, { recursive: true })
+	writeFileSync(join(profile, 'WRITING.md'), '写侧纪律正文', 'utf8')
+	for (let i = 0; i < INDEX_LINE_BUDGET + 4; i += 1) {
+		writeFileSync(join(profile, `h${String(i).padStart(3, '0')}.md`), entry(`习惯${i}`, '触发词'), 'utf8')
+		writeFileSync(join(bucket, `w${String(i).padStart(3, '0')}.md`), entry(`工作${i}`, '触发词'), 'utf8')
+	}
+	const 两层都切 = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	assert.match(
+		两层都切,
+		/（本次注入有 2 层索引超预算已截断：习惯层（跨机同步） \d+→40 行、工作层（本工作区·本机专属） \d+→40 行——用 memory 工具 lint 定位收敛）\s*$/u,
+		'块尾那行是本块唯一的整体结论位：报层数、报层、报切在哪一重',
+	)
+
+	// 只剩一层超、另一层非空但不超：句里只报超的那层——非空未超的层进不进这句是这段的靶心
+	// （若把「没被切的层不进那句」改成无条件收录，这句会多出工作层与错误的层数）
+	for (let i = 0; i < 4; i += 1) writeFileSync(join(bucket, `w-keep${i}.md`), entry(`工作保留${i}`, '触发词'), 'utf8')
+	for (let i = 0; i < INDEX_LINE_BUDGET + 4; i += 1) rmSync(join(bucket, `w${String(i).padStart(3, '0')}.md`))
+	const 只切习惯 = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	assert.match(只切习惯, /本次注入有 1 层索引超预算已截断：习惯层/, '层数是逐层数出来的，不是固定文案')
+	const 截断句 = 只切习惯.split('\n').find((line) => line.includes('本次注入有'))
+	assert.ok(截断句 !== undefined && !截断句.includes('工作层'), '非空但没被切的层不进截断句——工作层此刻有 4 条在装、只是没超预算（章节标题照常在场，别拿整块文本判）')
+
+	// 一层都没切：这行整个不出现（它说的是「真发生过」，没发生就不该占块尾一行）
+	for (let i = 0; i < INDEX_LINE_BUDGET + 4; i += 1) rmSync(join(profile, `h${String(i).padStart(3, '0')}.md`))
+	const 没切 = composeMemory({ memoryRoot: root, cwd: '/home/nvse/code' })
+	assert.ok(没切.includes('[记忆索引]'), '块照常装')
+	assert.ok(!没切.includes('本次注入有'), '没有截断就不出截断告警——常驻材料里那行每次都出现，等于每次都教人忽略它')
 })

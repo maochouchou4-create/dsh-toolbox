@@ -20,7 +20,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { BLOCK_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
+import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
 import { workspaceSlug } from '../lib/memory-root.js'
 import { deriveIndexLine } from '../lib/memory/frontmatter.js'
 import { CHECKS } from '../scripts/checks.mjs'
@@ -108,9 +108,15 @@ test('超预算语料：退出 1，报告里出现的每个检查项都在自报
 	mkdirSync(root, { recursive: true })
 	const cwd = '/盘/乙-project'
 	// padding 按单行预算减去**该条**的前缀算出，条目各自都恰好落在行预算内：这条用例钉的
-	// 才是整块定档与层内字符预算那两项。定档一改条数跟着变，用例钉的仍是「超了就判红」
-	const lines = Array.from({ length: Math.ceil(BLOCK_CHAR_BUDGET / (longLineOf(0).length + 1)) + 1 }, (_, index) => longLineOf(index))
-	seedLayer(root, workspaceSlug(cwd), lines)
+	// 才是整块定档与层内字符预算那两项。定档一改条数跟着变，用例钉的仍是「超了就判红」。
+	// 造语料要按**层数**算而不是按整块算：逐层预算在运行期先截一层（单层至多
+	// INDEX_CHAR_BUDGET 字符），一层顶到头也只够到「写侧纪律＋一层」的量级，顶不过整块
+	// 那条线——两块各顶到头再加规则块才顶得过去（整块线余量是按现状块算的，现状块两层都
+	// 没到顶）。条数按每层能把层内字符预算吃满来取，判据仍是常量推出来的
+	const perLayer = Math.ceil(INDEX_CHAR_BUDGET / (longLineOf(0).length + 1)) + 1
+	const lines = Array.from({ length: perLayer }, (_, index) => longLineOf(index))
+	seedLayer(root, 'habit', lines)
+	seedLayer(root, workspaceSlug(cwd), lines.map((line, index) => longLineOf(index + perLayer)))
 	const { code, stdout } = runScript([root, cwd])
 	assert.equal(code, 1, `超预算语料须以 1 退出：\n${stdout}`)
 	assert.ok(stdout.includes('项待收敛：'), stdout)
