@@ -10,8 +10,8 @@
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
 - **dispatch**：派发装配器。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的
-  brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段。规则面
-  是数据不是代码，见下节。
+  brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段；阶段＝方案时
+  出方案任务书（十三节规范骨架＋定稿自查）。规则面是数据不是代码，见下节。
 
 ## memory 的索引与条目契约
 
@@ -88,7 +88,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 ## dispatch 数据资产
 
-`dispatch` 的规则不在代码里，在 `lib/dispatch/data/` 下三份 JSON（每次调用经 node:fs
+`dispatch` 的规则不在代码里，在 `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs
 现读）：
 
 - `forms.json`：20 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套），
@@ -98,14 +98,25 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
   谓词（`when` 的每个字段＝本次调用参数值 ∈ 数组，全命中才输出）。
 - `templates.json`：九键——门一/门二/施工/修复批增量/方案任务书/横切判据/checklist/
   裁决/事件字段。模板里的 `〔…〕` 占位带各自的省略规则（空则整行省略）。
+- `lifecycle.json`：`stages` 阶段表（`id`/`order`/`gate`/`kind`/`templateKey`（可缺省，
+  缺省＝stage id）/`requires`/`produces`/`uses`/`note`（可缺省））——阶段词表、模板键与
+  stage 级必填参数的单源，core 现算；加阶段＝改这份 JSON。其中 `gate` 与 `produces`
+  是给 `dispatch_batch` 台账预留的两列，本工具不读：加载期只对四行互验 `gate` 等于
+  「kind 是复核」，提交/复盘两行的门别语义归各自的工具（两行不由本工具出稿）。
+- `plan-spec.json`：`blocks` 十三节方案规范正文＋`checklist` 定稿自查 11 条——阶段＝方案
+  时装配「方案任务书」的正文与清单尾。11 条＝剪切 8 条＋新增 3 条（术语只定义一次／判据
+  两列齐／读我层不夹带用户没拍过的新决策），来源＝规范「拍板方可读性」节。
 
 **改规则＝改 JSON，下一次调用即生效，不发版不重启；需要重启的只有代码改动**（本仓被
 宿主按模块代缓存）。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
-形态，一律带文件名（与字段路径）报错不静默出稿；反方向（定义了却没有任何配对行引用
-＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着的预期孤儿，
-来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
-批 2 会在这份数据面上加 `plan-spec.json`（方案任务书规范正文）与 `lifecycle.json`
-（阶段词表与必填参数的单源），批 4 加追加面台账 `dispatch-ledger.jsonl`。
+形态，一律带文件名（与字段路径）报错不静默出稿；阶段表另核六处（id/order 唯一、order 正
+整数、复核阶段的门别可反查、gate 与 kind 等价、requires 无重复且在参数名全集内、uses 声明
+与模板占位互为充要）；模板键的白名单＝lifecycle 各行的 templateKey 加那几张辅助页（多出来的
+键没有任何阶段会读到它）；节奏谓词的 stage／batchType 取值对着可达词表核，且两个在字段的
+交集非空（谓词值各自合法但永不相交＝那条规则永不命中）。反方向（定义了却
+没有任何配对行引用＝孤儿形态）只进 warnings 随输出返回——`设计七维`/`证伪复核` 是刻意留着
+的预期孤儿，来由写在各自形态的 `notes` 字段里。改规则的改动走本仓 git，两机各自 pull。
+后续版本会在这份数据面之外加追加面台账 `dispatch-ledger.jsonl`。
 
 ## 安装（本地仓直装）
 
@@ -144,7 +155,7 @@ lib/value.js            跨工具族的值判据原语（isNonBlankString：非�
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers + fs-port.js 端口 + fs-guard.js（写侧 I/O 前置守卫与错误码，零 node:fs 以免拖进写侧闭包）+ head-read.js（分块头读，端口适配器与读侧共用）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ data.js（现读三份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（20 形态／10 配对行＋9 节奏／九键模板）
+lib/dispatch/           派发工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（工具参数面，清单现读拼，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（20 形态／10 配对行＋9 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```

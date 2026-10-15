@@ -180,6 +180,7 @@ const NODE_FS_DIRECT = new Map([
 	['see-image/vision.js', true],
 	['see-image/index.js', false],
 	['dispatch/core.js', false],
+	['dispatch/parameters.js', false],
 	['dispatch/data.js', true],
 	['dispatch/index.js', false],
 	['working-dir.js', false],

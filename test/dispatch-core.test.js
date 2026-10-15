@@ -1,30 +1,74 @@
 /**
- * dispatch 纯函数核心单测（node:test，零宿主依赖）：拿真数据（lib/dispatch/data/ 三份 JSON）
+ * dispatch 纯函数核心单测（node:test，零宿主依赖）：拿真数据（lib/dispatch/data/ 五份 JSON）
  * 跑配对查表、特殊行语义、节奏谓词、brief 装配、参数校验与整份输出。数据与代码的边界由此
  * 可验——改 JSON 即改行为，发测试不依赖宿主（读法沿用仓内先例：node:fs 直读 JSON＋
  * node:test／node:assert/strict，同 test/memory-*.test.js）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-	STAGES,
+	PARAM_FIELDS,
 	assembleBrief,
 	assembleDispatch,
 	computeCombo,
+	conditionalConsumers,
+	consumedParams,
+	dispatchStages,
 	matchRhythm,
 	placeholderTokens,
+	stagesConsuming,
 	stageRequires,
+	stageVocabulary,
+	templateKeyOf,
 	validateParams,
 } from '../lib/dispatch/core.js'
+import { loadDispatchData } from '../lib/dispatch/data.js'
 
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
 const readData = (name) => JSON.parse(readFileSync(join(dataDir, name), 'utf8'))
-const data = { forms: readData('forms.json'), pairing: readData('pairing.json'), templates: readData('templates.json') }
+const data = {
+	forms: readData('forms.json'),
+	pairing: readData('pairing.json'),
+	templates: readData('templates.json'),
+	lifecycle: readData('lifecycle.json'),
+	planSpec: readData('plan-spec.json'),
+}
 
 const formIds = (combo) => combo.map((entry) => entry.form)
+
+/**
+ * 现造的数据经真加载器走一遍再喂 core：core 吃得下不等于加载期放行（阶段表六处专核、模板键
+ * 白名单、谓词可达都在加载期），绕过它测「加 stage 只改 JSON」等于给自己一份假信心——那份
+ * 数据真装进工具时可能在加载期就被拦下。
+ */
+const DATA_FILES = ['forms.json', 'pairing.json', 'templates.json', 'lifecycle.json', 'plan-spec.json']
+
+function withLoadedData(edits, run) {
+	const dir = mkdtempSync(join(tmpdir(), 'dsh-dispatch-core-'))
+	try {
+		for (const file of DATA_FILES) writeFileSync(join(dir, file), readFileSync(join(dataDir, file)))
+		for (const [file, mutate] of Object.entries(edits ?? {})) {
+			const value = JSON.parse(readFileSync(join(dir, file), 'utf8'))
+			mutate(value)
+			writeFileSync(join(dir, file), JSON.stringify(value))
+		}
+		return run(loadDispatchData({ dataDir: dir }))
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+}
+
+/**
+ * 未知阶段的报错整句钉死：词表只列本工具真能出稿的四个阶段，另把提交/复盘归给谁说清——照着一份
+ * 含出不了稿阶段的名单选阶段，模型只会从「未知 stage」撞到「本工具不装配该阶段」，两道错。
+ */
+const unknownStageError = (stage) => new RegExp(
+	`未知 stage「${stage}」.*能出稿的阶段＝${dispatchStages(data).join('、')}；提交/复盘由 dispatch_batch/dispatch_lessons 服务`,
+)
 
 /** 一份过得了校验的施工调用，省得每条用例重复必填项。 */
 const construction = (overrides = {}) => ({
@@ -33,6 +77,14 @@ const construction = (overrides = {}) => ({
 	subject: '/home/nvse/code/实施方案/方案.md 批 1',
 	intent: '装配 dispatch 工具',
 	anchors: ['computeCombo', 'assembleBrief'],
+	...overrides,
+})
+
+/** 一份过得了校验的方案调用：方案阶段不判批型，只认对象与意图。 */
+const planning = (overrides = {}) => ({
+	stage: '方案',
+	subject: '/home/nvse/code/实施方案/方案.md 批 2',
+	intent: '写实施方案',
 	...overrides,
 })
 
@@ -113,7 +165,7 @@ test('computeCombo：未知批型拒绝出稿并把两类行分清列出（主�
 })
 
 test('computeCombo：未知 stage、未知加挂行名、加挂行当主批型都显式拒绝', () => {
-	assert.throws(() => computeCombo(data, { batchType: '直做批', stage: '方案' }), /未知 stage/)
+	assert.throws(() => computeCombo(data, { batchType: '直做批', stage: '没定过的阶段' }), unknownStageError('没定过的阶段'))
 	assert.throws(() => computeCombo(data, { batchType: '直做批', stage: '门二', addons: ['不存在的加挂行'] }), /没有的行名/)
 	assert.throws(() => computeCombo(data, { batchType: '涉鉴权/上传/输入', stage: '门二' }), /加挂行不是批型/)
 })
@@ -160,11 +212,12 @@ test('decisions 空则整行省略，非空则逐条带入', () => {
 	assert.ok(withDecisions.text.includes('拍板清单（不得重开）：拍板 1：零宿主依赖；拍板 2：判断归主会话。'))
 })
 
-test('施工 brief：自证与必读链在位，禁区／自验命令可省；修复批追加增量三行', () => {
+test('施工 brief：执行纪律内联在首段、对象行在位，自证与必读链在位，禁区／自验命令可省；修复批追加增量三行', () => {
 	const [plain] = assembleBrief(data, construction())
 	assert.equal(plain.form, '施工')
 	for (const fragment of [
-		'先读 implementation-plan skill 全文，再读方案（/home/nvse/code/实施方案/方案.md 批 1）。',
+		'方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。',
+		'对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。',
 		'本批意图一句话：装配 dispatch 工具。',
 		'锚点（符号名，禁行号）：computeCombo、assembleBrief。',
 		'自证：上报必须附自验证据',
@@ -175,6 +228,9 @@ test('施工 brief：自证与必读链在位，禁区／自验命令可省；�
 	]) {
 		assert.ok(plain.text.includes(fragment), `施工 brief 缺固定段「${fragment}」`)
 	}
+	assert.ok(!plain.text.includes('先读 implementation-plan skill'), '方案 skill 已剪切进 plan-spec，施工 brief 不再指它')
+	assert.ok(!plain.text.includes('〔'), '占位须全部替换，不留半截模板')
+	assert.equal(plain.text.split('\n')[1], '对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。', '对象行紧跟执行纪律首段——方案路径不丢在这一趟')
 	assert.ok(!plain.text.includes('禁区：'), '禁区空则本行省略')
 	assert.ok(!plain.text.includes('自验封顶'), '自验命令空则本行省略')
 	assert.ok(!plain.text.includes('根因分类'), '非修复批不加修复增量')
@@ -201,7 +257,7 @@ test('validateParams：缺必填点名拒绝（stage 级矩阵＋修复批的 ro
 	assert.throws(() => validateParams(data, { stage: '施工', batchType: '修复批', subject: 'x', intent: 'y', anchors: ['a'] }), /rootCause/)
 	assert.doesNotThrow(() => validateParams(data, { stage: '施工', batchType: '修复批', subject: 'x', intent: 'y', anchors: ['a'], rootCause: '错行' }), '组合门在门一/门二，施工这一趟不消费 baseBatchType')
 	assert.throws(() => validateParams(data, { stage: '门一', batchType: '纯后端管线批', subject: 'x' }), /intent/)
-	assert.throws(() => validateParams(data, { stage: '方案', batchType: '纯后端管线批' }), /未知 stage/)
+	assert.throws(() => validateParams(data, { stage: '没定过的阶段', batchType: '纯后端管线批' }), /未知 stage/)
 	assert.doesNotThrow(() => validateParams(data, { stage: '门一', batchType: '新功能·形态未定', subject: 'x', intent: 'y' }), '门一自带形态、不落回 base 行，故不要 baseBatchType')
 	assert.doesNotThrow(() => validateParams(data, { stage: '门二', batchType: '直做批', subject: 'x', intent: 'y' }), '直做批行无 needsBase')
 	assert.doesNotThrow(() => validateParams(data, construction()))
@@ -263,12 +319,12 @@ const deepFreeze = (value) => {
 	return value
 }
 
-test('B1：施工不消费 baseBatchType（传了即报错并说清改调哪一门），门一/门二的 needsBase 照旧', () => {
+test('B1：施工不消费 baseBatchType（传了即报错并点名哪些阶段消费它），门一/门二的 needsBase 照旧', () => {
 	const constructionFix = { stage: '施工', batchType: '修复批', subject: 'x', intent: 'y', anchors: ['a'], rootCause: '错行' }
 	assert.throws(
 		() => validateParams(data, { ...constructionFix, baseBatchType: '纯后端管线批' }),
-		/^Error: stage=施工 不消费 baseBatchType——组合门在门一\/门二，删掉它或改调门二$/,
-		'错文案整句钉死：模型照着改就能改对，措辞漂了＝它猜要不要改调门二',
+		/^Error: stage=施工 不消费 baseBatchType——消费它的是门一\/门二\+needsBase 批型（新功能·形态未定、修复批），删掉它或改调那一类$/,
+		'错文案整句钉死：模型照着改就能改对，且点名是从现算的槽位消费集里取的，不是手抄的阶段名单',
 	)
 	assert.throws(() => assembleBrief(data, { ...constructionFix, baseBatchType: '纯后端管线批' }), /不消费 baseBatchType/)
 	assert.throws(() => assembleDispatch(data, { ...constructionFix, baseBatchType: '纯后端管线批' }), /不消费 baseBatchType/)
@@ -366,11 +422,14 @@ test('P6 role 归属：全部 20 个形态都扫一遍——该形态那路 brie
 		: [{ batchType: row.batchType }]))
 	for (const call of sweepCalls) {
 		for (const stage of ['门一', '门二']) {
+			const params = { stage, subject: 'x', intent: 'y', ...call }
+			// baseBatchType 按消费集给：这一趟不消费它时传了会被契约拒（这条扫的是形态归属，不是契约）
+			if (consumedParams(swept, stage, call.batchType).has('baseBatchType')) params.baseBatchType = '纯后端管线批'
 			let briefs
 			try {
-				briefs = assembleBrief(swept, { stage, subject: 'x', intent: 'y', baseBatchType: '纯后端管线批', ...call })
+				briefs = assembleBrief(swept, params)
 			} catch (error) {
-				assert.match(error.message, /不走门|加挂行不是批型|baseBatchType/, `角色归属扫描遇到非预期报错：${error.message}`)
+				assert.match(error.message, /不走门|加挂行不是批型|baseBatchType|无可派组合/, `角色归属扫描遇到非预期报错：${error.message}`)
 				continue
 			}
 			for (const brief of briefs) {
@@ -383,16 +442,20 @@ test('P6 role 归属：全部 20 个形态都扫一遍——该形态那路 brie
 	assert.equal(seen.size, 20, `全部 20 个形态都被扫到，实扫 ${seen.size}：${[...swept.forms.forms.map((form) => form.id)].filter((id) => !seen.has(id)).join('、')}`)
 })
 
-test('P7 占位残留：主行×三个阶段全组合扫，渲染结果里不留占位、未替换值与 null 拼串', () => {
+test('P7 占位残留：主行×三个判批型阶段全组合扫，加方案阶段单扫一次；渲染结果里不留占位、未替换值与 null 拼串', () => {
 	const residues = ['〔', '〕', 'undefined', 'null', '[object Object]']
 	const mainRows = data.pairing.rows.filter((row) => row.kind !== 'addon')
 	let rendered = 0
 	const rejected = []
 	for (const row of mainRows) {
 		for (const stage of ['门一', '门二', '施工']) {
-			const params = { stage, batchType: row.batchType, subject: '方案.md 批 1', intent: '扫全组合', anchors: ['computeCombo'], rootCause: '错行：占位没替换' }
-			// 施工这一趟不消费 baseBatchType（组合门在门一/门二），一给就报错——扫组合得按契约给
-			if (stage !== '施工') params.baseBatchType = '纯后端管线批'
+			// 按各阶段真正消费的槽位给参（现算，不手抄）：多给一个没消费的槽位会被契约拒，
+			// 扫组合得按契约给，否则全红在无关的原因上
+			const values = { batchType: row.batchType, subject: '方案.md 批 1', intent: '扫全组合', anchors: ['computeCombo'], rootCause: '错行：占位没替换', baseBatchType: '纯后端管线批' }
+			const params = { stage }
+			for (const slot of consumedParams(data, stage, row.batchType)) {
+				if (slot in values) params[slot] = values[slot]
+			}
 			try {
 				for (const brief of assembleDispatch(data, params).briefs) {
 					for (const residue of residues) {
@@ -407,6 +470,11 @@ test('P7 占位残留：主行×三个阶段全组合扫，渲染结果里不留
 	}
 	assert.equal(rendered, 22, `主行 8×3 阶段＝24 组合，去掉「这一趟不走该门」的两个`)
 	assert.deepEqual(rejected.map((entry) => entry.split('：')[0]), ['门一/机械搬运/小修', '门一/直做批'], '且只有这两个组合该被拒')
+
+	const taskBook = assembleDispatch(data, planning()).briefs[0].text
+	for (const residue of residues) {
+		assert.ok(!taskBook.includes(residue), `方案任务书残留「${residue}」——13 节正文与自查清单都该逐字替换进来`)
+	}
 })
 
 test('P9 必填全枚举：每个必填槽位单独删掉都点名（stage 级＋批型条件级），空数组与空白串同样算缺', () => {
@@ -418,7 +486,12 @@ test('P9 必填全枚举：每个必填槽位单独删掉都点名（stage 级�
 		['施工', '修复批', ['rootCause']],
 	]) {
 		for (const field of required) {
-			const params = { stage, batchType, subject: 'x', intent: 'y', anchors: ['a'], baseBatchType: '纯后端管线批', rootCause: '错行' }
+			// 基线参数＝该阶段消费的那一套：多给一个不消费的槽位，报错会点名它而不是缺的那个字段
+			const values = { batchType, subject: 'x', intent: 'y', anchors: ['a'], baseBatchType: '纯后端管线批', rootCause: '错行' }
+			const params = { stage }
+			for (const [slot, value] of Object.entries(values)) {
+				if (consumedParams(data, stage, batchType).has(slot)) params[slot] = value
+			}
 			delete params[field]
 			assert.throws(() => validateParams(data, params), new RegExp(`缺必填参数：${field}`), `${stage}/${batchType} 缺 ${field} 要被点名`)
 		}
@@ -428,11 +501,12 @@ test('P9 必填全枚举：每个必填槽位单独删掉都点名（stage 级�
 })
 
 test('P10 模板与必填矩阵对齐：每阶段模板的非可选占位都落在该阶段的必填槽位上（否则必有一处静默渲染空段）', () => {
-	// 两个占位的值不来自本次调用：形态角色句来自 forms.json、下文四条原文来自 templates.横切判据
-	const dataBacked = ['形态角色句', '下文四条原文']
-	for (const stage of STAGES) {
-		const allowed = [...stageRequires(stage), ...dataBacked]
-		for (const token of placeholderTokens(data.templates[stage])) {
+	// 这些占位的值不来自本次调用：形态角色句取自 forms.json、下文四条原文取自 templates.横切判据、
+	// 两条 plan-spec 占位取自 plan-spec.json（方案任务书正文与自查清单都在那份数据里）
+	const dataBacked = ['形态角色句', '下文四条原文', 'plan-spec']
+	for (const stage of dispatchStages(data)) {
+		const allowed = [...stageRequires(data, stage), ...dataBacked]
+		for (const token of placeholderTokens(data.templates[templateKeyOf(data, stage)])) {
 			if (token.includes('空则本行')) continue
 			assert.ok(
 				allowed.some((slot) => token.startsWith(slot)),
@@ -440,8 +514,16 @@ test('P10 模板与必填矩阵对齐：每阶段模板的非可选占位都落�
 			)
 		}
 	}
-	assert.deepEqual(stageRequires('施工'), ['batchType', 'subject', 'intent', 'anchors'], '施工比门阶段多 anchors 一项')
-	assert.deepEqual(stageRequires('门一'), stageRequires('门二'), '两个门阶段必填项相同')
+	const planRow = data.lifecycle.stages.find((row) => row.id === '方案')
+	assert.equal(templateKeyOf(data, '方案'), planRow.templateKey, '模板键取自 lifecycle 那行的 templateKey（键名与阶段不同名的那一档写在数据里）')
+	assert.ok(!data.lifecycle.stages.some((row) => row.id === '门一' && 'templateKey' in row), '门一那行不写 templateKey')
+	assert.equal(templateKeyOf(data, '门一'), '门一', '没写 templateKey 的行缺省用 stage id——代码里不再有键名表')
+	assert.deepEqual(stageRequires(data, '施工'), ['batchType', 'subject', 'intent', 'anchors'], '施工比门阶段多 anchors 一项')
+	assert.deepEqual(stageRequires(data, '门一'), stageRequires(data, '门二'), '两个门阶段必填项相同')
+	assert.deepEqual(stageRequires(data, '方案'), ['subject', 'intent'], '方案阶段不判批型，必填只有对象与意图')
+	assert.deepEqual(stageVocabulary(data), ['方案', '门一', '施工', '门二', '提交', '复盘'], '阶段词表按 lifecycle 的 order 排')
+	assert.deepEqual(dispatchStages(data), ['方案', '门一', '施工', '门二'], '提交/复盘归另两个工具，本工具不出稿的阶段不列进可服务清单')
+	assert.throws(() => stageRequires(data, '没定过的阶段'), /未知 stage/)
 })
 
 test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数无关、多字段须同时命中', () => {
@@ -495,12 +577,306 @@ test('P17 重入幂等：同一份 params 连续两次装配逐字一致（没�
 	assert.deepEqual(matchRhythm(data, params), matchRhythm(data, params))
 })
 
-test('句号归一：占位值自带句号与模板尾句号叠加时压回一个（装配噪声不让调用方买单）', () => {
-	const params = { stage: '门一', batchType: '纯后端管线批', subject: '净 diff 生成命令。', intent: '验证意图一句话。' }
-	const { briefs } = assembleDispatch(data, params)
-	assert.ok(briefs.length > 0)
-	for (const brief of briefs) {
-		assert.ok(!brief.text.includes('。。'), `brief 出现连续句号：${brief.form}`)
-		assert.ok(brief.text.includes('验证意图一句话。'), '单句号保留（归一不能把正常句号吃掉）')
+test('方案装配：13 节规范逐字成文、自查 11 条、单路「方案任务书」，combo/rhythm 空', () => {
+	const output = assembleDispatch(data, planning())
+	assert.deepEqual(output.combo, [], '方案无配对组合——出方案前还没有批型可判')
+	assert.deepEqual(output.rhythm, [], '节奏谓词都指向复核/施工阶段，方案这一趟无命中')
+	assert.equal(output.briefs.length, 1, '单路出稿：任务书不是形态，逐形态渲染只会产出多份逐字相同的文本')
+	const [taskBook] = output.briefs
+	assert.equal(taskBook.form, '方案任务书')
+	assert.equal(taskBook.text.match(/^## .*$/gm).length, 13, '13 节各起一个标题')
+	for (const block of data.planSpec.blocks) {
+		assert.ok(taskBook.text.includes(block.title), `方案任务书缺节「${block.title}」`)
+		assert.ok(taskBook.text.includes(block.text.slice(0, 10)), `节「${block.title}」的正文没渲染进来`)
 	}
+	assert.deepEqual(taskBook.text.match(/^## .*$/gm), data.planSpec.blocks.map((block) => `## ${block.title}`), '节序＝blocks 的 title 序列逐项相等（重排/丢节/多节都红），相邻块以空行分隔')
+	assert.ok(taskBook.text.includes('本批意图一句话：写实施方案。'), '意图注入在末尾')
+	assert.ok(taskBook.text.includes('对象与落点：/home/nvse/code/实施方案/方案.md 批 2。'), '对象与落点注入在末尾')
+	assert.ok(!taskBook.text.includes('〔'), '两条 plan-spec 占位都换成正文，不留半截模板')
+
+	const checklistAnchor = '写完过定稿自查：'
+	const checklistEnd = taskBook.text.indexOf(checklistAnchor) + checklistAnchor.length
+	const checklistText = data.planSpec.checklist.join('\n')
+	// 模板尾那个句号与末条自带的终止符叠成连续终止符，归一压回自带那个——末条自带问号即不加句号
+	const expectedTail = checklistText + (/[。？！!?]$/.test(checklistText) ? '' : '。')
+	assert.equal(
+		taskBook.text.slice(checklistEnd),
+		expectedTail,
+		'自查段＝checklist 数组逐条 join 的整串：挤成一段（join(空串)）、改动一条或多挂一句都红',
+	)
+	assert.deepEqual(output.checklist, data.planSpec.checklist, '11 条逐条成行，不重排不丢条')
+	assert.ok(!output.checklist.some((line) => line.includes('锚点全部亲核过吗')), '派 brief 的自检四条不混进方案自查')
+	assert.ok(taskBook.text.includes('执行纪律全文随施工 brief 固定段下发'), '拍板后的执行节改指 brief 固定段，不再随任务书复述全文')
+	assert.ok(!taskBook.text.includes('落点级偏差（锚点行号漂移'), '执行纪律全文只在施工 brief 固定段留一份——双副本等于改一处漏一处')
+	assert.ok(!taskBook.text.includes('不依赖 brief 转述'), '何时写那节的反向句也已翻转')
+
+	assert.throws(
+		() => assembleDispatch(data, { stage: '复盘', subject: 'x', intent: 'y' }),
+		/stage「复盘」本工具不装配该阶段.*该行 uses 指的载体＝dispatch_lessons/,
+		'lifecycle 里有、但本工具还没有模板的阶段（提交/复盘）fail fast 并指向归哪个工具，不让模型去补模板',
+	)
+	assert.throws(() => assembleDispatch(data, { stage: '提交', subject: 'x', intent: 'y' }), /stage「提交」本工具不装配该阶段/)
+})
+
+test('lifecycle 是 stage 词表单源：不在表里的阶段一律点名拒绝，错误带出整份词表', () => {
+	const unknown = { stage: '评审', batchType: '纯后端管线批', subject: 'x', intent: 'y' }
+	const rejected = unknownStageError('评审')
+	for (const call of [computeCombo, validateParams, assembleBrief, assembleDispatch]) {
+		assert.throws(() => call(data, unknown), rejected, `${call.name} 要按词表拒绝未注册的阶段`)
+	}
+	assert.deepEqual(matchRhythm(data, unknown), [], '节奏提示只按谓词命中，不过词表校验——未注册的阶段自然无命中')
+})
+
+test('requires 参数校验：门一缺 subject 拒绝；方案阶段传 batchType 拒绝（那一趟不判批型）', () => {
+	assert.throws(() => validateParams(data, { stage: '门一', batchType: '纯后端管线批', intent: 'y' }), /缺必填参数：subject/)
+	assert.doesNotThrow(() => validateParams(data, planning()), '方案只要对象与意图')
+	assert.throws(
+		() => validateParams(data, planning({ batchType: '纯后端管线批' })),
+		/stage=方案 不消费 batchType——消费它的是门一\/施工\/门二阶段，删掉它或改调其中之一/,
+		'不消费的槽位收到值即报错：静默忽略等于让调用方以为判了批型',
+	)
+	assert.throws(() => assembleDispatch(data, planning({ batchType: '纯后端管线批' })), /不消费 batchType/)
+	assert.throws(() => assembleDispatch(data, planning({ batchType: '没听过的批型' })), /不消费 batchType/, '先按「不消费」拒，不按「未知批型」拒——两种错法混起来调用方会改错方向')
+	assert.doesNotThrow(() => validateParams(data, construction()), '施工判批型，传得')
+	assert.throws(() => validateParams(data, planning({ subject: '   ' })), /缺必填参数：subject/, '空白串算缺')
+})
+
+test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必填/词表/模板全跟着数据走（代码一行不改，且经真加载器验过）', () => {
+	const addRow = (lifecycle) => lifecycle.stages.push({
+		id: '验收', order: 7, gate: false, kind: '验收',
+		requires: ['batchType', 'subject', 'intent'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
+	})
+	const addTemplate = (templates) => { templates.验收 = '验收结论：〔intent〕。〔subject〕' }
+	const call = { stage: '验收', batchType: '纯后端管线批', subject: '净 diff', intent: '验收' }
+
+	withLoadedData({ 'lifecycle.json': addRow }, (loaded) => {
+		assert.deepEqual(stageRequires(loaded, '验收'), ['batchType', 'subject', 'intent'], '必填矩阵现算自该行的 requires')
+		assert.equal(stageVocabulary(loaded).at(-1), '验收', '词表现算，跟着 order 排')
+		assert.deepEqual(dispatchStages(loaded), ['方案', '门一', '施工', '门二'], '没有模板键就不算本工具能出稿的阶段——加载期就分得清')
+		assert.deepEqual(formIds(computeCombo(loaded, call)), [], '这一趟不判批型（requires 里没有 batchType 那一位也不必），组合为空')
+		for (const fn of [validateParams, assembleBrief, assembleDispatch]) {
+			assert.throws(
+				() => fn(loaded, call),
+				/stage「验收」本工具不装配该阶段.*templates\.json 没有按模板键「验收」写的模板/,
+				'模板缺失仍 fail fast，不返回半截模板，也不绕去问别的参数',
+			)
+		}
+	})
+
+	withLoadedData({ 'lifecycle.json': addRow, 'templates.json': addTemplate }, (loaded) => {
+		assert.deepEqual(dispatchStages(loaded).at(-1), '验收', '模板键存在即进可服务清单（数据驱动，加阶段不改代码）')
+		assert.throws(() => validateParams(loaded, { ...call, batchType: undefined }), /缺必填参数：batchType/, '模板补上之后才轮到必填矩阵说话')
+		assert.doesNotThrow(() => validateParams(loaded, call))
+		const [brief] = assembleBrief(loaded, call)
+		assert.equal(brief.form, '验收', '单路出稿，路由名＝模板键')
+		assert.equal(brief.text, '验收结论：验收。净 diff')
+	})
+
+	assert.throws(
+		() => withLoadedData({ 'templates.json': addTemplate }, () => {}),
+		/多出未声明的模板键「验收」.*没有任何阶段会读到它/,
+		'只加模板不加 lifecycle 行＝加载失败：那个键没有任何阶段会读到，留着等于让人以为写了就生效',
+	)
+
+	assert.throws(() => validateParams(data, call), unknownStageError('验收'), '真数据里没有这一行——单源不是「认得所有词」')
+})
+
+test('加 stage 不扰动既有阶段：临时加一行后，四个已上线阶段的输出逐字不变', () => {
+	const extended = withLoadedData({
+		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
+			id: '验收', order: 7, gate: false, kind: '验收',
+			requires: ['subject', 'intent'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
+		}),
+		'templates.json': (templates) => { templates.验收 = '验收结论：〔intent〕。' },
+	}, (loaded) => loaded)
+	for (const params of [
+		planning(),
+		{ stage: '门一', batchType: '纯后端管线批', subject: '方案.md 批 2', intent: '证伪复核' },
+		construction(),
+		{ stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' },
+	]) {
+		assert.deepEqual(assembleDispatch(extended, params), assembleDispatch(data, params), `加行后 ${params.stage} 的输出逐字不变——新阶段不许顺手改别人的 brief`)
+	}
+	assert.deepEqual(stageVocabulary(extended).at(-1), '验收', '词表按 order 把新阶段接在末尾')
+})
+
+test('词表排序按数值：order 混进 10／1.5／-1 时仍是数值严格升序（字符串排序会排反）', () => {
+	const scrambled = structuredClone(data)
+	const orders = { 方案: 10, 门一: 1.5, 施工: -1, 门二: 2, 提交: 3, 复盘: 4 }
+	for (const row of scrambled.lifecycle.stages) row.order = orders[row.id]
+	const sorted = stageVocabulary(scrambled)
+	assert.deepEqual(sorted, ['施工', '门一', '门二', '提交', '复盘', '方案'], '数值序：-1 < 1.5 < 2 < 3 < 4 < 10（字符串序会把 10 排到 2 前面）')
+	const numbers = sorted.map((stage) => orders[stage])
+	for (let index = 1; index < numbers.length; index += 1) {
+		assert.ok(numbers[index] > numbers[index - 1], `${sorted[index]}（${numbers[index]}）须严格大于前一个 ${sorted[index - 1]}（${numbers[index - 1]}）——sort() 不带比较器时是字符串序，10 会排在 2 前面`)
+	}
+})
+
+test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶段也走同一份 13 节与自查清单', () => {
+	const twin = withLoadedData({
+		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
+			id: '定稿', order: 7, gate: false, kind: '定稿',
+			requires: ['subject', 'intent'], produces: ['定稿文档'], uses: ['plan-spec.json'], note: '单测现造的阶段',
+		}),
+		'templates.json': (templates) => { templates.定稿 = '按下列规范定稿：\n〔plan-spec 各节逐字〕\n〔plan-spec checklist 逐条〕' },
+	}, (loaded) => loaded)
+	const output = assembleDispatch(twin, { stage: '定稿', subject: '方案.md', intent: '定稿' })
+	assert.deepEqual(output.checklist, twin.planSpec.checklist, '判据是 uses 引用了 plan-spec.json，不按阶段名叫「方案」')
+	assert.ok(output.briefs[0].text.includes('## 根设计原则'), '两条 plan-spec 占位照样接到那份数据上')
+	assert.throws(() => assembleDispatch(data, { stage: '定稿', subject: 'x', intent: 'y' }), /未知 stage「定稿」/, '真数据里没有这一行——判据是数据，单源不是「认得所有词」')
+})
+
+test('槽位消费完备：全阶段×全参数矩阵——不消费的参数收到值即报错并点名消费它的是哪些阶段', () => {
+	const batchType = '纯后端管线批'
+	const values = {
+		batchType, subject: 'x', intent: 'y', baseBatchType: '纯后端管线批',
+		forbidden: '禁区', verifyCmd: 'npm test', rootCause: '错行', provider: 'minimax-cn',
+		decisions: ['拍板'], addons: ['涉鉴权/上传/输入'], anchors: ['a'],
+	}
+	for (const stage of dispatchStages(data)) {
+		const consumed = consumedParams(data, stage, batchType)
+		const base = { stage }
+		for (const slot of consumed) if (slot in values) base[slot] = values[slot]
+		assert.doesNotThrow(() => validateParams(data, base), `${stage}：照消费集给参即过（消费集自洽）`)
+		for (const field of PARAM_FIELDS) {
+			if (field === 'stage') continue
+			const params = { ...base, [field]: values[field] }
+			if (consumed.has(field)) {
+				assert.doesNotThrow(() => validateParams(data, params), `${stage} 消费 ${field}（模板占位或组合那一路读它），传了即报错＝契约说谎`)
+			} else {
+				assert.throws(
+					() => validateParams(data, params),
+					new RegExp(`stage=${stage} 不消费 ${field}——`),
+					`${stage} 不消费 ${field}：静默忽略等于让调用方以为它生效`,
+				)
+			}
+		}
+	}
+	assert.deepEqual(stagesConsuming(data, 'anchors'), ['施工'])
+	assert.deepEqual(stagesConsuming(data, 'baseBatchType'), ['门一', '门二'])
+	assert.deepEqual(stagesConsuming(data, 'decisions'), ['门一', '施工', '门二'], 'decisions 按模板占位消费：方案任务书没有拍板清单那一行（方案是给用户拍板的输入，不是已拍板的载体）')
+	assert.deepEqual(stagesConsuming(data, 'provider'), ['方案', '门一', '施工', '门二'], 'provider 由 rhythm 谓词消费，与阶段无关')
+	assert.deepEqual([...consumedParams(data, '方案')], ['subject', 'intent', 'provider'], '方案那一趟消费的槽位只有这三个：模板占位＋必填矩阵＋通用槽位，无门列故不消费组合那三项，任务书无拍板清单行故不消费 decisions')
+})
+
+test('decisions 按模板占位消费：方案那一趟传它即报错并说清为什么（方案是给用户拍板的输入，不是已拍板的载体）', () => {
+	assert.throws(
+		() => validateParams(data, planning({ decisions: ['拍板 1：零宿主依赖'] })),
+		/stage=方案 不消费 decisions——方案是给用户拍板的输入，不是已拍板的载体：拍板清单随派发\/施工阶段的 brief 下发，删掉它/,
+		'静默丢弃＝主会话以为它随任务书出去了，方案里就没了那一条',
+	)
+	for (const params of [
+		{ stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y', decisions: ['拍板 1'] },
+		{ stage: '门二', batchType: '纯后端管线批', subject: 'x', intent: 'y', decisions: ['拍板 1'] },
+		construction({ decisions: ['拍板 1'] }),
+	]) {
+		assert.doesNotThrow(() => validateParams(data, params), `${params.stage} 的模板有拍板清单那一行，传了即消费`)
+	}
+	assert.ok(assembleBrief(data, { stage: '门二', batchType: '纯后端管线批', subject: 'x', intent: 'y', decisions: ['拍板 1：零宿主依赖'] })[0].text.includes('拍板清单（不得重开）：拍板 1：零宿主依赖。'))
+})
+
+test('批型条件槽位的点名带条件：门一传 baseBatchType／rootCause 各说清为什么这一趟不用它', () => {
+	const review = { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' }
+	assert.throws(
+		() => validateParams(data, { ...review, baseBatchType: '纯后端管线批' }),
+		/stage=门一 不消费 baseBatchType——此门主行列非空，不需要 baseBatchType——消费它的是新功能·形态未定、修复批那一类批型/,
+		'点名「这一趟用不上」而不是笼统一句不消费：模型照笼统那句只会换个值再试',
+	)
+	assert.throws(
+		() => validateParams(data, { ...review, rootCause: '错行' }),
+		/stage=门一 不消费 rootCause——消费它的是施工\+needsRootCause 批型（修复批），删掉它或改调那一类/,
+		'条件槽位连条件一起点名，否则「谁消费它」这句话与事实相反',
+	)
+	assert.throws(
+		() => validateParams(data, { ...construction(), rootCause: '错行' }),
+		/stage=施工 不消费 rootCause——这一趟的批型行没标 needsRootCause，施工模板不追加根因分类那三行/,
+		'施工+非修复批传根因分类同样点名（修复批那一趟才追加那三行）',
+	)
+	assert.deepEqual(conditionalConsumers(data, 'rootCause'), { condition: 'needsRootCause', holders: ['修复批'], stages: ['施工'] })
+	assert.deepEqual(conditionalConsumers(data, 'baseBatchType').stages, ['门一', '门二'])
+	assert.equal(conditionalConsumers(data, 'decisions'), null, 'decisions 不是批型条件槽位，按模板占位消费')
+	assert.doesNotThrow(() => validateParams(data, { stage: '门二', batchType: '修复批', baseBatchType: '纯后端管线批', subject: 'x', intent: 'y' }), 'needsBase 行在有门列的阶段仍然消费它')
+})
+
+test('复核阶段出一路都没有＝报错点名两种成因（静默空转：briefs 空数组，调用方以为派了门复核）', () => {
+	const noBatchType = withLoadedData({
+		'lifecycle.json': (lifecycle) => { lifecycle.stages[1].requires = ['subject', 'intent'] },
+	}, (loaded) => loaded)
+	assert.deepEqual(stageRequires(noBatchType, '门一'), ['subject', 'intent'], '必填矩阵里没有判批型参数')
+	assert.deepEqual(formIds(computeCombo(noBatchType, { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' })), [], '组合先空掉')
+	for (const fn of [assembleBrief, assembleDispatch]) {
+		assert.throws(
+			() => fn(noBatchType, { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' }),
+			/stage=门一 复核阶段无可派组合——检查该 stage 的 requires 是否漏了判批型参数（漏了 combo 就是空的）、配对行该列是否为空/,
+			'空转要当场报错：出稿结果里 briefs=[] 没人读得出来',
+		)
+	}
+	assert.throws(
+		() => assembleDispatch(withLoadedData({
+			'pairing.json': (pairing) => { pairing.rows[0].gate1 = [] },
+		}, (loaded) => loaded), { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y' }),
+		/复核阶段无可派组合/,
+		'配对行该列是空数组时同样空转（另一种成因，报错文案点名了它）',
+	)
+	assert.doesNotThrow(() => assembleDispatch(data, { stage: '方案', subject: 'x', intent: 'y' }), '非复核阶段单路出稿不受这条约束')
+})
+
+test('占位不带计数与名单：方案任务书那条占位只说「各节逐字」（节数与节名随 plan-spec 变，抄进模板即第二次真相源）', () => {
+	assert.ok(data.templates.方案任务书.includes('〔plan-spec 各节逐字〕'))
+	assert.ok(!data.templates.方案任务书.includes('13 节'), '模板里不写节数——改 plan-spec 加一节就得分两处')
+	assert.ok(!data.templates.方案任务书.includes('根设计原则/'), '模板里不写节名清单——节名随数据变')
+	const taskBook = assembleDispatch(data, planning()).briefs[0].text
+	assert.equal(taskBook.match(/^## /gm).length, data.planSpec.blocks.length, '前缀匹配接上全部节，一条不多一条不少')
+})
+
+test('方案任务书：执行纪律指针、语义判定段位置、自查第 ⑨ 条都在（数据面三处口径收齐）', () => {
+	const taskBook = assembleDispatch(data, planning()).briefs[0].text
+	assert.ok(taskBook.includes('执行纪律全文随施工 brief 固定段下发'), '拍板后的执行节改指 brief 固定段')
+	assert.ok(taskBook.includes('施工方动工前必读施工 brief「对象」行所指方案文档的对应批次节'), '何时写那节与 brief 的对象行同一口径')
+	assert.ok(taskBook.includes('**本批语义判定**'), '每批任务块节里有语义判定段')
+	assert.ok(taskBook.includes('- 本段位置：每批任务块的判据行之后、块末尾'), '该段自报位置：判据行之后没有它即视为漏写')
+	assert.ok(taskBook.includes('语义判定清单已答（无两读点写明）'), '定稿自查第 ⑨ 条带上这半句（不新开一条）')
+	const layout = data.planSpec.blocks.find((block) => block.id === 'layout')
+	assert.ok(layout.text.includes('（见本节三档表）'), '版面节里的自指改成节内三档表，不指回节名')
+	assert.ok(!layout.text.includes('（见「版面」节）'), '悬空自指清掉')
+})
+
+test('requireData：五份数据缺任何一份都点名（含 lifecycle 与 planSpec），不静默出空稿', () => {
+	for (const missing of ['forms', 'pairing', 'templates', 'lifecycle', 'planSpec']) {
+		const incomplete = structuredClone(data)
+		delete incomplete[missing]
+		assert.throws(() => assembleDispatch(incomplete, construction()), (error) => {
+			assert.match(error.message, /签名一律是 \(data, params\)/)
+			assert.match(error.message, /forms\/pairing\/templates\/lifecycle\/planSpec/, `缺 ${missing} 时错误仍要列出五份名字`)
+			return true
+		}, `缺 ${missing} 要点名，不让它飘成 data.${missing} undefined`)
+	}
+})
+
+test('重复 stage id 取第一条：core 的查表语义被钉住（改成取最后一条等于让重名行悄悄生效）', () => {
+	const doubled = structuredClone(data)
+	doubled.lifecycle.stages.push({ ...structuredClone(doubled.lifecycle.stages.find((row) => row.id === '施工')), requires: [], note: '重名的第二条' })
+	assert.deepEqual(stageRequires(doubled, '施工'), ['batchType', 'subject', 'intent', 'anchors'], '取第一条：第二条的空 requires 不生效（findLast 变异会让施工不再要 anchors 而此处仍绿）')
+	assert.throws(() => validateParams(doubled, { stage: '施工', batchType: '纯后端管线批', subject: 'x', intent: 'y' }), /缺必填参数：anchors/, '重名行在加载期就被拦，这里钉的是 core 自身的取哪一条')
+})
+
+test('句号归一：占位值自带终止符与模板尾叠加时压回一个（各终止符混排也只留最后一个）', () => {
+	for (const [subject, expected] of [
+		['净 diff 生成命令', '对象：净 diff 生成命令。'],
+		['净 diff 生成命令。', '对象：净 diff 生成命令。'],
+		['净 diff 生成命令？', '对象：净 diff 生成命令？'],
+	]) {
+		const params = { stage: '门一', batchType: '纯后端管线批', subject, intent: '验证意图一句话' }
+		const { briefs } = assembleDispatch(data, params)
+		assert.ok(briefs.length > 0)
+		for (const brief of briefs) {
+			assert.ok(!brief.text.includes('。。'), `brief 出现连续句号：${brief.form}`)
+			assert.ok(brief.text.includes(expected), `归一后取最后一个终止符（不能把正常句号吃掉），实得该行：${brief.text.split('\n')[2]}`)
+		}
+	}
+	const mixed = structuredClone(data)
+	mixed.templates.门一 = mixed.templates.门一.replace('本批意图一句话：〔intent〕。', '这个设计点会怎么两读？〔intent〕。')
+	const [brief] = assembleBrief(mixed, { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: '两侧读法各是什么后果' })
+	assert.ok(brief.text.includes('这个设计点会怎么两读？两侧读法各是什么后果。'), '「？。」压成最后一个「。」，模板尾的句号压掉占位值的句号')
+	assert.ok(!brief.text.includes('？。'), '连续终止符不留原样')
 })

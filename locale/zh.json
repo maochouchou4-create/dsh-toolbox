@@ -1,6 +1,6 @@
 {
 	"meta": {
 		"title": "DSH 工具箱",
-		"description": "个人工具集：两层记忆索引注入＋memory 写侧工具，see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型），dispatch 派发装配（按批型配对复核形态＋现成 brief，规则在数据面现读、改 JSON 即生效）。"
+		"description": "个人工具集：两层记忆索引注入＋memory 写侧工具，see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型），dispatch 派发装配（按批型配对复核形态＋现成 brief；阶段＝方案时出方案任务书，规则在数据面现读、改 JSON 即生效）。"
 	}
 }
