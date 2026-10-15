@@ -187,7 +187,7 @@ test('门一 brief：固定段一条不缺（角色句／必读链／横切判�
 		'横切判据：- 阈值标定',
 		'变异翻红',
 		'先读用户级 ~/.dsh/AGENTS.md 全文，再读批次所在仓的 AGENTS.md（无则跳过）；只读禁写',
-		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试只增不删，改写不删）——违反＝返工。',
+		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试删减须显式申报（改写优先））——违反＝返工。',
 		'上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}',
 		'派发时 provider/model 必须显式指派',
 	]) {
@@ -236,7 +236,6 @@ test('必读链·施工版守门：施工模板指向施工那张辅助页，页
 	// 漂而比不出来。加载期那道互验（data.checkChainPair）拦的是数据文件漂到加载这一步之前，
 	// 这条留在出稿这侧，两者拦的是不同时刻
 	assert.equal(page.split('；只读禁写').join(''), data.templates['AGENTS 必读链·复核'].split('；只读禁写').join(''), '两页除「；只读禁写」外整篇逐字相同')
-
 })
 
 test('decisions 空则整行省略，非空则逐条带入', () => {
@@ -255,8 +254,9 @@ test('施工 brief：执行纪律内联在首段、对象行在位，自证与�
 		'本批意图一句话：装配 dispatch 工具。',
 		'锚点（符号名，禁行号）：computeCombo、assembleBrief。',
 		'自证：上报必须附自验证据',
+		'提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做',
 		'先读用户级 ~/.dsh/AGENTS.md 全文，再读批次所在仓的 AGENTS.md（无则跳过）。',
-		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试只增不删，改写不删）——违反＝返工。',
+		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试删减须显式申报（改写优先））——违反＝返工。',
 		'上报格式＝只报现象＋证据＋影响面事实',
 		'裁决类上报必须等裁决再动工',
 	]) {
@@ -609,11 +609,11 @@ test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚
 	assert.deepEqual(withScale.filter((note) => !withoutScale.includes(note)), [exempt], '增量恰为免派那一条——多出别的就是谓词互相污染，差集比整体相等更能指出来')
 	assert.throws(
 		() => validateParams(data, { ...base, diffLines: '5' }),
-		/参数「diffLines」须是非负整数/,
-		'规模参数按非负整数收：类型错当场点名，不留到「提示没出」那种看不出原因的结果里',
+		/参数「diffLines」须是非负安全整数（0 也算「给了」，上限 2\^53−1）/,
+		'规模参数按非负安全整数收：类型错当场点名，不留到「提示没出」那种看不出原因的结果里；文案带上限子句——与描述面同一个域（断言两侧同强度）',
 	)
 	for (const value of [-1, 4.5]) {
-		assert.throws(() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }), /参数「diffLines」须是非负整数/, `diffLines=${value}：负数与小数按 ≤max 一比照样「命中」，等于按一个不存在的规模发了免派建议`)
+		assert.throws(() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }), /参数「diffLines」须是非负安全整数/, `diffLines=${value}：负数与小数按 ≤max 一比照样「命中」，等于按一个不存在的规模发了免派建议`)
 	}
 	assert.doesNotThrow(() => validateParams(data, { ...base, diffLines: 0, changedFiles: 0 }), '0 不触发「不消费该槽位」')
 	assert.doesNotThrow(
@@ -739,7 +739,9 @@ test('requires 参数校验：门一缺 subject 拒绝；方案阶段传 batchTy
 
 test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必填/词表/模板全跟着数据走（代码一行不改，且经真加载器验过）', () => {
 	const addRow = (lifecycle) => lifecycle.stages.push({
-		id: '验收', order: 7, gate: false, kind: '验收',
+		// kind 落在 core 的词表内（装载期形状规格按那份词表核）：新阶段可以另起一个 id，kind
+		// 却是「这一行被按哪种语义读」的判据，编一个词表外的值只会得到一条加载失败
+		id: '验收', order: 7, gate: false, kind: '方案',
 		requires: ['batchType', 'subject', 'intent'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
 	})
 	const addTemplate = (templates) => { templates.验收 = '验收结论：〔intent〕。〔subject〕' }
@@ -780,7 +782,7 @@ test('加 stage 只改 JSON：lifecycle 副本里加一行自定义阶段，必�
 test('加 stage 不扰动既有阶段：临时加一行后，四个已上线阶段的输出逐字不变', () => {
 	const extended = withLoadedData({
 		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
-			id: '验收', order: 7, gate: false, kind: '验收',
+			id: '验收', order: 7, gate: false, kind: '方案',
 			requires: ['subject', 'intent'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
 		}),
 		'templates.json': (templates) => { templates.验收 = '验收结论：〔intent〕。' },
@@ -811,7 +813,7 @@ test('词表排序按数值：order 混进 10／1.5／-1 时仍是数值严格�
 test('plan-spec 消费由数据决定：第二个 uses 含 plan-spec.json 的阶段也走同一份 13 节与自查清单', () => {
 	const twin = withLoadedData({
 		'lifecycle.json': (lifecycle) => lifecycle.stages.push({
-			id: '定稿', order: 7, gate: false, kind: '定稿',
+			id: '定稿', order: 7, gate: false, kind: '方案',
 			requires: ['subject', 'intent'], produces: ['定稿文档'], uses: ['plan-spec.json'], note: '单测现造的阶段',
 		}),
 		'templates.json': (templates) => { templates.定稿 = '按下列规范定稿：\n〔plan-spec 各节逐字〕\n〔plan-spec checklist 逐条〕' },

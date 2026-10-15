@@ -201,15 +201,19 @@ test('lintMemory：条目清点失败退回保留 stem 集（死链判定降级�
 	assert.ok(!report.warnings.some((w) => w.includes('条目读取失败')), '读文件那一步没病，别混报')
 })
 
-test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（EISDIR 确定性触发）', () => {
+test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（同名目录确定性触发）', () => {
 	const root = join(base, 'lint-degraded')
 	const profile = join(root, 'profile')
 	mkdirSync(profile, { recursive: true })
 	writeFileSync(join(profile, 'good.md'), entry('好条目', '触发词'), 'utf8')
-	// x.md 名字的目录：readdirSync 列出它，readFileSync 抛 EISDIR——确定性病态输入
+	// x.md 名字的目录：readdirSync 列出它，而它落在「Dirent 判不出是不是普通文件」那一档，补的那
+	// 次 statSync 说它不是文件——报出来的是「条目名被非普通文件占用」，不再是读文件时的 EISDIR
 	mkdirSync(join(profile, 'x.md'))
 	const report = lintMemory({ memoryRoot: root })
 	assert.equal(report.ok, false)
-	assert.ok(report.warnings.some((w) => w.includes('条目读取失败') && w.includes('x.md')))
+	assert.ok(
+		report.warnings.some((w) => w.includes('条目读取失败') && w.includes('x.md') && w.includes('条目名被非普通文件占用')),
+		'detail 说的是「名字被非普通文件占用」：同名目录与读不动是两回事，笼统一句「读取失败」会让后来人照着读失败那条线去查',
+	)
 	assert.ok(!report.warnings.some((w) => w.includes('frontmatter 不合规') && w.includes('good.md')), '好条目不受邻近病态牵连')
 })

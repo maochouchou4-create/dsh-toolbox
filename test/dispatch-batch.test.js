@@ -575,7 +575,7 @@ test('性质断言：furthest 单调不减、门禁未过只缩不涨、告警�
 	assert.ok(gates.length > 0, '性质断言的前提：阶段表里真有门阶段，否则下面全是空转')
 })
 
-test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order」，数据里没有提交行时退化为全量', async () => {
+test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order」，数据里没有提交行即当场抛（前提由加载器保证，纯函数层不兜底）', async () => {
 	freshLedger('在飞')
 	await start()
 	await start({ batch: '另一个批次', batchType: '机械搬运/小修', intent: '别的活' })
@@ -598,15 +598,41 @@ test('在飞集合＝「furthest 为空 或 furthest.order < 提交行的 order�
 		[],
 		'每个批次都至少记了一条 start，没有 furthest 为空的那一类',
 	)
-	// 数据里没有提交行时退化全量：造一份只到门二的生命周期，推导不许因此把批次判没了
+	// 数据里没有提交行时当场抛而不是退化全量：那份数据加载期就被拦（data.checkLifecycle 核「恰有
+	// 一行」），故这格靠注入绕过加载器的表驱动。口径记录在此——兜底会把「数据坏了」表现成「所有
+	// 批次都还堵着」，那正是提交前自查读不出来的一种静默
 	const truncated = { ...data, lifecycle: { stages: data.lifecycle.stages.filter((row) => row.kind !== '提交') } }
-	assert.equal(
-		[...grouped(events)].filter(([, rows]) => {
-			const state = foldBatch(rows, truncated)
-			return state.furthest === null || state.furthest.order < Math.max(...truncated.lifecycle.stages.map((row) => row.order)) + 1
-		}).length,
-		2,
-		'没有提交行时没有「已提交」这个边界，两个批次都还在飞',
+	await assert.rejects(
+		runBatchAction({
+			port,
+			path: ledger,
+			dataDir,
+			action: 'status',
+			params: {},
+			loadTables: ({ names }) => Object.fromEntries(names.map((name) => [name, name === 'lifecycle' ? truncated.lifecycle : data[name]])),
+		}),
+		/lifecycle 无 kind='提交' 行（或不止一行），实得 0 行.*数据未过加载校验/,
+		'缺提交行不兜底：退化全量的症状是所有批次都还堵着，而真正的原因是数据没过加载校验',
+	)
+	await assert.rejects(
+		runBatchAction({
+			port,
+			path: ledger,
+			dataDir,
+			action: 'status',
+			params: {},
+			loadTables: ({ names }) => Object.fromEntries(names.map((name) => [name, name === 'lifecycle'
+				? {
+					stages: [...data.lifecycle.stages, {
+						...data.lifecycle.stages.find((row) => row.kind === '提交'),
+						id: '提交流',
+						order: 7,
+					}],
+				}
+				: data[name]])),
+		}),
+		/实得 2 行/,
+		'两行提交同样当场抛：多出来的那行会把提交这一步推到没有下一行的 order，加载期那道拦的是同一件事',
 	)
 })
 

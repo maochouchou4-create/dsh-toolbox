@@ -10,10 +10,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { NUMERIC_PARAMS, PARAM_FIELDS, RHYTHM_FIELDS, dispatchStages, stageVocabulary, validateParams } from '../lib/dispatch/core.js'
+import { CONDITION_PARAMS, NUMERIC_PARAMS, PARAM_FIELDS, RHYTHM_FIELDS, dispatchStages, stageVocabulary, validateParams } from '../lib/dispatch/core.js'
 import { dispatchParameters } from '../lib/dispatch/parameters.js'
 
-const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch', 'data')
+const dispatchDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'dispatch')
+const dataDir = join(dispatchDir, 'data')
+const parametersPath = join(dispatchDir, 'parameters.js')
 const readData = (name) => JSON.parse(readFileSync(join(dataDir, name), 'utf8'))
 const data = {
 	forms: readData('forms.json'),
@@ -47,24 +49,49 @@ test('规模参数在 schema 层就标 integer：小数由宿主在调用边界�
 	// 这条与上一条的「类型面三档」是同一件事的两面：那边核键集与类型名，这边核「为什么是
 	// integer 而不是 number」——行数与文件数是计数，宿主 DSL 有 IntegerValueSchemaSpec，
 	// 标 number 的话 4.5 能过 schema，之后只由 core.assertNumericParams 兜着。兜得住，
-	// 但两道的落点不同：schema 那道在调用边界、点名参数；core 那道要等整趟参数校验走到它
+	// 但两道的落点不同：schema 那道在调用边界、点名参数；core 那道要等整趟参数校验走到它。
+	// schema 那道对 2^53 与 Number.MAX_VALUE 这类「是整数但不是计数」的值拦不拦得下来，
+	// 属运行期（宿主注册边界），待下次启动验证；判据留在 core 那道，见下面那条边界枚举
 	assert.equal(parameters.diffLines.type, 'integer')
 	assert.equal(parameters.changedFiles.type, 'integer')
 })
 
-test('规模参数按非负整数收：字符串数字／负数／小数当场点名（changedFiles 侧同样，不只 diffLines）', () => {
+test('规模参数按非负安全整数收：字符串数字／负数／小数当场点名（changedFiles 侧同样，不只 diffLines）', () => {
 	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
 	for (const value of ['5', -1, 4.5]) {
 		assert.throws(
 			() => validateParams(data, { ...base, diffLines: 3, changedFiles: value }),
-			/参数「changedFiles」须是非负整数/,
-			`changedFiles=${JSON.stringify(value)}：不是非负整数就点出来，不让它表现成「提示没出」`,
+			/参数「changedFiles」须是非负安全整数/,
+			`changedFiles=${JSON.stringify(value)}：不是非负安全整数就点出来，不让它表现成「提示没出」`,
 		)
 	}
-	assert.throws(() => validateParams(data, { ...base, diffLines: Number.NaN, changedFiles: 1 }), /参数「diffLines」须是非负整数.*实得 NaN/, 'NaN 打成 null 会把方向指错：调用方传的不是 null')
+	assert.throws(() => validateParams(data, { ...base, diffLines: Number.NaN, changedFiles: 1 }), /参数「diffLines」须是非负安全整数.*实得 NaN/, 'NaN 打成 null 会把方向指错：调用方传的不是 null')
 	assert.doesNotThrow(() => validateParams(data, { ...base, diffLines: 0, changedFiles: 0 }), '0 是有效规模（零行净 diff 正是免派那一档）')
 	assert.match(parameters.diffLines.description, /与 changedFiles 成对给/, '成对给写在描述里：只给一半按不命中是静默的，模型照旧传一个不会知道自己漏了')
 	assert.match(parameters.changedFiles.description, /与 diffLines 成对给/)
+})
+
+test('规模参数的取值域边界＝非负安全整数（0/1/MAX_SAFE_INTEGER 过，越界的四种当场点名）', () => {
+	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
+	// 过侧：安全整数是分界而不是「整数」。Number.isInteger 对下面四种全判真（Infinity 除外），
+	// 于是按「整数」收的判据会让 2^53 与 1.79e308 安静地被当成合法规模拿去比 {max:N}
+	for (const value of [0, 1, Number.MAX_SAFE_INTEGER]) {
+		assert.doesNotThrow(
+			() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }),
+			`diffLines=${value}：边界之内合法（含零行与最大安全计数）`,
+		)
+	}
+	for (const value of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_VALUE, 2 ** 53]) {
+		assert.throws(
+			() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }),
+			/参数「diffLines」须是非负安全整数/,
+			`diffLines=${value}：${Number.isInteger(value) ? '它是整数却不是计数——双精度里已不是数出来的行数' : '连整数都不是'}，当成规模比阈值等于凭空造一档免派`,
+		)
+	}
+	// 描述面与运行期同一口径：模型照描述传的域就是运行期收的域，两句不一致时它看不出自己会被拒在哪
+	for (const field of ['diffLines', 'changedFiles']) {
+		assert.match(parameters[field].description, /非负安全整数[，、]上限 2\^53−1/, `${field} 的描述与 core.assertNumericParams 收的是同一个域`)
+	}
 })
 
 test('stage 取值清单＝本工具能出稿的阶段，按 lifecycle 的 order 排（提交/复盘归各自的工具，不列）', () => {
@@ -133,9 +160,12 @@ test('批型条件槽位：core 的 holders 与参数面的描述读的是同一
 		'两个标记都摘掉后 rootCause 真的没人消费：core 的 holders 与描述同时空了，两处仍一致',
 	)
 
-	// 判定单源的机械证据：把行上的条件值换成 truthy 但非 true 的东西，两侧仍须给出同一答案。
-	// 描述与 core 各 filter 一份的实现（早先那版在本文件按 row[condition] === true 判）在这里
-	// 会与 core 分道扬镳——「=== true」与「truthy」是两种判定，而行上真值是什么只有一处知道
+	// 输出等价对账：把行上的条件值换成 truthy 但非 true 的东西，两侧仍须给出同一答案——描述那
+	// 几格是 core 的 holders 现读拼出来的，与 core 的判定同源。这条守的是「两侧答案一致」，不守
+	// 「本文件没有自持 filter」：两侧各 filter 一份、哪怕判据逐字相同，这份断言照样绿。结构那一
+	// 半由下面那道源码守卫把着——守卫拦的是「字面量倒退」这类常见形态；语义等价的间接自持
+	// （借 CONDITION_PARAMS 的 condition 字段名现读、却复制 filter 逻辑）拦不住，那层的兜底
+	// 在时间维度：core 改判据时两侧分岔，odd 这份数据会红
 	const odd = structuredClone(data)
 	for (const row of odd.pairing.rows) {
 		if (row.needsBase === true) row.needsBase = 'true'
@@ -145,6 +175,19 @@ test('批型条件槽位：core 的 holders 与参数面的描述读的是同一
 	assert.ok(!oddDescription.batchType.description.includes('需 baseBatchType 的特殊行'), '条件值不是 true 就不算带条件：描述与 core 的 holders 同一口径')
 	assert.ok(!oddDescription.rootCause.description.includes('施工必填'), '同上，rootCause 侧')
 	assert.match(holdersInMessage(odd, 'baseBatchType'), /配对表里没有任何一行标 needsBase/, 'core 那侧对同一个数据也判「没人标这个条件」')
+
+	// 结构守卫（机械证据）：条件字段字面量只许出现在 core.js 的槽位表一处——参数面自己再 filter
+	// 一份就是同一个判定落了两处，而两份各自都对时上面那条输出等价对账一声不响。注释行同样不许
+	// 出现这两个词：否则注释随时能退回成第二处判定说明，而这道守卫还绿
+	const parametersSource = readFileSync(parametersPath, 'utf8')
+	assert.ok(!/needsBase|needsRootCause/.test(parametersSource), '参数面源码里出现条件字段字面量：判定不只落在 core 的槽位表一处')
+
+	// 性质：条件槽位每加一格／减一格，参数面都要显式过这一格——现读调用点的集合与槽位表键集互为
+	// 充要，不靠「恰好都写了」蒙着
+	const callSites = [...parametersSource.matchAll(/conditionHolders\(data, '([^']+)'\)/g)].map((match) => match[1])
+	assert.deepEqual([...callSites].sort(), ['baseBatchType', 'baseBatchType', 'rootCause'], '三处调用点：批型那份要列两段（需依赖的特殊行与不带依赖的特殊行），baseBatchType 与 rootCause 各一处')
+	assert.deepEqual([...new Set(callSites)].sort(), ['baseBatchType', 'rootCause'], '条件槽位的现读清单写死当前两键：加减槽位都要显式改这一格')
+	assert.deepEqual([...new Set(callSites)].sort(), Object.keys(CONDITION_PARAMS).sort(), '调用点集合 ≡ core 的 CONDITION_PARAMS 键集：core 加一格而参数面没跟上，模型照旧描述传值就撞「未消费」')
 })
 
 test('描述里的阶段名单与 core 的槽位消费集一致（描述说某阶段可填，契约就得真消费它）', () => {
@@ -161,7 +204,7 @@ test('描述里的阶段名单与 core 的槽位消费集一致（描述说某�
 test('描述面不残留手抄的阶段名单（加了阶段或改了 requires，描述跟着走）', () => {
 	const extended = structuredClone(data)
 	extended.lifecycle.stages.push({
-		id: '验收', order: 7, gate: false, kind: '验收',
+		id: '验收', order: 7, gate: false, kind: '复盘',
 		requires: ['subject', 'intent', 'anchors'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
 	})
 	extended.templates.验收 = '验收结论：〔intent〕。〔subject〕〔anchors〕'

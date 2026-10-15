@@ -6,13 +6,15 @@
  */
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { HEAD_CHUNK_BYTES } from '../lib/head-read.js'
 import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
-import { composeMemory, readCapped } from '../lib/memory/assemble.js'
+import { composeMemory, readCapped, scanLayer } from '../lib/memory/assemble.js'
+import { FRONTMATTER_HEAD_MAX_BYTES, isEntryName } from '../lib/memory/frontmatter.js'
+import { readOptions } from '../scripts/checks.mjs'
 import { entry } from './helpers.js'
 
 let base
@@ -75,6 +77,16 @@ test('resolveRoot：缺省兜底与绝对化一步做完，对已绝对化的入
 	assert.notEqual(resolveRoot('').root, process.cwd(), '空串必须取默认根而不是进程 cwd')
 })
 
+test('跨入口根解析同形：显式空串经脚本入参回落后与 resolveRoot 直接判空得到同一个根', () => {
+	// 两条入口各自的「空串＝没给」判据各写一份时，脚本那侧回落成进程 cwd、插件那侧回落成默认根，
+	// 同一个空串在两处量到两个层：离线自检印「全部达标」而实际只量了习惯层。这格钉的是可测的
+	// 那一半（归一后的根同形）；宿主 schema 对空串那道校验属于运行期，待下次启动验证
+	const script = readOptions(['node', 'checks', '', ''])
+	assert.equal(script.rootGiven, false, '空串是「调用方写下来了但当作没给」，判据看得到这件事')
+	assert.deepEqual(resolveRoot(script.memoryRoot), resolveRoot(''), '脚本入参回落到的根 ≡ resolveRoot 直接判空的根')
+	assert.deepEqual(resolveRoot(script.memoryRoot), resolveRoot(DEFAULT_MEMORY_ROOT), '两边都落到默认根，不是进程 cwd')
+})
+
 test('readCapped：文件不存在返回 missing（常态，非错误）', () => {
 	assert.deepEqual(readCapped(join(base, 'no-such-file.md')), { status: 'missing' })
 })
@@ -106,6 +118,80 @@ test('readCapped：文件在但读失败返回 read-error（目录当文件喂�
 	const r = readCapped(dir)
 	assert.equal(r.status, 'read-error')
 	assert.ok(typeof r.message === 'string' && r.message.length > 0)
+})
+
+test('scanLayer：read 缺参当场抛编程错误，不报 read-error（漏传是调用方的错，不是语料的病态）', () => {
+	// 三处消费者（注入装配、体检、离线自检）都经它读层，漏传 read 的症状若走 read-error 那条
+	// 旁路，表现是「整层判不出来」的静默降级——体检少报一轮、离线自检少一层，装配少一块，
+	// 而没有任何一处说得出真正的原因是调用方漏了参数
+	const { profile } = fixture('scan-read-missing')
+	assert.throws(() => scanLayer(profile, {}), /read.*必填参数/, '缺 read 当场点名，不进 try/catch')
+	assert.throws(() => scanLayer(profile, { read: '整篇读法' }), /read.*必填参数/, 'read 传了非函数与没传同病：类型错也是编程错误，不降级')
+	const empty = join(base, 'scan-read-missing-empty')
+	mkdirSync(empty, { recursive: true })
+	assert.throws(() => scanLayer(empty, {}), /read.*必填参数/, '空目录也不静默：列目录之前先核参数，否则空层与漏参两种情况看不出区别')
+	assert.throws(() => scanLayer(profile), /read.*必填参数/, '漏参最常见的裸调写法（第二参整个没给）也要拿到点名消息，不是 destructure 的原生 TypeError')
+	const absent = join(base, 'scan-read-missing-absent')
+	assert.throws(() => scanLayer(absent, {}), /read.*必填参数/, '目录不存在也先核参数：守卫在列目录之前——挪到后面这格会静默降级成 read-error ENOENT 返回 null')
+})
+
+test('scanLayer：有效条目与指向它的软链条目都进索引（names 与 entries 各含两条）', () => {
+	const { profile } = fixture('scan-symlink')
+	writeFileSync(join(profile, 'real.md'), entry('真条目', '触发词'), 'utf8')
+	symlinkSync(join(profile, 'real.md'), join(profile, 'link.md'))
+	const scan = scanLayer(profile, { read: (path) => readFileSync(path, 'utf8') })
+	assert.deepEqual(scan.names, ['link.md', 'real.md'], 'names 是层内全量（含非条目名），按码元序——离线自检要拿它数条目文件')
+	assert.deepEqual(scan.entries.map((one) => one.name), ['link.md', 'real.md'], '两条都进 entries：Dirent 判不出是不是普通文件时补的那次 stat 就是为软链条目兜的')
+	assert.ok(scan.lines.every((line) => line.includes('- [真条目]')), '两条派生出同一行（同名 title 正是体检那项要报的撞名，两条都在场才对）')
+})
+
+test('scanLayer：read 抛错只降级那一条，邻近条目不受牵连；indexLine 为空 ⟺ 该条目解析没过', () => {
+	const { profile } = fixture('scan-read-throw')
+	writeFileSync(join(profile, 'a-ok.md'), entry('好条目', '触发词'), 'utf8')
+	writeFileSync(join(profile, 'b-bad.md'), '---\ntitle: 缺描述\n---\n', 'utf8')
+	writeFileSync(join(profile, 'c-throw.md'), entry('读不动的条目', '触发词'), 'utf8')
+	const issues = []
+	const scan = scanLayer(profile, {
+		read: (path) => {
+			if (path.endsWith('c-throw.md')) throw new Error('读法炸了')
+			return readFileSync(path, 'utf8')
+		},
+		report: (issue, path, detail) => issues.push([issue, path, detail]),
+	})
+	assert.deepEqual(scan.names, ['a-ok.md', 'b-bad.md', 'c-throw.md'], '读炸那条仍留在 names：它确实在场，只是读不动')
+	assert.deepEqual(scan.entries.map((one) => one.name), ['a-ok.md', 'b-bad.md'], '读炸的那条从 entries 退场，另两条照常')
+	assert.deepEqual(scan.entries.map((one) => one.indexLine === null), [false, true], 'indexLine 为空 ⟺ parsed 不过：两条不等价的判据各写一处时，坏行会以空串或半行进索引')
+	assert.ok(scan.entries.every((one) => (one.indexLine === null) === !one.parsed.ok), '恒等式：indexLine 非空 ⟺ parsed.ok——两条不等价的判据各写一处时，坏行会以空串或半行进索引')
+	assert.ok(issues.some(([issue, path, detail]) => issue === 'read-error' && path.endsWith('c-throw.md') && detail === '读法炸了'), 'read 抛错报 read-error，detail 原样带出抛错消息')
+	assert.ok(issues.some(([issue, path]) => issue === 'entry-frontmatter' && path.endsWith('b-bad.md')), 'frontmatter 不合规报 entry-frontmatter，与读错分开')
+	assert.ok(!issues.some(([, path]) => path.endsWith('a-ok.md')), '好条目不受邻近病态牵连')
+})
+
+test('注入装配的读法封顶：frontmatter 超 64KB 才闭合的条目不进注入块（体检整篇读不受此限）', () => {
+	const { root, profile } = fixture('compose-head-cap')
+	writeFileSync(join(profile, 'ok.md'), entry('正常条目', '触发词'), 'utf8')
+	// 围栏本体超过 FRONTMATTER_HEAD_MAX_BYTES 才闭合（填充塞在 description 值内——frontmatter
+	// 恰好两键的契约不破）：注入侧的头读（读到闭合为止、最多 64KB）会先触顶拿到截断文本；
+	// 若有人把注入侧读法换成整篇读，这条会 parse 成功混进注入块，本用例翻红。
+	writeFileSync(join(profile, 'huge.md'), `---\ntitle: 围栏超限\ndescription: ${'x'.repeat(FRONTMATTER_HEAD_MAX_BYTES + 4096)}\n---\n正文`, 'utf8')
+	const issues = []
+	const block = composeMemory({ memoryRoot: root, cwd: '/tmp', onIssue: (issue, path) => issues.push([issue, path]) })
+	assert.ok(block.includes('- [正常条目]'), '正常条目照常进注入块')
+	assert.ok(!block.includes('- [围栏超限]'), '围栏超限条目不进注入块：头读封顶把它挡在外面（若注入侧读法被换成整篇读，这条会 parse 成功混进注入块，本断言翻红）')
+	assert.ok(issues.some(([issue, path]) => issue === 'entry-frontmatter' && path.endsWith('huge.md')), '触顶表现为截断文本 parse 不过（围栏未闭合）报 entry-frontmatter——注入块 40 行预算不该为一条畸形 frontmatter 买单')
+})
+
+test('scanLayer：names 是 readdir 全量、entries 逐条过命名判据（非条目名进 names 不进 entries）', () => {
+	const { profile } = fixture('scan-names-vs-entries')
+	writeFileSync(join(profile, 'WRITING.md'), '# 纪律\n', 'utf8')
+	writeFileSync(join(profile, 'MEMORY.md'), '# 旧索引\n', 'utf8')
+	writeFileSync(join(profile, 'note.txt'), '不是条目\n', 'utf8')
+	writeFileSync(join(profile, 'ok.md'), entry('条目', '触发词'), 'utf8')
+	mkdirSync(join(profile, 'sub'), { recursive: true })
+	const scan = scanLayer(profile, { read: (path) => readFileSync(path, 'utf8') })
+	assert.deepEqual(scan.names, readdirSync(profile).sort(), 'names ≡ readdir 全量（含非条目名）：离线自检的条目清点与保留文件判定都问它这一份')
+	assert.ok(scan.entries.every((one) => isEntryName(one.name)), 'entries 里逐条都是条目名：命名判据只有一处，非条目名一个都不该混进来')
+	assert.deepEqual(scan.entries.map((one) => one.name), ['ok.md'], '四条非条目名各不进 entries')
 })
 
 test('composeMemory：空树返回空串（不注入）', () => {

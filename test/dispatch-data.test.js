@@ -195,11 +195,6 @@ test('阶段表专核：stage id／order 重名、复核阶段不在门别映射
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /门别不明.*复核阶段「形式审查」.*门一、门二/, '复核阶段反查不到配对列就出空组合，那一门复核等于没派')
 	})
 	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
-		lifecycle.stages[0].kind = '随便'
-	}), (dir) => {
-		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '非复核阶段的 kind 不参与门别推导（认不出的值不拦——它只决定出不出组合，出空是安全侧）')
-	})
-	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
 		lifecycle.stages[0].requires = 'subject'
 	}), (dir) => {
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json\.stages\[0\]\.requires 须是 string\[\]/)
@@ -257,14 +252,33 @@ test('阶段表专核：core 的 CONSTRUCTION_STAGE 落在词表内＝改 id 不
 	})
 })
 
-test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不同、或缺一张＝加载失败（两份页各写一次口径，改一处忘了另一处＝两个子代理对着两份 AGENTS 读同一批文件）', () => {
+test('阶段表专核：kind 落词表内且恰有一行 kind=提交＝加载失败（kind 决定 core 与台账各按哪种语义读这一行）', () => {
+	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
+		lifecycle.stages[0].kind = '随便'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /lifecycle\.json\.stages\[0\]\.kind 须是 enum\(方案,复核,施工,提交,复盘\)，实得 "随便"/, 'kind 落域外：复核门按它反查配对列、台账按它筛行，认不出的值落在哪一档都是静默的')
+	})
+	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
+		lifecycle.stages = lifecycle.stages.filter((row) => row.kind !== '提交')
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /kind='提交' 的行须恰有一行，实得 0 行/, '没有提交行：台账判「在飞」的那道边界消失，记到收尾的批次永远算在飞')
+	})
+	withDataDir((dir) => editData(dir, 'lifecycle.json', (lifecycle) => {
+		lifecycle.stages.push({ ...structuredClone(lifecycle.stages.find((row) => row.kind === '提交')), id: '提交流', order: 7 })
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /kind='提交' 的行须恰有一行，实得 2 行/, '两行提交：门禁推进与在飞集合按最晚那行算，提交这一步可以被推到没有下一行的 order')
+	})
+	assert.doesNotThrow(() => loadDispatchData(), '盘上真数据恰有一行 kind=提交（提交/复盘两行没有模板，故不进模板那几道互验，进的是这一道）')
+})
+
+test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不同、缺一张、或分工句写反写重＝加载失败（两份页各写一次口径，改一处忘了另一处＝两个子代理对着两份 AGENTS 读同一批文件）', () => {
 	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
 		templates['AGENTS 必读链·施工'] += '\n汇报格式＝只报现象＋证据'
 	}), (dir) => {
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*除「；只读禁写」外须整篇逐字相同.*第 3 行起/, '漂的是追加那几行：原用例按下标只比第 2 行，比不出这类漂移')
 	})
 	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
-		templates['AGENTS 必读链·施工'] = templates['AGENTS 必读链·施工'].replace('测试只增不删', '测试可改可删')
+		templates['AGENTS 必读链·施工'] = templates['AGENTS 必读链·施工'].replace('测试删减须显式申报', '测试可改可删')
 	}), (dir) => {
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /两页漂移.*第 2 行起/, '硬约束那句是两份同源的口径，各改一处就等于给两边两套约束')
 	})
@@ -272,6 +286,17 @@ test('两张必读链辅助页整篇同形：摘掉分工那一句后逐字不�
 		delete templates['AGENTS 必读链·施工']
 	}), (dir) => {
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /缺模板键「AGENTS 必读链·施工」/, '键白名单只查「多出来的键」，少写一张时那一路的 brief 静默少掉必读链与硬约束两句')
+	})
+	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
+		templates['AGENTS 必读链·复核'] = templates['AGENTS 必读链·复核'].split('；只读禁写').join('')
+		templates['AGENTS 必读链·施工'] += '；只读禁写'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /分工句走位.*须在「AGENTS 必读链·复核」里恰一次.*实得前者 0 次／后者 1 次/, '分工句写反：施工那一路拿到一条做不到的只读约束，而摘掉那句之后两页逐字相同，原先那道比对一声不响')
+	})
+	withDataDir((dir) => editData(dir, 'templates.json', (templates) => {
+		templates['AGENTS 必读链·复核'] += '；只读禁写'
+	}), (dir) => {
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /分工句走位.*实得前者 2 次/, '同一句写两次：比对摘的是全部出现处，写重的那处连同整行从比对里消失了')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '盘上真数据两页本来就只差「；只读禁写」那一句')
 })
@@ -391,6 +416,13 @@ test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字�
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '字符串数字两形都不是')
 	})
 	assert.doesNotThrow(() => loadDispatchData(), '真数据那条免派条目（stage＋diffLines/changedFiles 各收 {max}）加载得过')
+	// 配置侧 {max:N} 有意比输入侧（安全整数）宽一档：它量的是自配规则、只由本仓维护者改——
+	// 这条断言钉住这个不对称是有意的，后来者「统一两侧」时这里会红，先读 data.js 的 why 注释再动
+	withDataDir((dir) => editData(dir, 'pairing.json', (pairing) => {
+		entryWith(pairing, 'diffLines').when.diffLines = { max: 1e300 }
+	}), (dir) => {
+		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '配置侧收非负整数不设安全上限：1e300 也过——口径差是设计，不是漏洞')
+	})
 })
 
 test('模板键反向核：lifecycle 显式指了 templateKey 而 templates 没有这一键＝加载失败（拼错键名与忘了写模板长得一样）', () => {
@@ -436,7 +468,7 @@ test('谓词交集可达性：stage 与 batchType 各限一批而两者不相交
 test('模板键白名单：lifecycle 声明过的键放行（加阶段不改代码），没声明的键＝加载失败', () => {
 	withDataDir((dir) => {
 		editData(dir, 'lifecycle.json', (lifecycle) => lifecycle.stages.push({
-			id: '验收', order: 7, gate: false, kind: '验收', requires: ['subject', 'intent'], produces: ['验收结论'], uses: [],
+			id: '验收', order: 7, gate: false, kind: '方案', requires: ['subject', 'intent'], produces: ['验收结论'], uses: [],
 		}))
 		editData(dir, 'templates.json', (templates) => { templates.验收 = '验收结论：〔subject〕。' })
 	}, (dir) => {
