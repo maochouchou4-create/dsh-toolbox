@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assembleDispatch, computeCombo } from '../lib/dispatch/core.js'
-import { DEFAULT_DATA_DIR, SAFETY_CARRIER_IDS, loadDispatchData } from '../lib/dispatch/data.js'
+import { DATA_FILES, DEFAULT_DATA_DIR, SAFETY_CARRIER_IDS, ZERO_READER_LIST_FIELDS, loadDispatchData } from '../lib/dispatch/data.js'
 import { editData, withDataDir } from './helpers.js'
 
 const GATE_COLUMNS = ['gate1', 'gate2']
@@ -21,16 +21,35 @@ const SAFETY_TAIL = 'PII 与 token 进日志吗'
 const orphanId = (warning) => warning.match(/「(.+?)」/)[1]
 
 /**
+ * 形状规格里每份 JSON 的顶层列表字段（现读推导，不在本文件再抄第三份名单）：拿「该被计数的
+ * 维度有哪些」当事实，键名剥掉 `?` 前缀，另记它是不是可缺省。派生的是维度名，不是条数——条数
+ * 那一半在 COUNT_SNAPSHOT 里。
+ *
+ * 列表有两种写法都在规格里出现：元素规格的列表（`['string']`／`[{…}]`）与标记串收列表的
+ * （`'string[]'`／`'string[]|null'`），两种都算——只认一种时另一种维度悄悄不参与对账，而症状是
+ * 对账全绿。
+ *
+ * 只取顶层：快照数的是「五份 JSON 里各有多少条行/条」（形态、不做清单、配对行、节奏谓词、
+ * 阶段表、方案节、定稿自查条），行内那些数组（门的形态 id 列表、requires/uses 成员）是条目的
+ * 成员不是条目本身。行级零读者字段（lifecycle 的 produces/note、pairing 行上的 note）因此不在
+ * 推导范围内，它们的恒缺席由「零读者字段」那条用例逐行反钉。
+ */
+const isListSpec = (fieldSpec) => Array.isArray(fieldSpec) || (typeof fieldSpec === 'string' && fieldSpec.includes('[]'))
+const specListFields = () => DATA_FILES.flatMap((file) => (typeof file.shape === 'string' ? [] : Object.entries(file.shape)))
+	.filter(([, fieldSpec]) => isListSpec(fieldSpec))
+	.map(([key]) => ({ field: key.startsWith('?') ? key.slice(1) : key, optional: key.startsWith('?') }))
+
+/**
  * 五份数据的计数快照。改数据时只改这一处：断言拿它对着盘上现读的 JSON 核，数据变了就红在
  * 这里并指明该改哪儿，而不是让人再去翻散在各用例里的字面量。
  *
- * 八个键＝五份 JSON 里每一条「行/条」列表：形态、原则、不做清单、配对行、节奏谓词、阶段表、
- * 方案节、定稿自查条。少一维就有一份文件的改动不触发任何红——例如 checklist 增减一条，
- * 快照里没有那一格，改了它这条用例照样全绿，而它是方案任务书尾巴上的定稿自查清单。
+ * 七个键＝五份 JSON 里每一条「行/条」列表。键集不靠人手对着规格抄：它由 specListFields 现场
+ * 推导后与本快照对账（见下面那条用例），少一维就有一份文件的改动不触发任何红——例如 checklist
+ * 增减一条，快照里没有那一格，改了它这条用例照样全绿，而它是方案任务书尾巴上的定稿自查清单。
+ * 可缺省的那一维（零读者字段）刻意不在快照里，两侧各有一份名单对账，改一边忘了另一边即红。
  */
 const COUNT_SNAPSHOT = {
 	forms: 21,
-	principles: 6,
 	rejected: 3,
 	rows: 11,
 	rhythm: 11,
@@ -51,7 +70,7 @@ const COUNT_SNAPSHOT = {
  */
 const TEMPLATE_SNAPSHOT = {
 	门一: "\"〔形态角色句，forms.json 逐字带入〕。\\n本批意图一句话：〔intent〕。\\n对象：〔subject〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n横切判据：〔下文四条原文〕\\n〔AGENTS 必读链·复核〕\\n上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}，只报问题不附方案——低能力复核模型的「更优做法」会误导主会话裁决，根治法由主会话亲读原文后定；无法判断的域标「转派」而不是硬答。\\n派发时 provider/model 必须显式指派（先查 list_subagent_models 取真 model id；省略＝继承主会话路线且绕过授权清单）。\"",
-	施工: "\"方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。偏差在收尾汇报里说明。设计级冲突（改语义、动拍板项、批级顺势重设计机会、范围外发现）停下上报（conflict/escalations），不自行换方案。\\n对象（动工前先读对应批次节）：〔subject〕。\\n本批意图一句话：〔intent〕。\\n锚点（符号名，禁行号）：〔anchors〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n禁区：〔forbidden；空则本行省略〕。\\n自验封顶＝一条受影响单测：〔verifyCmd；空则本行省略〕。\\n自证：上报必须附自验证据——verifyCmd 实跑输出＋机器门（typecheck/lint/测试）全绿的命令与输出，证据不是陈述。\\n提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做——提交在门二判据过后由主会话执行。\\n〔AGENTS 必读链·施工〕\\n上报格式＝只报现象＋证据＋影响面事实；不附方案/选项/倾向——方案由主会话定。\\n裁决类上报必须等裁决再动工（不得「否则我按上述施工」）。\\n派发时 provider/model 必须显式指派。\"",
+	施工: "\"方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。偏差在收尾汇报里说明。设计级冲突（改语义、动拍板项、批级顺势重设计机会、范围外发现）停下上报（conflict/escalations），不自行换方案。\\n对象（动工前先读对应批次节）：〔subject〕。\\n本批意图一句话：〔intent〕。\\n锚点（符号名，禁行号）：〔anchors〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n禁区：〔forbidden；空则本行省略〕。\\n自验封顶＝一条受影响单测：〔verifyCmd；空则本行省略〕。\\n自证：上报必须附自验证据——verifyCmd 实跑输出＋机器门（typecheck/lint/测试）全绿的命令与输出，证据不是陈述。\\n提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做——提交在门二判据过后由主会话执行。\\n〔AGENTS 必读链·施工〕\\n上报格式＝只报现象＋证据＋影响面事实；不附方案/选项/倾向——方案由主会话定。\\n裁决类上报必须等裁决再动工（不得「否则我按上述施工」）。\"",
 	方案任务书: "\"按下列规范撰写实施方案（对象与意图注入在末尾）：\\n〔plan-spec 各节逐字〕\\n本批意图一句话：〔intent〕。\\n对象与落点：〔subject〕。\\n写完过定稿自查：〔plan-spec checklist 逐条〕。\"",
 }
 
@@ -63,7 +82,6 @@ const templateTextsOf = (templates) => Object.fromEntries(
 /** 加载结果那一端：把已加载的数据归成与快照同形的计数。 */
 const countsOf = (data) => ({
 	forms: data.forms.forms.length,
-	principles: data.forms.principles.length,
 	rejected: data.forms.rejected.length,
 	rows: data.pairing.rows.length,
 	rhythm: data.pairing.rhythm.length,
@@ -83,7 +101,6 @@ const countsOnDisk = (dir = DEFAULT_DATA_DIR) => {
 	const read = (file) => JSON.parse(readFileSync(join(dir, file), 'utf8'))
 	return {
 		forms: read('forms.json').forms.length,
-		principles: read('forms.json').principles.length,
 		rejected: read('forms.json').rejected.length,
 		rows: read('pairing.json').rows.length,
 		rhythm: read('pairing.json').rhythm.length,
@@ -100,6 +117,20 @@ test('盘上真数据加载即用：五份数据的计数与数据文件现读�
 	// 条目都该由这一条红着告诉人「快照该更新了」，而不是让人自己数一遍五个数字对不对
 	assert.deepEqual(countsOf(data), COUNT_SNAPSHOT, '测试内快照与盘上现读一致（改数据时改这一处即可）')
 	assert.deepEqual(countsOf(data), countsOnDisk(), '加载器交出的条数与盘上 JSON 一致：加载器自己少读一条照样红')
+	// 键集对账：快照的七个键与形状规格现读推导出的必填顶层列表字段逐个对上，而可缺省的那一维
+	// （零读者）逐个对 data.js 登记的名单——两侧各自手抄时症状是「多一维/少一维而两边全绿」，
+	// 因为漏掉的那一维在两边都「不存在」。规格里加一个列表字段而不进快照即红。
+	const specs = specListFields()
+	assert.deepEqual(
+		specs.filter((row) => !row.optional).map((row) => row.field).sort(),
+		Object.keys(COUNT_SNAPSHOT).sort(),
+		'快照键集 ≡ 形状规格里必填的顶层列表字段（现读推导，不手抄）：新增一个列表字段却没在快照里给它一维计数，红在这里',
+	)
+	assert.deepEqual(
+		specs.filter((row) => row.optional).map((row) => row.field).sort(),
+		[...ZERO_READER_LIST_FIELDS].sort(),
+		'形状规格里可缺省的顶层列表字段须逐个在零读者名单（data.js 的 ZERO_READER_LIST_FIELDS）里：那一维不进快照是因为没人读它，不是因为漏了一维',
+	)
 	assert.deepEqual(data.warnings.map(orphanId).sort(), ['设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦')
 	assert.ok(data.warnings.every((warning) => warning.includes('预期孤儿')), '孤儿告警带出该形态自己的 notes，说明它是刻意的')
 	// 加载出来的那份直接喂 core：这一条兜住「加载通过但核心函数吃不下」的缝
@@ -539,16 +570,32 @@ test('模板键反向核：lifecycle 显式指了 templateKey 而 templates 没�
 	assert.doesNotThrow(() => loadDispatchData(), '提交/复盘两行没有 templateKey 也没有模板：缺省行不进这项核（它们归各自的工具）')
 })
 
-test('零读者字段可缺省：principles 与全部 produces 删干净仍加载得过（人读价值留、必填负担去）', (t) => {
+test('零读者字段：形状仍可缺省（写回不炸装载、删净仍出稿），而真盘面上恒缺席（写回即红）', (t) => {
+	// 两层各有各的守法，合成一条断言就等于只守了一层：形状层（可缺省）归 data.js 的形状规格，
+	// 盘面层（恒缺席）归下面这段真盘面反向断言。前者只保证「写进去/删掉都装得上」，不保证没人写
 	withDataDir(t, (dir) => {
+		editData(dir, 'forms.json', (forms) => { forms.principles = ['临时写回去的一段'] })
+		editData(dir, 'lifecycle.json', (lifecycle) => { for (const row of lifecycle.stages) row.produces = ['临时写回'] })
+		editData(dir, 'pairing.json', (pairing) => { for (const row of pairing.rows) row.note = '临时写回' })
+		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '形状按可缺省登记：写回去也加载得过——改成必填只会逼每份数据补一段没人读的文案，少补一份直接整件工具缺席')
 		editData(dir, 'forms.json', (forms) => { delete forms.principles })
 		editData(dir, 'lifecycle.json', (lifecycle) => { for (const row of lifecycle.stages) delete row.produces })
 		editData(dir, 'pairing.json', (pairing) => { for (const row of pairing.rows) delete row.note })
 		const loaded = loadDispatchData({ dataDir: dir })
 		assert.equal(loaded.forms.principles, undefined)
-		assert.ok(loaded.lifecycle.stages.every((row) => row.produces === undefined))
+		assert.ok(loaded.lifecycle.stages.every((row) => row.produces === undefined && row.note === undefined))
+		assert.ok(loaded.pairing.rows.every((row) => row.note === undefined))
 		assert.ok(assembleDispatch(loaded, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }).briefs.length > 0, '缺省不是「加载得过但出不了稿」：出稿链照常走')
 	})
+
+	// 真盘面这一层钉的是「恒缺席」：本工具一个都不读这几类字段，写回盘上只会让人以为它在起作用。
+	// 这一段红的时候自问「它有消费者吗」，有就改 data.js 的零读者名单，没有就别写回去
+	const onDisk = loadDispatchData()
+	assert.equal(onDisk.forms.principles, undefined, 'forms.principles 恒缺席（本工具零读者）')
+	assert.ok(onDisk.lifecycle.stages.every((row) => row.produces === undefined), 'lifecycle 各行 produces 恒缺席')
+	assert.ok(onDisk.lifecycle.stages.every((row) => row.note === undefined), 'lifecycle 行级 note 恒缺席（同名的 rhythm note 是活输出面，不在零读者之列）')
+	assert.ok(onDisk.pairing.rows.every((row) => row.note === undefined), 'pairing 行级 note 恒缺席（formNotes 进 brief 正文，是活输出面）')
+	assert.ok(onDisk.pairing.rhythm.every((row) => row.note !== undefined), 'rhythm note 必在：它进 matchRhythm 的输出与不可达条目的报错文案')
 })
 
 test('谓词交集可达性：stage 与 batchType 各限一批而两者不相交＝加载失败（谓词值各自合法但永不命中）', (t) => {

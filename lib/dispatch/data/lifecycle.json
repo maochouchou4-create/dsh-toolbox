@@ -1,10 +1,10 @@
 {
   "stages": [
-    { "id": "方案", "order": 1, "gate": false, "kind": "方案", "templateKey": "方案任务书", "requires": ["subject", "intent"], "produces": ["方案文档"], "uses": ["plan-spec.json", "templates.json"], "note": "出方案调 dispatch(阶段=方案)" },
-    { "id": "门一", "order": 2, "gate": true, "kind": "复核", "requires": ["batchType", "subject", "intent"], "produces": ["findings"], "uses": ["templates.json"], "note": "方案定稿证伪复核；前置＝方案文档在盘" },
-    { "id": "施工", "order": 3, "gate": false, "kind": "施工", "requires": ["batchType", "subject", "intent", "anchors"], "produces": ["diff+自证"], "uses": ["templates.json"], "note": "机器门前置；前置＝方案文档在盘" },
-    { "id": "门二", "order": 4, "gate": true, "kind": "复核", "templateKey": "门一", "requires": ["batchType", "subject", "intent"], "produces": ["findings"], "uses": ["pairing.json", "templates.json"], "note": "按批型配对多路；修复批默认二轮；对象＝净 diff" },
-    { "id": "提交", "order": 5, "gate": true, "kind": "提交", "requires": [], "produces": ["commit"], "uses": ["git-commit skill"], "note": "dispatch_batch 上线起：提交前 status 查门；前置＝门二通过" },
-    { "id": "复盘", "order": 6, "gate": false, "kind": "复盘", "requires": [], "produces": ["修订建议"], "uses": ["dispatch_lessons"], "point": { "minBatches": 5, "minBatchTypes": 3, "upperBatches": 8 }, "note": "dispatch_lessons 上线起；点位判据单源＝本行 point 字段（工具描述与 README 里的数字是快照，改阈值改这里）" }
+    { "id": "方案", "order": 1, "gate": false, "kind": "方案", "templateKey": "方案任务书", "requires": ["subject", "intent"], "uses": ["plan-spec.json", "templates.json"] },
+    { "id": "门一", "order": 2, "gate": true, "kind": "复核", "requires": ["batchType", "subject", "intent"], "uses": ["templates.json"] },
+    { "id": "施工", "order": 3, "gate": false, "kind": "施工", "requires": ["batchType", "subject", "intent", "anchors"], "uses": ["templates.json"] },
+    { "id": "门二", "order": 4, "gate": true, "kind": "复核", "templateKey": "门一", "requires": ["batchType", "subject", "intent"], "uses": ["pairing.json", "templates.json"] },
+    { "id": "提交", "order": 5, "gate": true, "kind": "提交", "requires": [], "uses": ["git-commit skill"] },
+    { "id": "复盘", "order": 6, "gate": false, "kind": "复盘", "requires": [], "uses": ["dispatch_lessons"], "point": { "minBatches": 5, "minBatchTypes": 3, "upperBatches": 8 } }
   ]
 }

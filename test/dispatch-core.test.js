@@ -53,6 +53,9 @@ const unknownStageError = (stage) => new RegExp(
 	`未知 stage「${stage}」.*能出稿的阶段＝${dispatchStages(data).join('、')}；提交/复盘由 dispatch_batch/dispatch_lessons 服务`,
 )
 
+/** 子串出现次数：「各恰一次」这类不变量按「有几条以它开头」数不住，只能数出现次数。 */
+const occurrencesOf = (text, needle) => text.split(needle).length - 1
+
 /** 一份过得了校验的施工调用，省得每条用例重复必填项。 */
 const construction = (overrides = {}) => ({
 	stage: '施工',
@@ -177,6 +180,13 @@ test('门一 brief：固定段一条不缺（角色句／必读链／横切判�
 	}
 	assert.ok(!brief.text.includes('你是你是'), '模板首行不叠「你是」——role 句自带该前缀')
 	assert.ok(!brief.text.includes('〔'), '占位须全部替换，不留半截模板')
+	// 门一模板那格占位名是「〔下文四条原文〕」——恒四条是它许下的承诺，而占位名本身不构成保证：
+	// 横切判据改成两条或五条，brief 照样出稿，只是复核者少拿或少拿了那几把尺子。下面逐条点名，
+	// 各恰一次（多写一遍＝同一把尺子数两遍）
+	for (const head of ['- 阈值标定', '- 断言判别力', '- 部分失败显式', '- 规模关卡']) {
+		assert.equal(occurrencesOf(brief.text, head), 1, `门一 brief 的横切判据「${head}」须恰一次`)
+	}
+	assert.ok(brief.text.includes('方案/施工里每个魔法数'), '第一条点名的范围是方案与施工两处（写回「方案里」＝施工那一半的魔法数没人追，这里红）')
 })
 
 test('门二的模板键落在门一那份（两门正文合一，模板表里没有「门二」这一键）；带 extras 的形态把三件套只附在自己那路', () => {
@@ -250,6 +260,10 @@ test('施工 brief：执行纪律内联在首段、对象行在位，自证与�
 	assert.ok(!plain.text.includes('禁区：'), '禁区空则本行省略')
 	assert.ok(!plain.text.includes('自验封顶'), '自验命令空则本行省略')
 	assert.ok(!plain.text.includes('根因分类'), '非修复批不加修复增量')
+	// provider/model 显式指派提醒是分工不对称的一条：门一/门二那一路的读者是派发方主会话，提醒放在
+	// 那里才有人接；施工那一路的读者是施工子代理，它不派发——把同一句塞进施工 brief 等于给一个不
+	// 派发的读者一条做不到的约束（与「只读禁写」走位是同一类错，只是反过来）
+	assert.ok(!plain.text.includes('派发时 provider/model'), '施工 brief 不带 provider/model 指派提醒：那一路不派发，提醒只走门一/门二那一半')
 
 	const [fix] = assembleBrief(data, construction({
 		batchType: '修复批',
@@ -304,15 +318,20 @@ test('施工阶段：combo 出空（复核组合是复核阶段的产物，门�
 	assert.ok(output.rhythm.some((note) => note.includes('机器门前置')), 'rhythm 照常输出〔机器门句〕')
 })
 
-test('assembleDispatch：总结构齐、裁决五条随所有 stage 返回、行号锚点机器告警', () => {
+test('assembleDispatch：总结构齐、裁决五条逐条在位、自检抬头＋四条依序、行号锚点机器告警', () => {
 	const output = assembleDispatch(data, construction({ anchors: ['lib/dispatch/core.js:42', 'computeCombo'] }))
 	assert.deepEqual(Object.keys(output), ['combo', 'briefs', 'rhythm', 'checklist', 'rejected', 'warnings', 'adjudication'])
-	assert.equal(output.adjudication.length, 5)
-	assert.ok(output.adjudication[0].includes('findings 无 evidence'))
-	assert.ok(output.adjudication.some((line) => line.includes('最大化口径')))
+	assert.equal(output.adjudication.length, 5, '裁决固定段恰五条：少一条即少一道判决口径，多一条即多一句没人过的话')
+	for (const head of ['- findings 无 evidence', '- 阻断级/拍板级', '- 严重度三档', '- 双报重叠', '- 「门一答过」']) {
+		assert.equal(output.adjudication.filter((line) => line.startsWith(head)).length, 1, `裁决段「${head}」须恰一条（逐条计数，不按整体逐字比）`)
+	}
+	const overlap = output.adjudication.find((line) => line.startsWith('- 双报重叠'))
+	assert.ok(overlap.includes('判重口径'), '重叠那条带判重口径：双报先去重再裁决是主会话的动作，定义跟着消费点走')
+	assert.ok(overlap.includes('三判决逐条过、不引入互劝'), '裁决的真实消费点是主会话逐条三判决，不是复核路之间互相说服——那半句钉住它，删了就变成一段不知给谁看的规则')
+	assert.ok(output.adjudication.find((line) => line.startsWith('- 「门一答过」')).includes('最大化口径'), '门一答过那条点名最大化口径：精简 brief 不等于减代理数')
 	assert.deepEqual(output.rejected, data.forms.rejected)
 	assert.equal(output.checklist.length, 5, '自检抬头＋四条逐条')
-	assert.ok(output.checklist.some((line) => line.startsWith('①')))
+	assert.deepEqual(output.checklist.slice(1).map((line) => line.slice(0, 1)), ['①', '②', '③', '④'], '四条依序（倒序或漏一条都红：发之前逐条过，顺序就是过的那一遍')
 	assert.equal(output.warnings.length, 1)
 	assert.ok(output.warnings[0].includes('lib/dispatch/core.js:42'), '行号锚点逐条点名')
 	assert.equal(assembleDispatch(data, construction()).warnings.length, 0, '符号名锚点不告警')

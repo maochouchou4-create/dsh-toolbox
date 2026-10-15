@@ -41,8 +41,7 @@
       ],
       "formNotes": {
         "连带面": "按双仓口径执行——契约两侧的仓都要 grep，不只 grep 改动侧"
-      },
-      "note": "跨端契约改动＝两侧仓同时核"
+      }
     },
     {
       "batchType": "配置/迁移批",
@@ -71,8 +70,7 @@
         "锚点核对",
         "第一性原理"
       ],
-      "gate2": null,
-      "note": "gate2 按 baseBatchType（落点批型）主行取"
+      "gate2": null
     },
     {
       "batchType": "涉鉴权/上传/输入",
@@ -101,8 +99,7 @@
       "needsBase": true,
       "needsRootCause": true,
       "gate1": null,
-      "gate2": null,
-      "note": "按 baseBatchType（原批型）主行组合＋默认二轮复核"
+      "gate2": null
     },
     {
       "batchType": "直做批",
@@ -111,8 +108,7 @@
       "gate2": [
         "设计七维·终审",
         "连带面"
-      ],
-      "note": "无方案直做批＝门二双路起步，最大化口径可加挂；不带 baseBatchType"
+      ]
     },
     {
       "batchType": "大工程方案",
@@ -120,8 +116,7 @@
       "gate1": [
         "施工走查"
       ],
-      "gate2": null,
-      "note": "≥3 批或含跨批依赖的方案走查加挂——扮演施工者沙盘推演，把断头引用/时序倒置/落点缺失/语义未钉/调用面踩坑在施工前抓出"
+      "gate2": null
     }
   ],
   "rhythm": [
