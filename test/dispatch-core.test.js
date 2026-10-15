@@ -494,3 +494,13 @@ test('P17 重入幂等：同一份 params 连续两次装配逐字一致（没�
 	assert.deepEqual(computeCombo(data, params), computeCombo(data, params))
 	assert.deepEqual(matchRhythm(data, params), matchRhythm(data, params))
 })
+
+test('句号归一：占位值自带句号与模板尾句号叠加时压回一个（装配噪声不让调用方买单）', () => {
+	const params = { stage: '门一', batchType: '纯后端管线批', subject: '净 diff 生成命令。', intent: '验证意图一句话。' }
+	const { briefs } = assembleDispatch(data, params)
+	assert.ok(briefs.length > 0)
+	for (const brief of briefs) {
+		assert.ok(!brief.text.includes('。。'), `brief 出现连续句号：${brief.form}`)
+		assert.ok(brief.text.includes('验证意图一句话。'), '单句号保留（归一不能把正常句号吃掉）')
+	}
+})
