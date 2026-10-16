@@ -49,10 +49,10 @@ const specListFields = () => DATA_FILES.flatMap((file) => (typeof file.shape ===
  * 可缺省的那一维（零读者字段）刻意不在快照里，两侧各有一份名单对账，改一边忘了另一边即红。
  */
 const COUNT_SNAPSHOT = {
-	forms: 21,
+	forms: 22,
 	rejected: 3,
 	rows: 11,
-	rhythm: 11,
+	rhythm: 12,
 	stages: 6,
 	blocks: 13,
 	checklist: 11,
@@ -69,7 +69,7 @@ const COUNT_SNAPSHOT = {
  * 改了规则面而没打算改这里」或「改了而忘了说」。
  */
 const TEMPLATE_SNAPSHOT = {
-	门一: "\"〔形态角色句，forms.json 逐字带入〕。\\n本批意图一句话：〔intent〕。\\n对象：〔subject〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n横切判据：〔下文四条原文〕\\n〔AGENTS 必读链·复核〕\\n上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}，只报问题不附方案——低能力复核模型的「更优做法」会误导主会话裁决，根治法由主会话亲读原文后定；无法判断的域标「转派」而不是硬答。\\n派发时 provider/model 必须显式指派（先查 list_subagent_models 取真 model id；省略＝继承主会话路线且绕过授权清单）。\"",
+	门一: "\"〔形态角色句，forms.json 逐字带入〕。\\n本批意图一句话：〔intent〕。\\n对象：〔subject〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n横切判据：〔下文四条原文〕\\n若本趟为前提推翻后的重派：重点核重写是否真正回应了前提问题，不在已裁决项上重开。\\n〔AGENTS 必读链·复核〕\\n上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}，只报问题不附方案——低能力复核模型的「更优做法」会误导主会话裁决，根治法由主会话亲读原文后定；无法判断的域标「转派」而不是硬答。\\n派发时 provider/model 必须显式指派（先查 list_subagent_models 取真 model id；省略＝继承主会话路线且绕过授权清单）。\"",
 	施工: "\"方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。偏差在收尾汇报里说明。设计级冲突（改语义、动拍板项、批级顺势重设计机会、范围外发现）停下上报（conflict/escalations），不自行换方案。\\n对象（动工前先读对应批次节）：〔subject〕。\\n本批意图一句话：〔intent〕。\\n锚点（符号名，禁行号）：〔anchors〕。\\n拍板清单（不得重开）：〔decisions 逐条；空则本行整体省略〕。\\n禁区：〔forbidden；空则本行省略〕。\\n自验封顶＝一条受影响单测：〔verifyCmd；空则本行省略〕。\\n自证：上报必须附自验证据——verifyCmd 实跑输出＋机器门（typecheck/lint/测试）全绿的命令与输出，证据不是陈述。\\n提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做——提交在门二判据过后由主会话执行。\\n〔AGENTS 必读链·施工〕\\n上报格式＝只报现象＋证据＋影响面事实；不附方案/选项/倾向——方案由主会话定。\\n裁决类上报必须等裁决再动工（不得「否则我按上述施工」）。\"",
 	方案任务书: "\"按下列规范撰写实施方案（对象与意图注入在末尾）：\\n〔plan-spec 各节逐字〕\\n本批意图一句话：〔intent〕。\\n对象与落点：〔subject〕。\\n写完过定稿自查：〔plan-spec checklist 逐条〕。\"",
 }
@@ -135,7 +135,7 @@ test('盘上真数据加载即用：五份数据的计数与数据文件现读�
 	assert.ok(data.warnings.every((warning) => warning.includes('预期孤儿')), '孤儿告警带出该形态自己的 notes，说明它是刻意的')
 	// 加载出来的那份直接喂 core：这一条兜住「加载通过但核心函数吃不下」的缝
 	const output = assembleDispatch(data, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' })
-	assert.equal(output.briefs.length, 5)
+	assert.equal(output.briefs.length, 6)
 })
 
 test('三段阶段模板的正文与快照逐字一致（改模板＝改规则，红在这里指明该改快照）', () => {
@@ -712,4 +712,41 @@ test('现读的深等价：两次加载内容逐字一致，且首份返回值�
 		assert.equal(loadDispatchData({ dataDir: dir }).forms.forms[0].catches, second.forms.forms[0].catches, '上一份返回值被深改，下一次现读不受污染')
 		assert.ok(!loadDispatchData({ dataDir: dir }).pairing.rows[0].gate1.includes('凭空加的形态'))
 	})
+})
+
+test('批1 数据迁移：砍刀/砍刀·diff 进对齐的主行门列、用户可见 gate2 终值、addon 行两门逐字不动、砍刀·diff 形态与门一重派节奏条在位（改前值硬编码，防回退与误扩）', () => {
+	const data = loadDispatchData()
+	const rowOf = (batchType) => data.pairing.rows.find((row) => row.batchType === batchType)
+	// 四主行 gate1 终值逐字钉住（含砍刀；乱序/多挂/漏一项都红——includes 只守成员守不住顺序与长度）
+	assert.deepEqual(rowOf('纯后端管线批').gate1, ['锚点核对', '事实校准', '工程复用', '砍刀'])
+	assert.deepEqual(rowOf('跨端契约批').gate1, ['锚点核对', '事实校准', '砍刀'])
+	assert.deepEqual(rowOf('配置/迁移批').gate1, ['锚点核对', '砍刀'])
+	assert.deepEqual(rowOf('新功能·形态未定').gate1, ['锚点核对', '第一性原理', '砍刀'])
+	// 六主行 gate2 终值逐字钉住（各含砍刀·diff；用户可见终值另列）
+	assert.deepEqual(rowOf('纯后端管线批').gate2, ['设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff'])
+	assert.deepEqual(rowOf('跨端契约批').gate2, ['契约一致性', '连带面', '砍刀·diff'])
+	assert.deepEqual(rowOf('配置/迁移批').gate2, ['迁移执行核对', '连带面', '蜕变关系问', '砍刀·diff'])
+	assert.deepEqual(rowOf('机械搬运/小修').gate2, ['连带面', '金主比对', '砍刀·diff'])
+	assert.deepEqual(rowOf('直做批').gate2, ['设计七维·终审', '连带面', '砍刀·diff'])
+	// 用户可见功能批 gate2 终值（蜕变关系问插在「GUI 目检」后、砍刀·diff 收尾）
+	assert.deepEqual(rowOf('用户可见功能批').gate2, ['设计七维·终审', '连带面', 'GUI 目检', '蜕变关系问', '砍刀·diff'])
+	// addon 行两门与批1 改前逐字相等（砍刀/砍刀·diff 不进 addon 行是钉死口径）
+	assert.deepEqual(rowOf('涉鉴权/上传/输入').gate1, ['安全清单行'])
+	assert.deepEqual(rowOf('涉鉴权/上传/输入').gate2, ['安全专项'])
+	assert.deepEqual(rowOf('大数值/通知批').gate1, ['数字口径问'])
+	assert.deepEqual(rowOf('大数值/通知批').gate2, ['设计七维·终审', '连带面'])
+	assert.deepEqual(rowOf('大工程方案').gate1, ['施工走查'])
+	assert.equal(rowOf('大工程方案').gate2, null)
+	// 新形态四字段齐全（catches 缺了加载器直接抛，这里钉它真的在且门别正确）
+	const machete = data.forms.forms.find((form) => form.id === '砍刀·diff')
+	assert.ok(machete, 'forms 含 id=砍刀·diff')
+	assert.equal(machete.gate, '门二')
+	assert.ok(machete.catches.length > 0, '砍刀·diff 的 catches 非空')
+	// 门一重派节奏条：when.stage 深等于 ["门一"]、note 为非空动作句——按「整套重派门一」点新条，
+	// 不按「stage=门一」泛找：旧的大工程走查条本就命中那个泛判据，泛找在改前也恒绿，等于没断言
+	const reentries = data.pairing.rhythm.filter((entry) => Array.isArray(entry.when.stage) && entry.when.stage.length === 1 && entry.when.stage[0] === '门一')
+	assert.ok(
+		reentries.some((entry) => entry.note.includes('整套重派门一')),
+		'rhythm 含 when.stage=["门一"] 的重派动作条',
+	)
 })

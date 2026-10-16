@@ -124,11 +124,11 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 现读面五份：
 
-- `forms.json`：21 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套）
+- `forms.json`：22 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套）
   与 `rejected`（不做清单）。形态 id 全集在这里，别的文件按它校验。`role` 逐字落在那一路 brief
   的首句——子代理按这条念法干活，消融实证里去掉角色设定，复核质量掉得最狠。
 - `pairing.json`：`rows` 11 条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
-  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 11 条节奏谓词：
+  特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 12 条节奏谓词：
   `when` 的每个字段都要命中才输出该 `note`，取值两形，形态按字段类别守门——枚举字段
   （`batchType`/`stage`/`provider`）收字符串数组（本次参数值 ∈ 数组），规模字段
   （`diffLines`/`changedFiles`）收 `{max:N}`（本次参数 ≤ N，`diffLines=5` 那种边界含在内，
@@ -321,7 +321,7 @@ lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码）�
 lib/memory-root.js       记忆根默认值与归一、工作区路径→桶名、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与桶名」，谁要谁向下指
 lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（21 形态／11 配对行＋11 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```

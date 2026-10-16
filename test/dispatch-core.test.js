@@ -76,9 +76,9 @@ const planning = (overrides = {}) => ({
 
 test('computeCombo：主行命中取该门组合，每形态一句理由（专抓什么即理由）', () => {
 	assert.deepEqual(formIds(computeCombo(data, { batchType: '纯后端管线批', stage: '门二' })), [
-		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问',
+		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff',
 	])
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '纯后端管线批', stage: '门一' })), ['锚点核对', '事实校准', '工程复用'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '纯后端管线批', stage: '门一' })), ['锚点核对', '事实校准', '工程复用', '砍刀'])
 	for (const entry of computeCombo(data, { batchType: '纯后端管线批', stage: '门二' })) {
 		assert.equal(entry.reason, data.forms.forms.find((form) => form.id === entry.form).catches, `${entry.form} 的理由取自 forms 的 catches`)
 		assert.notEqual(entry.reason, '')
@@ -88,25 +88,25 @@ test('computeCombo：主行命中取该门组合，每形态一句理由（专�
 test('computeCombo：加挂行并集叠加，与主行重复的形态只出一次', () => {
 	const combo = computeCombo(data, { batchType: '纯后端管线批', stage: '门二', addons: ['涉鉴权/上传/输入', '大数值/通知批'] })
 	assert.deepEqual(formIds(combo), [
-		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '安全专项',
+		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff', '安全专项',
 	], '大数值/通知批的终审与连带面与主行重复，去重后不出第二份')
 	const gate1 = computeCombo(data, { batchType: '纯后端管线批', stage: '门一', addons: ['涉鉴权/上传/输入', '大数值/通知批'] })
-	assert.deepEqual(formIds(gate1), ['锚点核对', '事实校准', '工程复用', '安全清单行', '数字口径问'])
+	assert.deepEqual(formIds(gate1), ['锚点核对', '事实校准', '工程复用', '砍刀', '安全清单行', '数字口径问'])
 })
 
 test('computeCombo：修复批按原批型主行取组合，两个门都缺 baseBatchType 即拒绝', () => {
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '修复批', stage: '门二', baseBatchType: '配置/迁移批' })), ['迁移执行核对', '连带面', '蜕变关系问'])
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '修复批', stage: '门一', baseBatchType: '纯后端管线批' })), ['锚点核对', '事实校准', '工程复用'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '修复批', stage: '门二', baseBatchType: '配置/迁移批' })), ['迁移执行核对', '连带面', '蜕变关系问', '砍刀·diff'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '修复批', stage: '门一', baseBatchType: '纯后端管线批' })), ['锚点核对', '事实校准', '工程复用', '砍刀'])
 	assert.throws(() => computeCombo(data, { batchType: '修复批', stage: '门二' }), /baseBatchType/)
 	assert.throws(() => computeCombo(data, { batchType: '修复批', stage: '门一' }), /baseBatchType/)
 	assert.throws(() => computeCombo(data, { batchType: '修复批', stage: '门二', baseBatchType: '不存在的批型' }), /不是配对表的行名/)
 })
 
 test('computeCombo：新功能·形态未定的门一带自带形态，门二才要落点批型', () => {
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一' })), ['锚点核对', '第一性原理'])
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一', baseBatchType: '用户可见功能批' })), ['锚点核对', '第一性原理'], '门一自带形态优先于 base 行')
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一' })), ['锚点核对', '第一性原理', '砍刀'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一', baseBatchType: '用户可见功能批' })), ['锚点核对', '第一性原理', '砍刀'], '门一自带形态优先于 base 行')
 	assert.throws(() => computeCombo(data, { batchType: '新功能·形态未定', stage: '门二' }), /baseBatchType/)
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门二', baseBatchType: '用户可见功能批' })), ['设计七维·终审', '连带面', 'GUI 目检'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门二', baseBatchType: '用户可见功能批' })), ['设计七维·终审', '连带面', 'GUI 目检', '蜕变关系问', '砍刀·diff'])
 })
 
 test('批型条件必填来自数据不在代码（改配对行的 needsBase／needsRootCause 即改行为，文件不动）', () => {
@@ -130,7 +130,7 @@ test('批型条件必填来自数据不在代码（改配对行的 needsBase／n
 })
 
 test('computeCombo：直做批门二固定双路起步，不带 baseBatchType；门一不成立即拒绝', () => {
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '直做批', stage: '门二' })), ['设计七维·终审', '连带面'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '直做批', stage: '门二' })), ['设计七维·终审', '连带面', '砍刀·diff'])
 	assert.throws(() => computeCombo(data, { batchType: '直做批', stage: '门一' }), /不走门一/)
 })
 
@@ -318,11 +318,11 @@ test('施工阶段：combo 出空（复核组合是复核阶段的产物，门�
 	assert.ok(output.rhythm.some((note) => note.includes('机器门前置')), 'rhythm 照常输出〔机器门句〕')
 })
 
-test('assembleDispatch：总结构齐、裁决五条逐条在位、自检抬头＋四条依序、行号锚点机器告警', () => {
+test('assembleDispatch：总结构齐、裁决六条逐条在位、自检抬头＋四条依序、行号锚点机器告警', () => {
 	const output = assembleDispatch(data, construction({ anchors: ['lib/dispatch/core.js:42', 'computeCombo'] }))
 	assert.deepEqual(Object.keys(output), ['combo', 'briefs', 'rhythm', 'checklist', 'rejected', 'warnings', 'adjudication'])
-	assert.equal(output.adjudication.length, 5, '裁决固定段恰五条：少一条即少一道判决口径，多一条即多一句没人过的话')
-	for (const head of ['- findings 无 evidence', '- 阻断级/拍板级', '- 严重度三档', '- 双报重叠', '- 「门一答过」']) {
+	assert.equal(output.adjudication.length, 6, '裁决固定段恰六条：少一条即少一道判决口径，多一条即多一句没人过的话')
+	for (const head of ['- findings 无 evidence', '- 阻断级/拍板级', '- 严重度三档', '- 双报重叠', '- 「门一答过」', '- 前提推翻类']) {
 		assert.equal(output.adjudication.filter((line) => line.startsWith(head)).length, 1, `裁决段「${head}」须恰一条（逐条计数，不按整体逐字比）`)
 	}
 	const overlap = output.adjudication.find((line) => line.startsWith('- 双报重叠'))
@@ -337,8 +337,8 @@ test('assembleDispatch：总结构齐、裁决五条逐条在位、自检抬头�
 	assert.equal(assembleDispatch(data, construction()).warnings.length, 0, '符号名锚点不告警')
 
 	const review = assembleDispatch(data, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' })
-	assert.equal(review.adjudication.length, 5, '裁决段不随阶段变')
-	assert.equal(review.briefs.length, 5, '门二逐形态一路')
+	assert.equal(review.adjudication.length, 6, '裁决段不随阶段变')
+	assert.equal(review.briefs.length, 6, '门二逐形态一路')
 	assert.deepEqual(review.warnings, [], '门二无 anchors 参数，不产出锚点告警')
 	assert.throws(() => assembleDispatch(data, { stage: '施工', batchType: '纯后端管线批', subject: 'x' }), /intent、anchors/)
 })
@@ -369,7 +369,7 @@ test('B1：施工不消费 baseBatchType（传了即报错并点名哪些阶段�
 		assert.throws(() => validateParams(data, { stage, batchType: '修复批', subject: 'x', intent: 'y' }), /baseBatchType/, `${stage} 修复批仍按 needsBase 要原批型`)
 		assert.doesNotThrow(() => validateParams(data, { stage, batchType: '修复批', subject: 'x', intent: 'y', baseBatchType: '纯后端管线批' }))
 	}
-	assert.deepEqual(formIds(computeCombo(data, { stage: '门一', batchType: '新功能·形态未定', subject: 'x', intent: 'y' })), ['锚点核对', '第一性原理'], '门一自带形态，仍不落回 base 行')
+	assert.deepEqual(formIds(computeCombo(data, { stage: '门一', batchType: '新功能·形态未定', subject: 'x', intent: 'y' })), ['锚点核对', '第一性原理', '砍刀'], '门一自带形态，仍不落回 base 行')
 })
 
 test('B3：行上的 formNotes 限定只附在命中那个形态的那路（跨端契约批门二的连带面路带双仓口径，别路不带）', () => {
@@ -446,7 +446,7 @@ test('MU13 加挂只增路不改路：加挂后主行已生成那路 brief 逐�
 	}
 })
 
-test('P6 role 归属：全部 21 个形态都扫一遍——该形态那路 brief 以本形态 role 句起头', () => {
+test('P6 role 归属：全部 22 个形态都扫一遍——该形态那路 brief 以本形态 role 句起头', () => {
 	// 两个预期孤儿（设计七维、证伪复核）配对表没有行引用，借一条收容行把它们扫进来，
 	// 否则「角色句取成别的形态」这件事在它们身上永远无人验
 	const swept = structuredClone(data)
@@ -475,7 +475,7 @@ test('P6 role 归属：全部 21 个形态都扫一遍——该形态那路 brie
 			}
 		}
 	}
-	assert.equal(seen.size, 21, `全部 21 个形态都被扫到，实扫 ${seen.size}：${[...swept.forms.forms.map((form) => form.id)].filter((id) => !seen.has(id)).join('、')}`)
+	assert.equal(seen.size, 22, `全部 22 个形态都被扫到，实扫 ${seen.size}：${[...swept.forms.forms.map((form) => form.id)].filter((id) => !seen.has(id)).join('、')}`)
 })
 
 test('P7 占位残留：主行×三个判批型阶段全组合扫，加方案阶段单扫一次；渲染结果里不留占位、未替换值与 null 拼串', () => {
@@ -588,7 +588,10 @@ test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数
 	assert.ok(hits({ stage: '门二', batchType: '纯后端管线批' }), '两个在字段都命中才出')
 	assert.ok(!hits({ stage: '门一', batchType: '纯后端管线批' }), 'stage 不合即不出')
 	assert.ok(!hits({ stage: '门二', batchType: '用户可见功能批' }), 'batchType 不合即不出')
-	assert.ok(matchRhythm(data, { stage: '门一', batchType: '纯后端管线批' }).every((note) => note.includes('施工走查')), '真数据里门一纯后端管线批只命中走查通用提示（放宽基线也随之更新）')
+	const gate1Hits = matchRhythm(data, { stage: '门一', batchType: '纯后端管线批' })
+	assert.equal(gate1Hits.length, 2, '门一纯后端命中恰两条：走查通用提示＋A2 重派条——加条/删条/收窄 when 都翻红（数值断言，不靠无关用例碰撞）')
+	assert.ok(gate1Hits.some((note) => note.includes('施工走查')), '真数据里门一纯后端管线批命中走查通用提示')
+	assert.ok(gate1Hits.some((note) => note.includes('整套重派门一')), 'A2 重派条对门一通配命中（batchType 缺省＝全批型）')
 })
 
 test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚举混用、0 也算给了、只对门二出', () => {
