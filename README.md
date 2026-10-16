@@ -11,13 +11,15 @@
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
-- **dispatch**：派发装配器。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的
-  brief（角色句＋必读链＋横切判据＋上报格式）、节奏提示与自检/裁决固定段；阶段＝方案时
-  出方案任务书（十三节规范骨架＋定稿自查）。两个可选规模参数 `diffLines`/`changedFiles`
-  喂节奏谓词：小规模时额外出那条「建议直修不派复核」的提示（提示层，不阻断出稿）。
-  规则面是数据不是代码，见下节。
+- **dispatch_plan / dispatch_review / dispatch_build / dispatch_verify**：派发装配器一拆四，
+  各服务一个固定阶段（方案／门一／施工／门二；老 `dispatch` 的 `stage` 参数随拆分退役，选对
+  工具即可）。按批型查出该派哪些复核形态、给每路拼出可直接粘贴的 brief（角色句＋必读链＋
+  横切判据＋上报格式）、节奏提示与自检/裁决固定段；`dispatch_plan` 出方案任务书（十三节规范
+  骨架＋定稿自查），`dispatch_build` 收锚点与根因分类。两个可选规模参数
+  `diffLines`/`changedFiles` 喂节奏谓词：小规模时额外出那条「建议直修不派复核」的提示
+  （提示层，不阻断出稿）。规则面是数据不是代码，见下节。
 - **dispatch_batch**：批次台账。按 `start`/`advance`/`status`/`list` 把一个批次的
-  一生记成结构化事件，状态从事件现推；`dispatch(batch=…)` 从台账回填该批的批型、意图、对象与
+  一生记成结构化事件，状态从事件现推；装配四件传 `batch=` 即从台账回填该批的批型、意图、对象与
   拍板清单（只填这一趟真正消费的那几格，显式传参优先、与台账说岔了即报错）。见下节。
 - **dispatch_lessons**：复盘辅助。读台账全量事件，按点位（攒 5–8 批覆盖 ≥3 批型）判断
   是不是到了复盘点（这三档阈值的单源是 `lifecycle.json` 复盘行的 `point` 字段，这里是它的
@@ -123,16 +125,17 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 | 面 | 载体 | 什么时候被读 | 改它要不要重启 |
 |---|---|---|---|
-| 常驻召回面 | 三个工具的 `description`（`dispatch`/`dispatch_batch`/`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
+| 常驻召回面 | 六个工具的 `description`（装配四件＋`dispatch_batch`/`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
 | 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效（例外：参数面的 `enum` 是注册期快照，新增合法值要重启才进词表，见下节） |
-| 追加面 | 台账 `profile-memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、`dispatch`/`dispatch_lessons` 读 | 不要 |
+| 追加面 | 台账 `profile-memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、装配四件与 `dispatch_lessons` 读 | 不要 |
 
 现读面五份：
 
 - `forms.json`：22 形态（`id`/`gate`/`catches`/`role`，部分形态带 `extras` 三件套）
   与 `rejected`（不做清单）。形态 id 全集在这里，别的文件按它校验。`role` 逐字落在那一路 brief
   的首句——子代理按这条念法干活，消融实证里去掉角色设定，复核质量掉得最狠。
-- `pairing.json`：`rows` 11 条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
+- `pairing.json`：批型→各门形态组合的对照＝本文件各行（batchType 行的 `gate1`/`gate2` 列即该批型
+  两道门的组合）——装配四件描述里那句「对照表唯一出处＝本节」落的就是这里。`rows` 11 条批型配对行（主行／`kind:addon` 加挂行／`kind:special`
   特殊行，后者用 `needsBase`/`needsRootCause` 表达批型条件必填）＋`rhythm` 12 条节奏谓词：
   `when` 的每个字段都要命中才输出该 `note`，取值两形，形态按字段类别守门——枚举字段
   （`batchType`/`stage`/`provider`）收字符串数组（本次参数值 ∈ 数组），规模字段
@@ -158,16 +161,17 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
   `dispatch_batch status` 按台账已记到的最远阶段往后推出下一段，并把该批型（含特殊行按
   `baseBatchType` 落回原批型）判得上的门列逐条报成「门禁未过」；常见的那条链就是方案文档在盘
   → 门一 → 施工 → 门二 → 提交。
-- `plan-spec.json`：`blocks` 十三节方案规范正文＋`checklist` 定稿自查 11 条——阶段＝方案
-  时装配「方案任务书」的正文与清单尾。11 条＝剪切 8 条＋新增 3 条（术语只定义一次／判据
+- `plan-spec.json`：`blocks` 十三节方案规范正文＋`checklist` 定稿自查 11 条——`dispatch_plan`
+  那一趟装配「方案任务书」的正文与清单尾。11 条＝剪切 8 条＋新增 3 条（术语只定义一次／判据
   两列齐／读我层不夹带用户没拍过的新决策），来源＝规范「拍板方可读性」节。
 
 **追加面的台账事件字段**（台账一行一事件，字段与 `dispatch_batch` 的 `start`/`advance` 参数
 一字同源，`rules` 由工具自动记）：两种事件各有 `t`（ISO-8601 带显式时区偏移）、`batch`、
 `action`（`start|advance`）、`rules`；`start` 再带 `batchType`、`baseBatchType`（缺原批型写空串）、
 `intent`、`subject`（缺省写空串）、`decisions`（缺省写空数组）；`advance` 再带 `stage`、`combo`、
-`recommended`（当趟推荐组合 id 列表，未裁剪＝`combo`）、`perFormCounts`（形态 id → findings 数）、
-`adopted`、`overlap`、`missed`、`note`——后八项的数字与短串缺省即写 0／空串，不省略。
+`recommended`（当趟推荐组合 id 列表，未裁剪＝`combo`）、`perFormCounts`（`[{form, count}]` 数组——
+形态 id＋该形态 findings 数；旧事件的「形态 id → 数」对象形状读侧归一兼容）、
+`adopted`、`overlap`、`missed`、`note`——后八项的数字与短串缺省即写 0／空串（数组格写 `[]`），不省略。
 **读法钉死：`fold` 与复盘读事件时，可选字段缺失＝零值**（数字缺失作 0、字符串作 ''、数组作 []、
 对象作 {}），与写侧「0 写 0」的口径对称，历史事件不必补写；坏行由读面带行号报错，不按缺字段
 静默放过。
@@ -177,7 +181,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 新增的合法值要重启才进词表，而调用侧立刻认新值；那半句见下节「enum 参数面」一节。装载时形状与双向引用一并校验：坏 JSON、形状不合、配对指向未定义
 形态，一律带文件名（与字段路径）报错不静默出稿；阶段表另核一批互验（id/order 唯一、order 正
 整数、kind 落在词表内、复核阶段的门别可反查、gate 与 kind 等价、requires 无重复且在参数名全集内、
-uses 声明与模板占位互为充要，施工那行的 id 与 kind=提交 那行各与代码里的常量互认——逐条清单见
+uses 声明与模板占位互为充要，装配四件的契约阶段行与 kind=提交 那行各与代码里的常量互认——逐条清单见
 `data.js` 的装载期校验段，硬计数写在文档里只会与代码分家）；模板键的双向核＝白名单（lifecycle
 各行的 templateKey 加那几张辅助页，多出来的键没有任何阶段会读到它）＋反向（某行显式指了
 templateKey 却没有那份模板＝拼错键名与忘了写模板长得一样，加载期就分不开）；两张必读链辅助页
@@ -199,12 +203,12 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 「恒缺席」那一层不归文档管：可缺省只保证写回去也装得上，写回盘上要由 dispatch-data 的用例对着
 真盘面反钉（红的时候自问「它有消费者吗」）。追加面见下节。
 
-## dispatch 的 workflow 消费（批量派发）
+## 装配四件的 workflow 消费（批量派发）
 
-`dispatch` 门二输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核，替代逐路 subagent 手工派发。脚本骨架：
+`dispatch_verify`（门二）输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核，替代逐路 subagent 手工派发。脚本骨架：
 
 ```js
-const briefs = args.briefs;                    // 从 dispatch 输出值转抄 briefs 数组
+const briefs = args.briefs;                    // 从 dispatch_verify 输出值转抄 briefs 数组
 const results = await parallel(briefs.map(b => async () => {
   try {
     return { form: b.form, ok: true, out: await agent(b.text, {
@@ -217,23 +221,23 @@ const results = await parallel(briefs.map(b => async () => {
 
 三个坑（实测踩过）：①workflow 返回值严格 JSON 校验——成功分支不要带 `error: undefined` 这类字段，整趟直接拒；②`parallel` 里 throwing thunk 解析为 `null`——先 filter 再取字段，失败路单独收进「failed_routes」保住「各路成功失败分开可查」；③`briefs` 在输出值（value）里不在 render 文本里，转抄进脚本 `args` 是手工步骤。首单实测（2026-10，批 G）：双路并行 270s、零失败、结构化 findings 20 条（含对已过双路门二对象的第三轮增量 8 处）——报告见当批实施方案目录。
 
-## dispatch 的 enum 参数面：注册期快照与运行期现读是两速
+## 装配四件的 enum 参数面：注册期快照与运行期现读是两速
 
-`dispatch` 的 `stage`/`batchType` 两个参数除了描述里那份词表，还带着 schema 的 `enum`
+装配四件与两件台账工具里有词表取值的参数，除描述里那份词表外还带着 schema 的 `enum`
 （宿主 `defineTool` 在 execute 之前按它逐值校验，不过就抛 `ToolArgsError` 并把合法值清单带出来）。
-两处都现读同一份词表：`stage` 取 `core.js` 的 `dispatchStages`（本工具出得了稿的阶段，
-提交/复盘归另外两件工具），`batchType` 取 `mainBatchTypes`（配对表主行行名，含带
-`needsBase`/`needsRootCause` 的特殊行；**addon 行不作 batchType**，只能经 `addons` 参数加挂）。
+装配四件的 `batchType` 取 `mainBatchTypes`（配对表主行行名，含带 `needsBase`/`needsRootCause`
+的特殊行；**addon 行不作 batchType**，只能经 `addons` 参数加挂）——`stage` 不在参数面上，
+一拆四后阶段是各件的内部常量；台账两件的 `stage` 取全量阶段词表（它的 `advance` 要把提交与
+复盘记进台账，而那两步是生命周期里正当的一步）、`batchType` 同款取 `mainBatchTypes`；
+台账的 `perFormCounts`/`combo`/`recommended` 条目里的形态 id 也带 enum，取 forms.json 现读。
 
 **两速的含义**：注册期工具定义定型，参数面（含 `enum`）就在那一刻冻结成一份快照；而 execute
 每次调用现读数据。所以运行中往 `lifecycle.json`/`pairing.json` 加一个新阶段或新批型时——
 **调用立刻认它**（那一趟的判定与出稿都按新值走），但新值要等**重启宿主**才进 enum 词表，
 在那之前传它会被参数校验按「不在词表内」挡下。这是宿主「参数面注册期冻结」这一层架构的使然，
 不是缺陷：想要合法值立刻进词表，重启即可（改 JSON 本身不用重启，两速说的就是这一层差别）。
-描述那份词表不受此限——它随注册期那份定义走，与 enum 同速。`dispatch_batch` 的 `stage`/
-`batchType` 同款带 enum（`stage` 那一侧收的是**全量**阶段词表：它的 `advance` 要把提交与复盘
-记进台账，而那两步是生命周期里正当的一步）。单测里两件工具的 enum 都逐字对着
-`dispatchStages`/`stageVocabulary`/`mainBatchTypes` 的现读结果核（注册快照 ≡ 当刻盘面）。
+描述那份词表不受此限——它随注册期那份定义走，与 enum 同速。单测里各件的 enum 都逐字对着
+`dispatchStages`/`stageVocabulary`/`mainBatchTypes`/forms 现读结果核（注册快照 ≡ 当刻盘面）。
 
 加阶段时连带要动的不止 lifecycle.json：新阶段还得在 `templates.json` 里有模板（键＝stage id 或
 该行的 `templateKey`），否则加载期的模板键双向核当场拦下（显式指了键却没有那份模板＝拼错键名与
@@ -259,7 +263,7 @@ const results = await parallel(briefs.map(b => async () => {
 行序非时间序由集合式推导吸收（展示按事件时间 `t` 排序）。跨机并发 `start` 各登各自合法，
 合并后出现双 `start` 是正常吸收态：`status` 取 `t` 最小的一条并出告警，不当事故。
 
-四个 action：`start` 登记批次（拍板清单随这次登记进台账，此后每次 `dispatch(batch=…)` 自动
+四个 action：`start` 登记批次（拍板清单随这次登记进台账，此后装配四件传 `batch=` 自动
 带出）、`advance` 记一次阶段完成、`status` 查门禁（不给批次＝列在飞批次及各自下一道
 未过门）、`list` 列全量。**状态永远从事件现推**，不存状态文件、不另设缓存——台账是唯一真相，
 另存一份就是两份真相，且跨机合并出的乱序行会让「按行序累加出来的状态」漂。
@@ -327,15 +331,16 @@ lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一�
 lib/memory-root.js       记忆根默认值与归一、工作区路径→桶名、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与桶名」，谁要谁向下指
 lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS/LAYERS）+ core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
-lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
+lib/dispatch/           派发装配四件、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（装配四件与台账两件的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录那一族
-装配三件工具，故导出 `registerDispatch`、`registerDispatchBatch` 与 `registerDispatchLessons`
-三个注册函数、共用一张 `configShape`——胶水的 FEATURES 表按工具逐条 try/catch，一件起不来
-不连坐另一件）。
+装配六件工具，故导出 `registerDispatchPlan`/`registerDispatchReview`/`registerDispatchBuild`/
+`registerDispatchVerify`/`registerDispatchBatch`/`registerDispatchLessons` 六个注册函数、共用一张
+`configShape`——胶水的 FEATURES 表按工具逐条 try/catch，一件起不来不连坐另一件；装配四件各由
+同一份工厂按契约阶段实例化，老 `registerDispatch` 已随 `stage` 参数一并退役，不留别名）。
 纯函数文件零宿主依赖，可直接单测；含宿主 import 的装配文件由 test/imports.test.js
 静态解析钉住接线（防搬家断链、防 inject 漏声明）。
 

@@ -152,12 +152,12 @@ test('start 的必填与词表：batch/intent 缺一即点名，batchType 须是
 test('advance 追加事件，缺省数字字段写 0/空串不省略（读方统计不猜语义）', async () => {
 	freshLedger('advance')
 	await start()
-	await advance({ batch: START.batch, stage: '门一', combo: '锚点核对 事实校准', recommended: '锚点核对 事实校准', perFormCounts: { 锚点核对: 2, 事实校准: 0 }, adopted: 2, overlap: 1 })
+	await advance({ batch: START.batch, stage: '门一', combo: ['锚点核对', '事实校准'], recommended: ['锚点核对', '事实校准'], perFormCounts: [{ form: '锚点核对', count: 2 }, { form: '事实校准', count: 0 }], adopted: 2, overlap: 1 })
 	const [, event] = parsedLines()
-	assert.deepEqual(event.perFormCounts, { 锚点核对: 2, 事实校准: 0 }, '零也写进去：漏记与零不是一回事')
+	assert.deepEqual(event.perFormCounts, [{ form: '锚点核对', count: 2 }, { form: '事实校准', count: 0 }], '零也写进去：漏记与零不是一回事')
 	assert.equal(event.missed, '')
 	assert.equal(event.note, '')
-	assert.equal(event.recommended, '锚点核对 事实校准', '推荐组合逐事件记：复盘算裁剪率的分母靠它')
+	assert.deepEqual(event.recommended, ['锚点核对', '事实校准'], '推荐组合逐事件记（id 串数组）：复盘算裁剪率的分母靠它')
 	assert.equal(event.rules, rulesFingerprint())
 })
 
@@ -165,8 +165,8 @@ test('advance 的参数边界：stage 对词表、perFormCounts 对形态词表�
 	freshLedger('advance校验')
 	await start()
 	await assert.rejects(() => advance({ batch: START.batch, stage: '评审' }), /未知 stage「评审」.*取值对着 lifecycle 的阶段词表/)
-	await assert.rejects(() => advance({ batch: START.batch, stage: '门一', perFormCounts: { 拼错的形态: 1 } }), /perFormCounts 的键「拼错的形态」不在形态词表内/)
-	await assert.rejects(() => advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: '两条' } }), /须是非负有限数/)
+	await assert.rejects(() => advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '拼错的形态', count: 1 }] }), /perFormCounts 的形态「拼错的形态」不在形态词表内/)
+	await assert.rejects(() => advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: '两条' }] }), /须是非负有限数/)
 	await assert.rejects(() => advance({ batch: START.batch, stage: '门一', adopted: -1 }), /须是非负有限数/)
 	await assert.rejects(() => advance({ batch: '没登记的批次', stage: '门一' }), /批次未登记（先 start）/)
 	await assert.rejects(() => run('记一笔'), /未知 action「记一笔」/)
@@ -177,7 +177,7 @@ test('status：这一批的下一步与在飞集合从事件现推（记到门�
 	freshLedger('status')
 	await start()
 	await start({ batch: '已收尾批次', batchType: '直做批', intent: '收尾' })
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 1 })
 	await advance({ batch: '已收尾批次', stage: '提交' })
 	const named = await run('status', { batch: START.batch })
 	assert.equal(named.next, '施工', 'next＝furthest 之后 order 最小者')
@@ -191,9 +191,9 @@ test('status：这一批的下一步与在飞集合从事件现推（记到门�
 
 test('修复批双 advance→status 显示二轮（门二次数＝复核轮数，轮数即事件条数）', async () => {
 	freshLedger('二轮')
-	await start({ batchType: '修复批' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 2 }, adopted: 2 })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 1 }, adopted: 1, missed: '用户实测发现边界没兜住', note: '二轮：错结构' })
+	await start({ batchType: '修复批', baseBatchType: '纯后端管线批' })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 2 }], adopted: 2 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1, missed: '用户实测发现边界没兜住', note: '二轮：错结构' })
 	const status = await run('status', { batch: START.batch })
 	const text = renderBatchResult(status, data)
 	assert.ok(text.includes('门二 第 2 轮'), `轮数现读成 2：\n${text}`)
@@ -206,7 +206,7 @@ test('修复批双 advance→status 显示二轮（门二次数＝复核轮数�
 test('缺门一 advance→status 出告警「门一 缺记录」（记了门二却没有门一）', async () => {
 	freshLedger('缺门')
 	await start()
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 3 }, adopted: 3 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 3 }], adopted: 3 })
 	const status = await run('status', { batch: START.batch })
 	const text = renderBatchResult(status, data)
 	assert.ok(text.includes('门一 缺记录'), `furthest 之前的门没有 advance 事件要出告警：\n${text}`)
@@ -236,7 +236,7 @@ test('双 start 取 t 最小者并出告警（跨机并发登记的正常吸收�
 test('乱序写入→推导结果不变（union 合并只保行不保序，推导必须是集合式的）', async () => {
 	const events = [
 		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 2 }, adopted: 1, now: new Date('2026-10-15T10:10:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', combo: ['锚点核对'], recommended: ['锚点核对'], perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 1, now: new Date('2026-10-15T10:10:00Z') }),
 		advanceEvent({ batch: START.batch, stage: '施工', rules: 'a1b2c3d4', note: '施工完成', now: new Date('2026-10-15T10:20:00Z') }),
 	]
 	freshLedger('乱序')
@@ -253,7 +253,7 @@ test('双批次隔离：一个批次的事件不进另一个批次的推导', as
 	freshLedger('双批次')
 	await start()
 	await start({ batch: '另一个批次', batchType: '机械搬运/小修', intent: '别的活', decisions: ['别的拍板'] })
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 })
 	const first = await run('status', { batch: START.batch })
 	const second = await run('status', { batch: '另一个批次' })
 	assert.equal(first.events.every((event) => event.batch === START.batch), true)
@@ -276,7 +276,7 @@ test('list：全量批次一行一条，含批次名/批型/阶段进度/下一�
 	freshLedger('list')
 	await start()
 	await start({ batch: '收尾批次', batchType: '直做批', intent: '收尾', subject: 'README' })
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 2, note: '门一过了' })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2, note: '门一过了' })
 	const text = renderBatchResult(await run('list', {}), data)
 	const rows = text.split('\n').filter((line) => line !== '')
 	assert.equal(rows.length, 2, '一行一批次')
@@ -293,7 +293,7 @@ test('list：全量批次一行一条，含批次名/批型/阶段进度/下一�
 test('每行都是可解析的一行 JSON（追加式文件的唯一不变量，含换行与引号的附注）', async () => {
 	freshLedger('可解析')
 	await start()
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 2 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 })
 	await advance({ batch: START.batch, stage: '施工', note: '含引号与换行的附注："一"\n第二行' })
 	const events = parsedLines()
 	assert.equal(events.length, 3)
@@ -310,7 +310,7 @@ test('末行无换行的台账：append 后旧末行不粘连（先补 \\n 是�
 	const withNewline = readFileSync(ledger, 'utf8')
 	writeFileSync(ledger, withNewline.slice(0, -1), 'utf8')
 	assert.equal(readFileSync(ledger, 'utf8').endsWith('\n'), false, '夹具：末行没有换行（人手写或另一台工具写出来的台账就长这样）')
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 })
 	const parsed = parsedLines()
 	assert.equal(parsed.length, 2, '两行：粘连会让第二行不可解析、第一行末尾多出一截')
 	assert.equal(parsed[0].t, JSON.parse(withNewline).t, '旧末行原样保持')
@@ -355,12 +355,12 @@ test('台账含坏行→status/list 报错带行号（审计面不静默跳过�
 
 test('回填：台账里的 batchType/intent/decisions 自动进参数，只填这一趟消费的那些槽位', () => {
 	const events = [startEvent({ ...START, rules: 'a1b2c3d4' })]
-	const review = backfillFromBatch(data, { stage: '门一', batch: START.batch, subject: '方案.md §批 4' }, events)
+	const review = backfillFromBatch(data, { batch: START.batch, subject: '方案.md §批 4' }, events, '门一')
 	assert.deepEqual(review.filled, ['batchType', 'intent', 'decisions'])
 	assert.equal(review.params.batchType, '纯后端管线批')
 	assert.deepEqual(review.params.decisions, START.decisions)
 	// 方案那一趟不消费 decisions/batchType：填了就会撞 core 的「不消费即报错」
-	const planning = backfillFromBatch(data, { stage: '方案', batch: START.batch, subject: '方案.md' }, events)
+	const planning = backfillFromBatch(data, { batch: START.batch, subject: '方案.md' }, events, '方案')
 	assert.deepEqual(planning.filled, ['intent'], '只有 intent 进这一趟；batchType/decisions 台账里有也不填')
 	assert.equal(planning.params.batchType, undefined)
 	assert.equal(planning.params.decisions, undefined)
@@ -368,30 +368,30 @@ test('回填：台账里的 batchType/intent/decisions 自动进参数，只填�
 
 test('回填：台账登记的对象那格也进参数（每阶段都必填，正是登记一次、每路 brief 指同一对象的场合）', () => {
 	const events = [startEvent({ ...START, subject: '方案.md §批 4', rules: 'a1b2c3d4' })]
-	const review = backfillFromBatch(data, { stage: '门一', batch: START.batch }, events)
+	const review = backfillFromBatch(data, { batch: START.batch }, events, '门一')
 	assert.deepEqual(review.filled, ['batchType', 'intent', 'subject', 'decisions'], '四格全从台账补齐：这一趟没显式传就补')
 	assert.equal(review.params.subject, '方案.md §批 4')
-	const planning = backfillFromBatch(data, { stage: '方案', batch: START.batch }, events)
+	const planning = backfillFromBatch(data, { batch: START.batch }, events, '方案')
 	assert.deepEqual(planning.filled, ['intent', 'subject'], '方案那一趟消费 subject/intent，batchType/decisions 台账里有也不填')
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: START.batch, subject: '另一个方案.md' }, events), /与批次.*台账里登记的不一致/, '对象那格同样显式优先：两个来源说岔即报错')
+	assert.throws(() => backfillFromBatch(data, { batch: START.batch, subject: '另一个方案.md' }, events, '门一'), /与批次.*台账里登记的不一致/, '对象那格同样显式优先：两个来源说岔即报错')
 })
 
 test('回填：显式参数优先，与台账不一致即报错；台账没登记的批次不静默出稿', () => {
 	const events = [startEvent({ ...START, rules: 'a1b2c3d4' })]
-	const same = backfillFromBatch(data, { stage: '门一', batch: START.batch, batchType: START.batchType, decisions: START.decisions, intent: START.intent }, events)
+	const same = backfillFromBatch(data, { batch: START.batch, batchType: START.batchType, decisions: START.decisions, intent: START.intent }, events, '门一')
 	assert.deepEqual(same.filled, [], '与台账一致的显式值照用，不重复填也不报冲突')
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: START.batch, intent: '另一句意图' }, events), /与批次.*台账里登记的不一致/)
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: START.batch, decisions: ['另一份拍板'] }, events), /与批次.*台账里登记的不一致/)
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: '查无此批' }, events), /批次未登记（先 dispatch_batch start）/)
+	assert.throws(() => backfillFromBatch(data, { batch: START.batch, intent: '另一句意图' }, events, '门一'), /与批次.*台账里登记的不一致/)
+	assert.throws(() => backfillFromBatch(data, { batch: START.batch, decisions: ['另一份拍板'] }, events, '门一'), /与批次.*台账里登记的不一致/)
+	assert.throws(() => backfillFromBatch(data, { batch: '查无此批' }, events, '门一'), /批次未登记（先 dispatch_batch start）/)
 })
 
 test('回填：显式传空值即报错，不当没传（传空＝否定，与「没提这一格」在台账有登记时是两回事）', () => {
 	const events = [startEvent({ ...START, rules: 'a1b2c3d4' })]
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: START.batch, decisions: [] }, events), /显式传了空的 decisions/, '空数组被静默换成台账那份，调用方会以为自己否定过')
-	assert.throws(() => backfillFromBatch(data, { stage: '门一', batch: START.batch, intent: '   ' }, events), /显式传了空的 intent/, '空白串同理：它在 core 那边是非空白判定的「没给」，静默取台账就是替调用方改了口径')
+	assert.throws(() => backfillFromBatch(data, { batch: START.batch, decisions: [] }, events, '门一'), /显式传了空的 decisions/, '空数组被静默换成台账那份，调用方会以为自己否定过')
+	assert.throws(() => backfillFromBatch(data, { batch: START.batch, intent: '   ' }, events, '门一'), /显式传了空的 intent/, '空白串同理：它在 core 那边是非空白判定的「没给」，静默取台账就是替调用方改了口径')
 	// 这一趟不消费的槽位：交给 core 报「不消费即报错」，那条比「值为空」更指得准
 	assert.deepEqual(
-		backfillFromBatch(data, { stage: '方案', batch: START.batch, subject: 'x', decisions: [] }, events).filled,
+		backfillFromBatch(data, { batch: START.batch, subject: 'x', decisions: [] }, events, '方案').filled,
 		['intent'],
 		'方案那一趟不消费 decisions，值是空不是问题：不回填，由 core 判它该不该收',
 	)
@@ -399,10 +399,15 @@ test('回填：显式传空值即报错，不当没传（传空＝否定，与�
 
 test('回填输出≡把台账那几格显式传一遍的输出（两条路出的稿逐字相同）', async () => {
 	const events = [startEvent({ ...START, subject: '方案.md §批 4', rules: 'a1b2c3d4' })]
-	const backfilled = backfillFromBatch(data, { stage: '门一', batch: START.batch }, events).params
-	const explicit = { stage: '门一', batch: START.batch, subject: '方案.md §批 4', batchType: START.batchType, intent: START.intent, decisions: START.decisions }
+	const backfilled = backfillFromBatch(data, { batch: START.batch }, events, '门一').params
+	const explicit = { batch: START.batch, subject: '方案.md §批 4', batchType: START.batchType, intent: START.intent, decisions: START.decisions }
 	const { assembleDispatch } = await import('../lib/dispatch/core.js')
-	assert.deepEqual(assembleDispatch(data, backfilled), assembleDispatch(data, explicit), '显式传参与台账回填是同一份事实的两种来路，出稿不许有差别')
+	// stage 现在是装配层注入的载体，两条路在同一个注入点上会合：回填只管台账那几格
+	assert.deepEqual(
+		assembleDispatch(data, { ...backfilled, stage: '门一' }),
+		assembleDispatch(data, { ...explicit, stage: '门一' }),
+		'显式传参与台账回填是同一份事实的两种来路，出稿不许有差别',
+	)
 })
 
 test('start/advance 的返回值＝写前读到的全量＋新事件（渲染不靠新事件那一行独角戏）', async () => {
@@ -410,11 +415,11 @@ test('start/advance 的返回值＝写前读到的全量＋新事件（渲染不
 	const started = await start()
 	assert.equal(started.events.length, 1)
 	assert.equal(renderBatchResult(started, data).includes(`批次 ${START.batch}（纯后端管线批）`), true, 'start 的返回值自己就能渲染出批型：只回新事件的话那是「批型未登记」')
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 })
 	// 台账里已经有事件之后再 start：返回值要含写前那一份，否则第二次登记拿到的仍是「只有自己那一行」
 	const second = await start({ batch: '第二个批次', batchType: '直做批', intent: '另一个活' })
 	assert.deepEqual(second.events.map((event) => event.batch), ['第二个批次'], '只回本批那些：别批的行回进来，渲染会把另一个批次的 start 当成这一批的起点')
-	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 2 })
+	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 })
 	assert.deepEqual(advanced.events.map((event) => event.action), ['start', 'advance', 'advance'], '同一批的三条事件都在')
 	const text = renderBatchResult(advanced, data)
 	assert.ok(text.includes('意图：台账落共享层'), `丢意图行的渲染会让人以为登记时没写：${text}`)
@@ -426,8 +431,8 @@ test('start/advance 的返回值＝写前读到的全量＋新事件（渲染不
 test('同一 stage 两轮的 note/missed 按事件时间取末：倒着写与正着写渲染逐字相同', async () => {
 	const events = [
 		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { '设计七维·终审': 2 }, adopted: 2, missed: '第一轮漏：边界', note: '一轮：错行', now: new Date('2026-10-15T10:10:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { '设计七维·终审': 1 }, adopted: 1, missed: '二轮漏：并发', note: '二轮：错结构', now: new Date('2026-10-15T10:20:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: [{ form: '设计七维·终审', count: 2 }], adopted: 2, missed: '第一轮漏：边界', note: '一轮：错行', now: new Date('2026-10-15T10:10:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1, missed: '二轮漏：并发', note: '二轮：错结构', now: new Date('2026-10-15T10:20:00Z') }),
 	]
 	freshLedger('note正序')
 	for (const event of events) await appendRaw(event)
@@ -443,21 +448,23 @@ test('同一 stage 两轮的 note/missed 按事件时间取末：倒着写与正
 test('免门的批型不收「门一 缺记录」（配对表该列为 null＝这个批型没有那道门，不是漏记）', async () => {
 	freshLedger('免门')
 	await start({ batchType: '直做批' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 2 }, adopted: 2 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 2 }], adopted: 2 })
 	const status = await run('status', { batch: START.batch })
 	const text = renderBatchResult(status, data)
 	assert.ok(!text.includes('门一 缺记录'), `直做批的 gate1 是 null，每次都甩这条就是假警：${text}`)
 	assert.equal(foldBatch(status.events, data).gatesAhead.includes('门一'), false, '门禁未过同理不列这个批型没有的门')
-	// 三态：判不出的（needsBase 行按 baseBatchType 落回）照旧告警，且告警里注明保守
+	// 三态：判不出的（needsBase 行台账里没记 baseBatchType）照旧告警，且告警里注明保守。
+	// 登记期门（start 必给 baseBatchType）之后，这个状态新台账产不出来——夹具直写一行历史事件模拟
+	// 跨机合并来的旧行，读侧的保守兜底仍要为它服务
 	freshLedger('保守告警')
-	await start({ batchType: '修复批' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 1 }, adopted: 1 })
+	await appendRaw({ t: isoNow(), batch: START.batch, action: 'start', batchType: '修复批', baseBatchType: '', intent: START.intent, subject: '', decisions: [], rules: rulesFingerprint() })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	const warned = renderBatchResult(await run('status', { batch: START.batch }), data)
 	assert.ok(warned.includes('门一 缺记录') && warned.includes('保守告警'), `判不出走不走就按全门告警并注明：${warned}`)
 	// 对照：真有那道门的批型同一形状照旧报
 	freshLedger('有门')
 	await start()
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { '设计七维·终审': 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	assert.ok(renderBatchResult(await run('status', { batch: START.batch }), data).includes('门一 缺记录'))
 })
 
@@ -497,7 +504,7 @@ test('空态分两种说法：台账一条事件都没有 vs 台账有批次但�
 test('零值读法：缺字段的老事件与写全字段的新事件推导出同一份状态（缺省数字作 0、串作空串）', () => {
 	const full = [
 		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', combo: '锚点核对', recommended: '锚点核对', perFormCounts: { 锚点核对: 0 }, adopted: 0, overlap: 0, missed: '', note: '', now: new Date('2026-10-15T10:10:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', combo: ['锚点核对'], recommended: ['锚点核对'], perFormCounts: [{ form: '锚点核对', count: 0 }], adopted: 0, overlap: 0, missed: '', note: '', now: new Date('2026-10-15T10:10:00Z') }),
 	]
 	const zeroed = full.map((event) => ({
 		t: event.t,
@@ -517,10 +524,10 @@ test('advance 的 adopted 不得多于本趟 findings 总数（恒等式在写�
 	freshLedger('adopted上界')
 	await start()
 	await assert.rejects(
-		() => advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 3 }),
+		() => advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 3 }),
 		/adopted=3 超过本趟 findings 总数 2/,
 	)
-	await assert.doesNotReject(() => advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 2 }))
+	await assert.doesNotReject(() => advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 }))
 	assert.equal(lines().length, 2, '被拒的那次不落盘')
 })
 
@@ -565,9 +572,9 @@ test('rules 指纹真现读：同一个 dataDir，两次调用之间改了文件
 test('性质断言：furthest 单调不减、门禁未过只缩不涨、告警条数＝缺记的门数', () => {
 	const seeds = [
 		advanceEvent({ batch: START.batch, stage: '方案', rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 1 }, adopted: 1, now: new Date('2026-10-15T10:05:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, now: new Date('2026-10-15T10:05:00Z') }),
 		advanceEvent({ batch: START.batch, stage: '施工', rules: 'a1b2c3d4', now: new Date('2026-10-15T10:10:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { '设计七维·终审': 1 }, adopted: 1, now: new Date('2026-10-15T10:15:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1, now: new Date('2026-10-15T10:15:00Z') }),
 		advanceEvent({ batch: START.batch, stage: '提交', rules: 'a1b2c3d4', now: new Date('2026-10-15T10:20:00Z') }),
 	]
 	const gates = data.lifecycle.stages.filter((row) => row.gate === true)
@@ -666,7 +673,7 @@ test('append 不变式：已写入的行逐字不变（最常见的「末尾有�
 	freshLedger('不变式')
 	await start()
 	const first = readFileSync(ledger, 'utf8')
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1, note: '门一过了' })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, note: '门一过了' })
 	const after = readFileSync(ledger, 'utf8')
 	assert.ok(after.startsWith(first), '末行带换行时不得往旧内容里插字符——重写旧行会毁掉两台机器各自的审计链')
 	assert.equal(after.slice(first.length).split('\n').filter((line) => line !== '').length, 1)
@@ -697,19 +704,20 @@ test('needsBase 的批型按 start 登记的 baseBatchType 落回门列判（修
 	// 原批型有门一 ⇒ 这批走门一：门一没记就该报
 	freshLedger('落回有门')
 	await start({ batchType: '修复批', baseBatchType: '纯后端管线批' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { 设计七维·终审: 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	const withGate = renderBatchResult(await run('status', { batch: START.batch }), data)
 	assert.ok(withGate.includes('门一 缺记录') && !withGate.includes('保守告警'), `落回原批型判出门一要走，就照常报缺记录：${withGate}`)
 	// 原批型免门一 ⇒ 判出这批不走门一：不报（恒保守全门＝每次 status 甩假警）
 	freshLedger('落回免门')
 	await start({ batchType: '修复批', baseBatchType: '机械搬运/小修' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { 设计七维·终审: 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	const exempt = renderBatchResult(await run('status', { batch: START.batch }), data)
 	assert.ok(!exempt.includes('门一 缺记录'), `落回的那一行 gate1 是 null，不报：${exempt}`)
-	// 没登记 baseBatchType ⇒ 判不出，照旧保守告警并注明
+	// 没登记 baseBatchType ⇒ 判不出，照旧保守告警并注明（登记期门之后这状态只来自历史/合并行，
+	// 夹具直写一行不带 baseBatchType 的 start）
 	freshLedger('落回缺省')
-	await start({ batchType: '修复批' })
-	await advance({ batch: START.batch, stage: '门二', perFormCounts: { 设计七维·终审: 1 }, adopted: 1 })
+	await appendRaw({ t: isoNow(), batch: START.batch, action: 'start', batchType: '修复批', baseBatchType: '', intent: START.intent, subject: '', decisions: [], rules: rulesFingerprint() })
+	await advance({ batch: START.batch, stage: '门二', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	assert.ok(renderBatchResult(await run('status', { batch: START.batch }), data).includes('保守告警'))
 	// start 把这一格记进事件（不给就是空串，缺省字段不省略）
 	freshLedger('落回入账')
@@ -721,9 +729,9 @@ test('needsBase 的批型按 start 登记的 baseBatchType 落回门列判（修
 
 test('foldBatch 直喂乱序数组：内部自己按事件时间定序（不经 queryAction 的预排序）', () => {
 	const rows = [
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 1 }, adopted: 1, note: '第二轮的注', now: new Date('2026-10-15T12:00:00+08:00') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, note: '第二轮的注', now: new Date('2026-10-15T12:00:00+08:00') }),
 		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00+08:00') }),
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 2 }, adopted: 1, note: '第一轮的注', now: new Date('2026-10-15T11:00:00+08:00') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 1, note: '第一轮的注', now: new Date('2026-10-15T11:00:00+08:00') }),
 	]
 	const ordered = foldBatch(rows, data)
 	const shuffled = foldBatch([rows[2], rows[0], rows[1]], data)
@@ -737,7 +745,7 @@ test('门别判定读的是 lifecycle 数据：把那行改成非门阶段，门
 	// 表，真数据与临时数据就此分家，而分家的那处不报错——门一照样被当成更早的门推、门二照样被
 	// 当成 ahead 门列出去，而这条用例正是按那份自持表写的才留得住它
 	const opened = startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T09:00:00Z') })
-	const reviewed = advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { '设计七维·终审': 1 }, adopted: 1, now: new Date('2026-10-15T11:00:00Z') })
+	const reviewed = advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1, now: new Date('2026-10-15T11:00:00Z') })
 	const derelisted = structuredClone(data)
 	const gate1 = derelisted.lifecycle.stages.find((row) => row.id === '门一')
 	gate1.kind = '施工'
@@ -767,7 +775,7 @@ test('foldBatch 的阶段序按 order 排：lifecycle 的行序打乱也不改�
 	scrambled.lifecycle.stages.reverse()
 	const events = [
 		startEvent({ ...START, rules: 'a1b2c3d4', now: new Date('2026-10-15T09:00:00Z') }),
-		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 1 }, adopted: 1, now: new Date('2026-10-15T10:00:00Z') }),
+		advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, now: new Date('2026-10-15T10:00:00Z') }),
 	]
 	const ordered = foldBatch(events, data)
 	const out = foldBatch(events, scrambled)
@@ -791,9 +799,9 @@ test('台账事件字段＝README「追加面的台账事件字段」记的那�
 	assert.equal(started.baseBatchType, '')
 	assert.equal(started.subject, '')
 	assert.deepEqual(started.decisions, [])
-	assert.equal(advanced.combo, '')
-	assert.equal(advanced.recommended, '')
-	assert.deepEqual(advanced.perFormCounts, {})
+	assert.deepEqual(advanced.combo, [])
+	assert.deepEqual(advanced.recommended, [])
+	assert.deepEqual(advanced.perFormCounts, [])
 	assert.equal(advanced.adopted, 0)
 	assert.equal(advanced.overlap, 0)
 	assert.equal(advanced.missed, '')
@@ -806,7 +814,7 @@ test('list 降序：最近动过的批次排前面（排序键是 lastT）', asy
 	freshLedger('list序')
 	await appendRaw(startEvent({ batch: '先动的批', batchType: START.batchType, intent: '先', rules: 'a1b2c3d4', now: new Date('2026-10-15T10:00:00+08:00') }))
 	await appendRaw(startEvent({ batch: '后动的批', batchType: START.batchType, intent: '后', rules: 'a1b2c3d4', now: new Date('2026-10-15T11:00:00+08:00') }))
-	await appendRaw(advanceEvent({ batch: '先动的批', stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 1 }, adopted: 1, now: new Date('2026-10-15T12:00:00+08:00') }))
+	await appendRaw(advanceEvent({ batch: '先动的批', stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, now: new Date('2026-10-15T12:00:00+08:00') }))
 	const rows = renderBatchResult(await run('list', {}), data).split('\n').filter((line) => line !== '')
 	assert.deepEqual(rows.map((line) => line.split('｜')[0]), ['先动的批', '后动的批'], '最近动的排前面：排序键是 lastT（12:00 那批在前），不是批名也不是登记顺序')
 })
@@ -814,7 +822,7 @@ test('list 降序：最近动过的批次排前面（排序键是 lastT）', asy
 test('拒收恒等式在非零形状下也成立：渲染出的「拒收 N」＝findings 总数−采纳（推导不落盘）', async () => {
 	freshLedger('拒收')
 	await start()
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 3, 事实校准: 1 }, adopted: 2, overlap: 1 })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 3 }, { form: '事实校准', count: 1 }], adopted: 2, overlap: 1 })
 	const state = foldBatch((await run('status', { batch: START.batch })).events, data)
 	const stage = state.stages.find((row) => row.id === '门一')
 	assert.equal(stage.found, 4)
@@ -827,7 +835,7 @@ test('拒收恒等式在非零形状下也成立：渲染出的「拒收 N」＝
 
 test('start 撞上半合并的台账（本批 advance 已并到、start 行还没并到）：返回值带那两条，渲染看得到已记的行', async () => {
 	freshLedger('半合并')
-	await appendRaw(advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: { 锚点核对: 2 }, adopted: 2, note: '对头那台记的门一' }))
+	await appendRaw(advanceEvent({ batch: START.batch, stage: '门一', rules: 'a1b2c3d4', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2, note: '对头那台记的门一' }))
 	const started = await start()
 	assert.equal(started.events.length, 2, '写前读到的本批事件＋刚追加的 start 事件，一条不少')
 	assert.deepEqual(started.events.map((event) => event.action), ['advance', 'start'], '按事件时间排：返回行的次序与 status 单批视图同一口径，程序侧不用各自再排')
@@ -839,14 +847,14 @@ test('start 撞上半合并的台账（本批 advance 已并到、start 行还�
 test('批型不在配对表（手写行/跨机旧行）⇒ 门禁判不出：告警按全门来并在文案里注明', async () => {
 	freshLedger('未登记批型')
 	await appendRaw(startEvent({ batch: START.batch, batchType: '早已下线的批型', intent: '老行', rules: 'a1b2c3d4' }))
-	await appendRaw(advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: { 旧形态: 1 }, adopted: 1 }))
+	await appendRaw(advanceEvent({ batch: START.batch, stage: '门二', rules: 'a1b2c3d4', perFormCounts: [{ form: '旧形态', count: 1 }], adopted: 1 }))
 	const state = foldBatch((await run('status', { batch: START.batch })).events, data)
 	assert.deepEqual(state.warnings, state.warnings.filter((warning) => warning.includes('门一 缺记录')))
 	assert.ok(state.warnings.some((warning) => warning.includes('判不出') && warning.includes('保守告警')), `判不出要说判不出，别让人以为真缺记录：${JSON.stringify(state.warnings)}`)
 	assert.deepEqual(state.gatesAhead, ['提交'], '判不出的门按最坏算＝算在未过门里')
 })
 
-test('list 不带 batch 参数：带了即报错（与 dispatch「不消费的槽位收到值即报错」同一契约）', async () => {
+test('list 不带 batch 参数：带了即报错（与装配四件「不消费的槽位收到值即报错」同一契约）', async () => {
 	freshLedger('list带批')
 	await start()
 	await assert.rejects(() => run('list', { batch: START.batch }), /list 无 batch 参数/)
@@ -856,7 +864,7 @@ test('渲染输入在值自己身上：text 随值一起交出，render 只投�
 	freshLedger('写动作渲染')
 	const started = await start()
 	assert.ok(started.text.includes('下一步：方案'), `登记完那一趟交出的文本就是状态本身：${started.text}`)
-	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1, note: '过了' })
+	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, note: '过了' })
 	assert.ok(advanced.text.includes('已记录：门一 第 1 轮') && advanced.text.includes('下一步：施工') && advanced.text.includes('附注：过了'), advanced.text)
 	assert.equal(advanced.next, '施工', 'next 进结构化值')
 	assert.equal(renderBatchResult(started, data), started.text, '算式与值同源：值里那份 text 就是按那份算式现算出来的那份，两处不会各说一套')
@@ -876,7 +884,7 @@ test('五个入口交出的 text 就是那份值现算出来的展示文本（�
 	freshLedger('五入口text')
 	const 入口 = [
 		await start(),
-		await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1 }),
+		await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 }),
 		await run('status', { batch: START.batch }),
 		await run('list'),
 		await run('status'),
@@ -901,7 +909,7 @@ test('空态那句话进结构化值（两种空态分两句：台账空／全�
 	// status（无批次）：有批次但全部走到提交那一步
 	freshLedger('全收尾')
 	await start()
-	await advance({ batch: START.batch, stage: '提交', perFormCounts: { '设计七维·终审': 1 }, adopted: 1 })
+	await advance({ batch: START.batch, stage: '提交', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1 })
 	const 收干净 = await run('status')
 	assert.deepEqual(收干净.rows, [])
 	assert.equal(收干净.emptyText, '没有在飞批次（全部已提交或已复盘）', '「该登记没登记」与「活干完了」是两件事，混成一句会把前者读成后者')
@@ -913,7 +921,7 @@ test('空态那句话进结构化值（两种空态分两句：台账空／全�
 test('两个视图给出的行摘要逐字段相同（list 与不带批次的 status 是同一张折好的表的两种投影）', async () => {
 	freshLedger('两视图一致')
 	await start()
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 }, adopted: 1, overlap: 1, note: '注一' })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 1, overlap: 1, note: '注一' })
 	const 清单 = await run('list')
 	const 全量 = await run('status')
 	assert.deepEqual(全量.rows, 清单.rows, '同一份事件、同一次折叠，两个视图的行摘要逐字段相同')
@@ -949,8 +957,8 @@ test('status 不带 batch：在飞集合与行摘要共用同一次 fold（折�
 test('逐阶段那两格 note/missed 不再各存一份（渲染读的是跨阶段取末的 latestNote/latestMissed）', async () => {
 	freshLedger('尾注单一')
 	await start()
-	await advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 1 }, adopted: 1, note: '门一的注' })
-	await advance({ batch: START.batch, stage: '施工', perFormCounts: { 设计七维·终审: 1 }, adopted: 1, note: '施工的注' })
+	await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1, note: '门一的注' })
+	await advance({ batch: START.batch, stage: '施工', perFormCounts: [{ form: '设计七维·终审', count: 1 }], adopted: 1, note: '施工的注' })
 	const state = foldBatch((await run('status', { batch: START.batch })).events, data)
 	assert.equal(state.latestNote, '施工的注')
 	for (const stage of state.stages) {
@@ -967,4 +975,72 @@ test('数据面读不出来时点名文件与原因（两处读法各带一条�
 	assert.throws(() => loadDispatchTables({ dataDir: empty, names: ['pairing'] }), /dispatch 数据读取失败/, '目录在、表不在：点名路径，不返回空表')
 	assert.throws(() => readDataBytes({ dataDir: empty, files: ['pairing.json'] }), /dispatch 数据读取失败.*pairing\.json/s)
 	assert.throws(() => rulesFingerprint(empty), /dispatch 数据读取失败/, '指纹那条读法也点同一个名——两条读法坏在同一处时看得见是哪一处')
+})
+
+test('start 登记期门：needsBase 批型不给 baseBatchType 当场拒（判不出走不走门的状态不让它落盘）', async () => {
+	freshLedger('start门')
+	await assert.rejects(
+		() => start({ batchType: '修复批' }),
+		/批型「修复批」标了 needsBase.*start 必须显式登记 baseBatchType/,
+		'缺它这张台账判不出该批走不走各道门——错在登记时点报，不拖到门禁推导时「保守告警」了事',
+	)
+	await assert.rejects(() => start({ batchType: '新功能·形态未定' }), /start 必须显式登记 baseBatchType/, '另一个 needsBase 行同门')
+	// 非 needsBase 批型不给是常态：默认夹具（纯后端管线批）一路绿到这里
+	await start()
+})
+
+test('baseBatchType 随回填走：start 登记过，装配那趟不传也自动带上（登记一次，门禁判据跟着批次走）', () => {
+	const events = [startEvent({ ...START, batchType: '修复批', baseBatchType: '纯后端管线批', rules: 'a1b2c3d4' })]
+	const review = backfillFromBatch(data, { batch: START.batch, subject: '方案.md' }, events, '门一')
+	assert.equal(review.params.baseBatchType, '纯后端管线批', '门一消费 baseBatchType（行上标 needsBase），台账有即补')
+	assert.ok(review.filled.includes('baseBatchType'), '补的格要进 filled：调用方看得见哪几格来自台账')
+	// 修复批行上不标 needsRootCause：rootCase 那格不由 start 承载，回填不碰它
+	assert.equal(review.params.rootCause, undefined)
+})
+
+test('verify（门二）的 subject 不从台账回填：对象＝净 diff 命令，两处语义不同格', () => {
+	const events = [startEvent({ ...START, subject: '方案.md §批 4', rules: 'a1b2c3d4' })]
+	const verify = backfillFromBatch(data, { batch: START.batch }, events, '门二')
+	assert.equal(verify.params.subject, undefined, '台账里登记的方案路径不许冒充净 diff 命令')
+	assert.ok(!verify.filled.includes('subject'), 'filled 里也不报它——不是「补了」，是这一格整格不参与')
+	// 显式给净 diff 命令照用，且不与台账的方案路径报「不一致」：两格各说各的事
+	const explicit = backfillFromBatch(data, { batch: START.batch, subject: 'git diff HEAD~1..HEAD' }, events, '门二')
+	assert.equal(explicit.params.subject, 'git diff HEAD~1..HEAD')
+	// 门一仍回填 subject：排除只作用门二那一格，不殃及别的阶段
+	const review = backfillFromBatch(data, { batch: START.batch }, events, '门一')
+	assert.equal(review.params.subject, '方案.md §批 4')
+})
+
+test('subject 占位「（待写）」＝未登记：不回填、不比对显式值，附提醒让登记方补记', () => {
+	const events = [startEvent({ ...START, subject: '（待写）', rules: 'a1b2c3d4' })]
+	const review = backfillFromBatch(data, { batch: START.batch }, events, '门一')
+	assert.equal(review.params.subject, undefined, '占位值不冒充登记过的对象')
+	assert.equal(review.filled.includes('subject'), false)
+	assert.ok(review.notes.some((note) => note.includes('（待写）') && note.includes('补记')), `非致命提醒进 notes：${JSON.stringify(review.notes)}`)
+	// 占位不算「登记着」：显式给真对象不报不一致，照用；提醒照出——它说的是台账还欠着补记，
+	// 与这一趟传没传无关，台账补真值前每次装配都该看见
+	const explicit = backfillFromBatch(data, { batch: START.batch, subject: '方案.md §批 4' }, events, '门一')
+	assert.equal(explicit.params.subject, '方案.md §批 4')
+	assert.ok(explicit.notes.some((note) => note.includes('补记')), '台账还占位着，提醒不因这一趟给了真值而消失')
+})
+
+test('写侧旧形状当场拒收：perFormCounts 对象与 combo 串都不再收（读侧兼容只服务历史事件）', async () => {
+	freshLedger('旧形状拒收')
+	await start()
+	await assert.rejects(
+		() => advance({ batch: START.batch, stage: '门一', perFormCounts: { 锚点核对: 2 } }),
+		/「形态 id→数」的对象是旧事件形状，写侧不再收/,
+		'写侧宽容旧形状＝台账里两种形状并存从历史事实变成进行时',
+	)
+	await assert.rejects(
+		() => advance({ batch: START.batch, stage: '门一', combo: '锚点核对 事实校准' }),
+		/须是 \[\{form: 形态 id\}\] 数组/,
+		'combo 的串形状同理：宿主 schema 拦得到，端口直调也拦一道',
+	)
+	await assert.rejects(
+		() => advance({ batch: START.batch, stage: '门一', recommended: [{ form: '不存在的形态' }] }),
+		/的形态「不存在的形态」不在形态词表内/,
+		'{form} 条目与串元素都收（端口直调按事件形状给也认），词表照核——拼错的 id 不许静默落库',
+	)
+	assert.equal(lines().length, 1, '被拒的三趟一行都不许写')
 })

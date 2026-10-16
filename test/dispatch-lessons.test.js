@@ -16,7 +16,8 @@ import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { collectStats, judgePoint, parseFormList, pointOf, renderLessonsResult, runLessons } from '../lib/dispatch/lessons.js'
+import { normalizeFormCounts, parseFormList } from '../lib/dispatch/batch.js'
+import { collectStats, judgePoint, pointOf, renderLessonsResult, runLessons } from '../lib/dispatch/lessons.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
 import { createNodeFsPort, createReadOnlyPort } from '../lib/fs-port.js'
 import { DISPATCH_DATA_DIR, DISPATCH_DIR, makeEvent, seedLedger, tempRoot } from './helpers.js'
@@ -515,4 +516,51 @@ test('点位判定纯函数：force 与门槛各自独立，不读事件内容',
 	assert.equal(judgePoint({ batchCount: 4, batchTypeCount: 3, point }, { force: true }).reached, false, 'force 跳的是 due，reached 仍按门槛算')
 	assert.equal(judgePoint({ batchCount: 9, batchTypeCount: 3, point }).overUpper, true, '超过提示上限 8 批出一条提示，不改判定')
 	assert.equal(judgePoint({ batchCount: 9, batchTypeCount: 2, point }).due, false, '批型不够时攒再多批也不到点')
+})
+
+test('读侧归一 normalizeFormCounts：新旧两种形状归出同一份「形态→份数」（求和方向判据）', () => {
+	const objectShape = { 锚点核对: 5, 事实校准: 2 }
+	const arrayShape = [{ form: '锚点核对', count: 5 }, { form: '事实校准', count: 2 }]
+	assert.deepEqual(
+		[...normalizeFormCounts(objectShape, new Set(vocabulary))],
+		[...normalizeFormCounts(arrayShape, new Set(vocabulary))],
+		'同一份计数两种形状归一结果逐键逐值相同——读面不知道也不想知道是哪种',
+	)
+	assert.deepEqual([...normalizeFormCounts(arrayShape)], [['锚点核对', 5], ['事实校准', 2]], '新形状按 count 归一：findings 求和吃的是份数不是条数')
+	assert.deepEqual([...normalizeFormCounts('锚点核对 事实校准', new Set(vocabulary))], [['锚点核对', 1], ['事实校准', 1]], '旧串形状按词法切、各记 1 份')
+	assert.deepEqual([...normalizeFormCounts([{ form: '锚点核对' }])], [['锚点核对', 0]], 'count 缺/坏与显式 0 同折 0（countOf 同一口径）：读面不替坏数据发明份数，也不让一个 NaN 污染整份统计')
+	assert.deepEqual([...normalizeFormCounts([{ form: '锚点核对', count: '三条' }])], [['锚点核对', 0]], '坏值折 0：读面不重复拦形状，也不让一个坏值把整份统计变成 NaN')
+})
+
+test('新形状事件走全链：findings 按份数求和（不是条数）、实派未记数的形态报「记账缺格」、记全的不虚报漏记', async () => {
+	const path = seedLedger(root, '新形状全链', [
+		start('n1', '纯后端管线批', 'v1'),
+		start('n2', '机械搬运/小修', 'v1'),
+		start('n3', '用户可见功能批', 'v1'),
+		start('n4', '用户可见功能批', 'v1'),
+		start('n5', '纯后端管线批', 'v1'),
+		// combo 两个形态、计数只记了一个：锚点核对 5 份进 findings 求和，事实校准进「记账缺格」
+		advance({ batch: 'n1', rules: 'v1', combo: ['锚点核对', '事实校准'], recommended: ['锚点核对', '事实校准'], perFormCounts: [{ form: '锚点核对', count: 5 }], adopted: 5 }),
+	])
+	const { stats, suggestions } = await run(path, { force: true })
+	assert.match(stats, /findings 上报 5、采纳 5/u, '求和按份数：[{form,count}] 的 count 相加，不是数组条数')
+	assert.match(stats, /表单 findings：锚点核对 5/u, '按形态的份数同样来自 count')
+	assert.ok(
+		suggestions.some((line) => line.includes('实派了却没记 findings 数的形态：事实校准')),
+		'combo 里有、计数里没有＝记账缺格（漏记方向）：归一后的键域判定吃到了新形状',
+	)
+	// 对照：combo 与计数对得上时不虚报——旧代码 Object.hasOwn 对数组恒 false 会把每行都判成整格漏记
+	const clean = seedLedger(root, '新形状不虚报', [
+		start('m1', '纯后端管线批', 'v1'),
+		start('m2', '机械搬运/小修', 'v1'),
+		start('m3', '用户可见功能批', 'v1'),
+		start('m4', '用户可见功能批', 'v1'),
+		start('m5', '纯后端管线批', 'v1'),
+		advance({ batch: 'm1', rules: 'v1', combo: ['锚点核对'], recommended: ['锚点核对'], perFormCounts: [{ form: '锚点核对', count: 3 }], adopted: 3 }),
+	])
+	const cleanRun = await run(clean, { force: true })
+	assert.ok(
+		!cleanRun.suggestions.some((line) => line.includes('实派了却没记 findings 数的形态')),
+		'键域对得上就不出漏记建议：新形状的每一行不许被误判成整格漏记（虚高方向判据）',
+	)
 })

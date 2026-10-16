@@ -176,13 +176,16 @@ export const isoClock = (epochMs = Date.UTC(2026, 0, 1)) => {
  * 一份事件夹具：字段名与生产构造器（batch.js 的 startEvent／advanceEvent）逐字同形。做成工厂而
  * 不是两个模块级函数，是为了让时钟按「一份夹具一份」计数——两个文件共用同一个模块级计数器时，
  * 两边的先后次序会互相影响，而次序正是这些用例的前提。
+ *
+ * 计数格的缺省形状跟写侧走（combo/recommended＝串数组、perFormCounts＝[{form,count}]）；旧形状
+ * （串/对象）在用例里显式给，作历史数据覆盖读侧兼容。
  */
 export const makeEvent = () => {
 	const iso = isoClock()
 	const start = (batch, batchType, rules = 'v1', extra = {}) => ({
 		t: iso(), batch, action: 'start', batchType, baseBatchType: '', intent: `${batch} 意图`, subject: '', decisions: [], rules, ...extra,
 	})
-	const advance = ({ batch, stage = '门二', rules = 'v1', combo = '', recommended = '', perFormCounts = {}, adopted = 0, overlap = 0, missed = '', note = '' }) => ({
+	const advance = ({ batch, stage = '门二', rules = 'v1', combo = [], recommended = [], perFormCounts = [], adopted = 0, overlap = 0, missed = '', note = '' }) => ({
 		t: iso(), batch, action: 'advance', stage, rules, combo, recommended, perFormCounts, adopted, overlap, missed, note,
 	})
 	return { start, advance }

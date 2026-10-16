@@ -1,16 +1,21 @@
 /**
- * dispatch 工具参数面单测（node:test，零宿主依赖）：参数面是模型选型的唯一依据——它写的
- * 取值清单与必填标注会被原样抄进调用，而那份面在 data 现读拼出来之后，「改了 JSON 描述还在
- * 旧名单」这件事就有了可验的地方。这里核三件：键集与 core 的参数名全集同源、stage 取值清单
- * ＝可服务阶段且按 order 排、batchType 不标必填（方案阶段不判批型，标了等于逼模型编批型），
- * 外加三处单源对账：数值槽位的键集、批型条件槽位的点名、规模参数的取值域。
+ * dispatch 族参数面单测（node:test，零宿主依赖）：装配四件（各一张表）与台账工具各验各的。
+ * 参数面是模型选型的唯一依据——它写的取值清单与必填标注会被原样抄进调用。这里核四件：
+ * ①各件键集＝方案 D2 的参数集（手抄名单在这里是判据不是漂移源：它钉住「声明面不长回 stage、
+ * 不漏 batch」），并集与 core 的 PARAM_FIELDS 同源；②schema required＝派生公式（lifecycle
+ * requires − 回填基础集）直调比对；③专属参数断言（anchors/rootCause 只在 build、baseBatchType
+ * 只在 review/verify）；④批型条件槽位的描述与 core 的 holders 同读一份判定。外加规模参数的
+ * 取值域与 enum 对账。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONDITION_PARAMS, NUMERIC_PARAMS, PARAM_FIELDS, RHYTHM_FIELDS, dispatchStages, mainBatchTypes, stageVocabulary, validateParams } from '../lib/dispatch/core.js'
-import { batchParameters, dispatchParameters } from '../lib/dispatch/parameters.js'
+import {
+	ASSEMBLER_CONTRACTS, BACKFILL_FIELDS, CONDITION_PARAMS, NUMERIC_PARAMS, PARAM_FIELDS,
+	RHYTHM_FIELDS, mainBatchTypes, schemaRequiredOf, stageRequires, stageVocabulary, validateParams,
+} from '../lib/dispatch/core.js'
+import { assemblerParameters, batchParameters, declaredSlots } from '../lib/dispatch/parameters.js'
 import { DISPATCH_DIR } from './helpers.js'
 
 const dispatchDir = DISPATCH_DIR
@@ -25,39 +30,100 @@ const data = {
 	planSpec: readData('plan-spec.json'),
 }
 
-const parameters = dispatchParameters(data)
+// 四件面：按契约表各拼一张（键序即 PARAM_FIELDS 定序）
+const surfaces = new Map(ASSEMBLER_CONTRACTS.map((contract) => [contract.name, assemblerParameters(data, contract.stage)]))
+const plan = surfaces.get('dispatch_plan')
+const review = surfaces.get('dispatch_review')
+const build = surfaces.get('dispatch_build')
+const verify = surfaces.get('dispatch_verify')
 const batch = batchParameters(data)
 
-test('参数面的键集＝core 的参数名全集（两份名单同源，多一个少一个都红）', () => {
-	assert.deepEqual(Object.keys(parameters), PARAM_FIELDS)
-	// 类型面三档：字符串、字符串数组、整数——scale 两项是 integer，漏进白名单外它们会被当成
-	// string 判红，而反过来把它写成 string 就是宿主按字符串收、rhythm 拿不到数比大小
-	for (const field of PARAM_FIELDS) {
-		const type = ['decisions', 'addons', 'anchors'].includes(field)
-			? 'array'
-			: ['diffLines', 'changedFiles'].includes(field) ? 'integer' : 'string'
-		assert.equal(parameters[field].type, type, `${field} 的类型`)
+test('四件键集＝D2 参数集（手抄名单是判据）：并集 ≡ PARAM_FIELDS、各件键集 ≡ declaredSlots、stage 不在任何一件', () => {
+	const expected = {
+		dispatch_plan: ['subject', 'intent', 'batch', 'provider', 'diffLines', 'changedFiles'],
+		dispatch_review: ['batchType', 'subject', 'intent', 'baseBatchType', 'batch', 'decisions', 'addons', 'provider', 'diffLines', 'changedFiles'],
+		dispatch_build: ['batchType', 'subject', 'intent', 'batch', 'decisions', 'anchors', 'forbidden', 'verifyCmd', 'rootCause', 'provider', 'diffLines', 'changedFiles'],
+		dispatch_verify: ['batchType', 'subject', 'intent', 'baseBatchType', 'batch', 'decisions', 'addons', 'provider', 'diffLines', 'changedFiles'],
 	}
-	// 数值槽位三链互验：core 的 NUMERIC_PARAMS（空判据与取值域按它判）＝参数面标 number/integer 的
-	// 那几格＝数值那几格在 core 的 rhythm 谓词里按 {max:N} 区间比。三处各列一份，任一处漏一个字段，
-	// 漏的那处表现是「传了不报类型错、谓词那条也不生效」，没有任何错误会响
-	const numeric = Object.entries(parameters).filter(([, spec]) => spec.type === 'number' || spec.type === 'integer').map(([field]) => field)
-	assert.deepEqual(numeric, NUMERIC_PARAMS, '参数面标 number/integer 的键集 ≡ core 的 NUMERIC_PARAMS')
+	for (const [name, keys] of Object.entries(expected)) {
+		assert.deepEqual(Object.keys(surfaces.get(name)), keys, `${name} 的键集（多一个＝声明了不消费，少一个＝模型传了收不到）`)
+	}
+	const union = [...new Set(Object.values(expected).flat())]
+	assert.deepEqual([...union].sort(), [...PARAM_FIELDS].sort(), '四件并集 ≡ PARAM_FIELDS：stage 出局后 14 键，一份不多一份不少')
+	for (const contract of ASSEMBLER_CONTRACTS) {
+		assert.deepEqual(
+			Object.keys(surfaces.get(contract.name)),
+			declaredSlots(data, contract.stage),
+			`${contract.name} 键集 ≡ declaredSlots（消费集 ∪ 条件槽位）：声明面与消费面同源`,
+		)
+		assert.ok(!('stage' in surfaces.get(contract.name)), `${contract.name} 不收 stage——阶段已随一拆四固化进工具`)
+	}
+	// build 不声明 addons：施工无门列，addons 在那一趟没有任何读点——按消费面派生它就不在面里
+	assert.ok(!('addons' in build), 'build 不声明 addons（无门列→无读点）；verify/review 才有')
+})
+
+test('schema required＝派生公式（lifecycle requires − 回填基础集），直调派生函数比对：只有 build 标 anchors', () => {
+	for (const contract of ASSEMBLER_CONTRACTS) {
+		const surface = surfaces.get(contract.name)
+		const required = Object.keys(surface).filter((field) => surface[field].required === true)
+		assert.deepEqual(required, schemaRequiredOf(data, contract.stage), `${contract.name} 的 required 集＝schemaRequiredOf 直调`)
+		assert.deepEqual(
+			schemaRequiredOf(data, contract.stage),
+			stageRequires(data, contract.stage).filter((field) => !BACKFILL_FIELDS.includes(field)),
+			`${contract.name}：派生公式＝lifecycle requires − 回填基础集（必填单源仍在 lifecycle）`,
+		)
+	}
+	assert.deepEqual(schemaRequiredOf(data, '施工'), ['anchors'], '施工 schema required＝anchors（宿主层拦缺参，invalid arguments 待宿主重启后真机验）')
+	for (const name of ['dispatch_plan', 'dispatch_review', 'dispatch_verify']) {
+		const stage = ASSEMBLER_CONTRACTS.find((contract) => contract.name === name).stage
+		assert.deepEqual(schemaRequiredOf(data, stage), [], `${name} 的 requires 全在回填面：schema 一格必填都不标`)
+	}
+	assert.equal(build.anchors.required, true, 'build.anchors 是四件里唯一的 schema required')
+})
+
+test('专属参数断言：anchors/rootCause 只在 build、baseBatchType 只在 review/verify、decisions 不进 plan', () => {
+	const declaredIn = (field) => ASSEMBLER_CONTRACTS.filter((contract) => field in surfaces.get(contract.name)).map((contract) => contract.name)
+	assert.deepEqual(declaredIn('anchors'), ['dispatch_build'])
+	assert.deepEqual(declaredIn('rootCause'), ['dispatch_build'])
+	assert.deepEqual(declaredIn('baseBatchType'), ['dispatch_review', 'dispatch_verify'], 'baseBatchType 只在两道门：有门列才有「落回原批型主行」的读点')
+	assert.deepEqual(declaredIn('decisions'), ['dispatch_review', 'dispatch_build', 'dispatch_verify'], 'decisions 不进 plan：方案是给用户拍板的输入，不是已拍板的载体')
+	// verify 的 subject 语义分离写进两处描述：参数格与 batch 格（回填口径见 batch.js 的 BACKFILL_EXCLUDE）
+	assert.match(verify.subject.description, /净 diff 生成命令/)
+	assert.match(verify.subject.description, /不从台账回填/)
+	assert.match(verify.batch.description, /subject 不在此列/)
+	assert.match(plan.subject.description, /缺省可由 batch 回填/, '方案/门一/施工的 subject 仍是台账回填面那格')
+})
+
+test('回填基础集的格不标必填、描述都带「缺省可由 batch 回填」（schema 标必填＝台账回填永远到不了）', () => {
+	for (const contract of ASSEMBLER_CONTRACTS) {
+		const surface = surfaces.get(contract.name)
+		for (const field of BACKFILL_FIELDS) {
+			if (!(field in surface)) continue
+			assert.equal(surface[field].required, undefined, `${contract.name}.${field}：必填判定归 core.validateParams（回填之后按数据点名）`)
+		}
+	}
+	for (const [surface, name] of [[plan, 'dispatch_plan'], [review, 'dispatch_review'], [build, 'dispatch_build']]) {
+		for (const field of ['batchType', 'intent', 'subject'].filter((field) => field in surface)) {
+			assert.ok(surface[field].description.includes('缺省可由 batch 回填'), `${name}.${field} 的描述要告诉模型这格可以从台账来`)
+		}
+	}
+	// 类型面三档照旧：字符串、字符串数组、整数
+	for (const contract of ASSEMBLER_CONTRACTS) {
+		for (const [field, spec] of Object.entries(surfaces.get(contract.name))) {
+			const type = ['decisions', 'addons', 'anchors'].includes(field)
+				? 'array'
+				: ['diffLines', 'changedFiles'].includes(field) ? 'integer' : 'string'
+			assert.equal(spec.type, type, `${contract.name}.${field} 的类型`)
+		}
+	}
+	// 数值槽位三链互验（core 的 NUMERIC_PARAMS＝参数面标 integer 的键集＝rhythm 按区间比的那几个）
+	const numeric = Object.keys(build).filter((field) => build[field].type === 'integer')
+	assert.deepEqual(numeric, NUMERIC_PARAMS, '参数面标 integer 的键集 ≡ core 的 NUMERIC_PARAMS')
 	assert.deepEqual(RHYTHM_FIELDS.filter((field) => NUMERIC_PARAMS.includes(field)), NUMERIC_PARAMS, '数值槽位就是节奏谓词里按区间比的那几个字段')
 })
 
-test('规模参数在 schema 层就标 integer：小数由宿主在调用边界拒掉（core 的运行期检查仍在，留给不经宿主 schema 的路）', () => {
-	// 这条与上一条的「类型面三档」是同一件事的两面：那边核键集与类型名，这边核「为什么是
-	// integer 而不是 number」——行数与文件数是计数，宿主 DSL 有 IntegerValueSchemaSpec，
-	// 标 number 的话 4.5 能过 schema，之后只由 core.assertNumericParams 兜着。兜得住，
-	// 但两道的落点不同：schema 那道在调用边界、点名参数；core 那道要等整趟参数校验走到它。
-	// schema 那道对 2^53 与 Number.MAX_VALUE 这类「是整数但不是计数」的值拦不拦得下来，
-	// 属运行期（宿主注册边界），待下次启动验证；判据留在 core 那道，见下面那条边界枚举
-	assert.equal(parameters.diffLines.type, 'integer')
-	assert.equal(parameters.changedFiles.type, 'integer')
-})
-
 test('规模参数按非负安全整数收：字符串数字／负数／小数当场点名（changedFiles 侧同样，不只 diffLines）', () => {
+	// 直接调 core 的用例按「注入后的 params 形态」给 stage（装配层注入后 core 才见它）
 	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
 	for (const value of ['5', -1, 4.5]) {
 		assert.throws(
@@ -68,14 +134,12 @@ test('规模参数按非负安全整数收：字符串数字／负数／小数�
 	}
 	assert.throws(() => validateParams(data, { ...base, diffLines: Number.NaN, changedFiles: 1 }), /参数「diffLines」须是非负安全整数.*实得 NaN/, 'NaN 打成 null 会把方向指错：调用方传的不是 null')
 	assert.doesNotThrow(() => validateParams(data, { ...base, diffLines: 0, changedFiles: 0 }), '0 是有效规模（零行净 diff 正是免派那一档）')
-	assert.match(parameters.diffLines.description, /与 changedFiles 成对给/, '成对给写在描述里：只给一半按不命中是静默的，模型照旧传一个不会知道自己漏了')
-	assert.match(parameters.changedFiles.description, /与 diffLines 成对给/)
+	assert.match(build.diffLines.description, /与 changedFiles 成对给/, '成对给写在描述里：只给一半按不命中是静默的，模型照旧传一个不会知道自己漏了')
+	assert.match(build.changedFiles.description, /与 diffLines 成对给/)
 })
 
 test('规模参数的取值域边界＝非负安全整数（0/1/MAX_SAFE_INTEGER 过，越界的四种当场点名）', () => {
 	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
-	// 过侧：安全整数是分界而不是「整数」。Number.isInteger 对下面四种全判真（Infinity 除外），
-	// 于是按「整数」收的判据会让 2^53 与 1.79e308 安静地被当成合法规模拿去比 {max:N}
 	for (const value of [0, 1, Number.MAX_SAFE_INTEGER]) {
 		assert.doesNotThrow(
 			() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }),
@@ -89,65 +153,24 @@ test('规模参数的取值域边界＝非负安全整数（0/1/MAX_SAFE_INTEGER
 			`diffLines=${value}：${Number.isInteger(value) ? '它是整数却不是计数——双精度里已不是数出来的行数' : '连整数都不是'}，当成规模比阈值等于凭空造一档免派`,
 		)
 	}
-	// 描述面与运行期同一口径：模型照描述传的域就是运行期收的域，两句不一致时它看不出自己会被拒在哪
 	for (const field of ['diffLines', 'changedFiles']) {
-		assert.match(parameters[field].description, /非负安全整数[，、]上限 2\^53−1/, `${field} 的描述与 core.assertNumericParams 收的是同一个域`)
+		assert.match(build[field].description, /非负安全整数[，、]上限 2\^53−1/, `${field} 的描述与 core.assertNumericParams 收的是同一个域`)
 	}
 })
 
-test('stage 取值清单＝本工具能出稿的阶段，按 lifecycle 的 order 排（提交/复盘归各自的工具，不列）', () => {
-	assert.equal(parameters.stage.required, true)
-	const listed = parameters.stage.description.split(' | ')
-	assert.deepEqual(listed, ['方案', '门一', '施工', '门二'])
-	assert.deepEqual(listed, dispatchStages(data), '清单现读：不手抄就停了上一次改 JSON 之前的名字')
-	assert.deepEqual(listed, stageVocabulary(data).filter((stage) => listed.includes(stage)), '清单是阶段词表按 order 排后的子集（手抄成别的顺序这里就红）')
-	for (const out of ['提交', '复盘']) {
-		assert.ok(!listed.includes(out), `${out} 不在本工具的服务范围内，列进去等于让模型照着调一个出不了稿的阶段`)
-	}
-	assert.ok(!parameters.stage.description.includes(' | 提交'), '清单里不许出现不可达阶段')
-})
-
-test('两件工具的 enum 都对着生产词表现读：dispatch 收可服务阶段/主行批型，dispatch_batch 收全阶段（advance 要能记提交与复盘）', () => {
-	// enum 从描述升进 schema 之后，参数面这一格就是判据本身，故两端同一个函数、手抄即漂。
-	// 两件工具的词表**故意不同**：dispatch 出不了稿（收全阶段＝放行一个必然在运行期报未知 stage
-	// 的值），而 dispatch_batch 的 advance 要把提交与复盘记进台账——那一侧收 dispatchStages 就会把
-	// 「记到收尾」这一步挡在门外，那是台账生命周期里正当的一步。
-	assert.deepEqual(parameters.stage.enum, dispatchStages(data), 'dispatch 的 stage enum＝dispatchStages')
-	assert.deepEqual(parameters.batchType.enum, mainBatchTypes(data), 'dispatch 的 batchType enum＝mainBatchTypes（addon 行不在内）')
-	assert.deepEqual(batch.stage.enum, stageVocabulary(data), 'dispatch_batch 的 stage enum＝stageVocabulary 全量（含提交/复盘）')
-	assert.deepEqual(batch.batchType.enum, mainBatchTypes(data), 'dispatch_batch 的 batchType enum 同为 mainBatchTypes：台账按批型名索引，两件工具认的必须是同一份名字')
-	// enum 与描述必须说同一份词表：一边描述 A 一边校验 B，模型照描述选了 B 而校验按 A 拒，报错还
-	// 带着 A 的清单。判据取「enum 每个值都在描述里出现过」而不是两边切分后比集合——两处的分隔符
-	// 本来就不同（stage 用「 | 」、批型那几句用顿号拼），切分比不了，而「值被描述点名」正是那条
-	// 不变量本身：模型能从描述里认出的每个合法值都得在 enum 里，反之 enum 里的每个值都得能被描述
-	// 指出来（描述里没有而 enum 收着的值＝模型没有任何路径得知它）
-	for (const [name, parametersOfTool] of [['dispatch', parameters], ['dispatch_batch', batch]]) {
-		for (const field of ['stage', 'batchType']) {
-			for (const value of parametersOfTool[field].enum) {
-				assert.ok(parametersOfTool[field].description.includes(value), `${name} 的 ${field} enum 收了「${value}」而描述里没点名它：模型没有任何路径得知这个合法值`)
-			}
+test('enum 对账：enum 里每个合法值都在描述里被点名（描述是模型得知合法值的唯一路径）', () => {
+	// 两处分隔符本就不同（stage 用「 | 」、批型用顿号拼），切分比不了；判据取「enum 每个值都在
+	// 描述里出现过」——描述里没有而 enum 收着的值＝模型没有任何路径得知它
+	for (const field of ['stage', 'batchType']) {
+		for (const value of batch[field].enum) {
+			assert.ok(batch[field].description.includes(value), `dispatch_batch 的 ${field} enum 收了「${value}」而描述里没点名它`)
 		}
 	}
-})
-
-test('回填面四格都不标必填（宿主按 schema 拦必填发生在进 execute 之前，台账回填就永远到不了；必填判定归 core.validateParams）', () => {
-	assert.equal(parameters.batchType.required, undefined)
-	assert.deepEqual(parameters.batchType.required, undefined, '手抄回 required:true 这里红')
-	assert.equal(parameters.subject.required, undefined, '对象那格能由 batch 回填，schema 标必填＝回填到不了')
-	assert.equal(parameters.intent.required, undefined, '意图那格能由 batch 回填，schema 标必填＝回填到不了')
-	assert.equal(parameters.decisions.required, undefined)
-	assert.equal(parameters.anchors.required, undefined, '阶段级必填由 core.validateParams 按数据点名，schema 里不标')
-	assert.equal(parameters.stage.required, true, 'stage 是调用形态参数、不在回填面，宿主层拦形态错误是好事')
-	for (const field of ['batchType', 'subject', 'intent', 'decisions']) {
-		assert.ok(parameters[field].description.includes('缺省可由 batch 回填'), `${field} 的描述要告诉模型这格可以从台账来，否则不传就以为该编`)
+	for (const value of review.batchType.enum) {
+		assert.ok(review.batchType.description.includes(value), `dispatch_review 的 batchType enum 收了「${value}」而描述里没点名它`)
 	}
-	assert.ok(parameters.batchType.description.startsWith('批型（门一/施工/门二阶段必填'), '必填阶段名单现读自 lifecycle 的 requires')
-	for (const row of data.pairing.rows.filter((entry) => entry.kind !== 'addon')) {
-		assert.ok(parameters.batchType.description.includes(row.batchType), `主行「${row.batchType}」漏在描述外，模型照着挑不到`)
-	}
-	for (const row of data.pairing.rows.filter((entry) => entry.kind === 'addon')) {
-		assert.ok(parameters.batchType.description.includes(row.batchType), `加挂行「${row.batchType}」漏在描述外，模型改用 addons 时挑不到`)
-	}
+	assert.deepEqual(batch.stage.enum, stageVocabulary(data), '台账 stage enum＝全量词表（advance 记提交/复盘是正当一步）')
+	assert.deepEqual(batch.batchType.enum, mainBatchTypes(data), '台账与装配件同一份批型词表：按名字索引，两边认的不同＝登记与出稿指两个东西')
 })
 
 test('批型条件槽位：core 的 holders 与参数面的描述读的是同一份判定（改一行，两处一起变）', () => {
@@ -165,18 +188,19 @@ test('批型条件槽位：core 的 holders 与参数面的描述读的是同一
 		}
 	}
 	assert.match(holdersInMessage(data, 'baseBatchType'), /消费它的是新功能·形态未定、修复批那一类批型/, 'core 点名的那类批型＝配对表里标 needsBase 的行（次序照表）')
-	assert.match(parameters.batchType.description, /需 baseBatchType 的特殊行：新功能·形态未定、修复批/, '参数面点名的也是那几行——同读 core 的 holders')
+	assert.match(review.batchType.description, /需 baseBatchType 的特殊行：新功能·形态未定、修复批/, '参数面点名的也是那几行——同读 core 的 holders')
 	assert.match(holdersInMessage(data, 'rootCause'), /消费它的是施工\+needsRootCause 批型（修复批）/)
-	assert.match(parameters.rootCause.description, /修复批施工必填/)
+	assert.match(build.rootCause.description, /修复批施工必填/)
 
 	const flipped = structuredClone(data)
 	for (const row of flipped.pairing.rows) {
 		if (row.needsBase === true) row.needsBase = false
 		if (row.needsRootCause === true) row.needsRootCause = false
 	}
-	const changed = dispatchParameters(flipped)
-	assert.ok(!changed.batchType.description.includes('需 baseBatchType 的特殊行'), '行上不标 needsBase：参数面不再点名那类批型')
-	assert.ok(!changed.rootCause.description.includes('施工必填'), '行上不标 needsRootCause：参数面不再说那类批型施工必填')
+	const changedReview = assemblerParameters(flipped, '门一')
+	const changedBuild = assemblerParameters(flipped, '施工')
+	assert.ok(!changedReview.batchType.description.includes('需 baseBatchType 的特殊行'), '行上不标 needsBase：参数面不再点名那类批型')
+	assert.ok(!changedBuild.rootCause.description.includes('施工必填'), '行上不标 needsRootCause：参数面不再说那类批型施工必填')
 	assert.match(holdersInMessage(flipped, 'baseBatchType'), /配对表里没有任何一行标 needsBase/, '行上不再有 needsBase 时 core 那侧改说「没人标这个条件」，而不是印出一个空名单冒充集合')
 	assert.throws(
 		() => validateParams(flipped, { ...call, batchType: '修复批', rootCause: '错行' }),
@@ -184,20 +208,17 @@ test('批型条件槽位：core 的 holders 与参数面的描述读的是同一
 		'两个标记都摘掉后 rootCause 真的没人消费：core 的 holders 与描述同时空了，两处仍一致',
 	)
 
-	// 输出等价对账：把行上的条件值换成 truthy 但非 true 的东西，两侧仍须给出同一答案——描述那
-	// 几格是 core 的 holders 现读拼出来的，与 core 的判定同源。这条守的是「两侧答案一致」，不守
-	// 「本文件没有自持 filter」：两侧各 filter 一份、哪怕判据逐字相同，这份断言照样绿。结构那一
-	// 半由下面那道源码守卫把着——守卫拦的是「字面量倒退」这类常见形态；语义等价的间接自持
-	// （借 CONDITION_PARAMS 的 condition 字段名现读、却复制 filter 逻辑）拦不住，那层的兜底
-	// 在时间维度：core 改判据时两侧分岔，odd 这份数据会红
+	// 输出等价对账：条件值换成 truthy 但非 true 的东西，两侧仍须给出同一答案——描述那几格是
+	// core 的 holders 现读拼出来的，与 core 的判定同源。结构那一半由下面那道源码守卫把着
 	const odd = structuredClone(data)
 	for (const row of odd.pairing.rows) {
 		if (row.needsBase === true) row.needsBase = 'true'
 		if (row.needsRootCause === true) row.needsRootCause = 'true'
 	}
-	const oddDescription = dispatchParameters(odd)
-	assert.ok(!oddDescription.batchType.description.includes('需 baseBatchType 的特殊行'), '条件值不是 true 就不算带条件：描述与 core 的 holders 同一口径')
-	assert.ok(!oddDescription.rootCause.description.includes('施工必填'), '同上，rootCause 侧')
+	const oddReview = assemblerParameters(odd, '门一')
+	const oddBuild = assemblerParameters(odd, '施工')
+	assert.ok(!oddReview.batchType.description.includes('需 baseBatchType 的特殊行'), '条件值不是 true 就不算带条件：描述与 core 的 holders 同一口径')
+	assert.ok(!oddBuild.rootCause.description.includes('施工必填'), '同上，rootCause 侧')
 	assert.match(holdersInMessage(odd, 'baseBatchType'), /配对表里没有任何一行标 needsBase/, 'core 那侧对同一个数据也判「没人标这个条件」')
 
 	// 结构守卫（机械证据）：条件字段字面量只许出现在 core.js 的槽位表一处——参数面自己再 filter
@@ -214,25 +235,31 @@ test('批型条件槽位：core 的 holders 与参数面的描述读的是同一
 	assert.deepEqual([...new Set(callSites)].sort(), Object.keys(CONDITION_PARAMS).sort(), '调用点集合 ≡ core 的 CONDITION_PARAMS 键集：core 加一格而参数面没跟上，模型照旧描述传值就撞「未消费」')
 })
 
-test('描述里的阶段名单与 core 的槽位消费集一致（描述说某阶段可填，契约就得真消费它）', () => {
-	assert.match(parameters.anchors.description, /施工必填$/)
-	assert.match(parameters.forbidden.description, /施工可选$/)
-	assert.match(parameters.verifyCmd.description, /施工可选$/)
-	assert.match(parameters.baseBatchType.description, /只在这一趟的组合可能落回原批型时消费（有门列，且该行标 needsBase 或主行该列为空），否则收到即报错/, '条件槽位把条件写进描述：只说「不消费」会让模型在门一/纯后端管线批那一趟反复重试')
-	assert.match(parameters.decisions.description, /门一\/施工\/门二阶段逐条成行.*方案那一趟不消费它/, 'decisions 的描述说清哪些阶段消费它')
-	assert.match(parameters.rootCause.description, /别的阶段与别的批型收到即报错/)
-	assert.match(parameters.subject.description, /门二＝净 diff 生成命令/, '两态语义是规则本身，不是可变的阶段清单')
+test('描述名单与消费集一致（描述说施工要，契约就得真在施工消费它）', () => {
+	assert.match(build.anchors.description, /施工必填$/)
+	assert.match(build.forbidden.description, /施工可选$/)
+	assert.match(build.verifyCmd.description, /施工可选$/)
+	assert.match(review.baseBatchType.description, /只在这一趟的组合可能落回原批型时消费（有门列，且该行标 needsBase 或主行该列为空），否则收到即报错/, '条件槽位把条件写进描述：只说「不消费」会让模型在门一/纯后端管线批那一趟反复重试')
+	assert.match(build.rootCause.description, /别的批型收到即报错/)
 	assert.throws(() => validateParams(data, { stage: '门一', batchType: '纯后端管线批', subject: 'x', intent: 'y', anchors: ['a'] }), /stage=门一 不消费 anchors——消费它的是施工阶段/, '描述说施工才要 anchors，别的阶段传它就该被拒')
+	assert.throws(
+		() => validateParams(data, { stage: '方案', subject: 'x', intent: 'y', decisions: ['拍板'] }),
+		/stage=方案 不消费 decisions——方案是给用户拍板的输入，不是已拍板的载体：拍板清单随派发\/施工阶段的 brief 下发，删掉它/,
+		'方案那一趟传 decisions 被拒且理由说人话',
+	)
 })
 
-test('描述面不残留手抄的阶段名单（加了阶段或改了 requires，描述跟着走）', () => {
+test('台账工具的名单现读：新阶段进 stage 的 enum、新形态进形态 id 的 enum（不手抄名单）', () => {
 	const extended = structuredClone(data)
 	extended.lifecycle.stages.push({
 		id: '验收', order: 7, gate: false, kind: '复盘',
 		requires: ['subject', 'intent', 'anchors'], produces: ['验收结论'], uses: [], note: '单测现造的阶段',
 	})
 	extended.templates.验收 = '验收结论：〔intent〕。〔subject〕〔anchors〕'
-	const extendedParameters = dispatchParameters(extended)
-	assert.match(extendedParameters.stage.description, /验收$/, '新阶段自动进 stage 取值清单')
-	assert.match(extendedParameters.anchors.description, /施工\/验收必填$/, '新阶段要 anchors 后描述里的名单跟着走')
+	extended.forms.forms.push({ id: '单测新增形态', role: '单测现造的形态角色句。' })
+	const extendedBatch = batchParameters(extended)
+	assert.ok(extendedBatch.stage.enum.includes('验收'), '新阶段自动进台账 stage 的 enum（stage 不再是装配件参数，清单随 lifecycle 走到台账这边）')
+	assert.ok(extendedBatch.perFormCounts.items.properties.form.enum.includes('单测新增形态'), '新形态自动进形态 id 的 enum')
+	// 台账 subject 的占位口径写进描述：start 时还没定对象先登记「（待写）」，回填按未登记处理
+	assert.match(batch.subject.description, /（待写）/, '占位字面量在描述里点名：不写，主会话不知道可以先占位')
 })

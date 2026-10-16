@@ -74,7 +74,10 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
-		['dispatch/index.js', ['registerDispatch', 'registerDispatchBatch', 'registerDispatchLessons', 'configShape']],
+		['dispatch/index.js', [
+			'registerDispatchPlan', 'registerDispatchReview', 'registerDispatchBuild', 'registerDispatchVerify',
+			'registerDispatchBatch', 'registerDispatchLessons', 'configShape',
+		]],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -190,7 +193,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 三件工具写进一行就是「一件起不来，另两件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), ['dispatch', 'dispatch_batch', 'dispatch_lessons', 'memory', 'see_image'], 'FEATURES 的标签集＝本包登记的工具面：装配器、台账、复盘各占一行（三者失败原因互不相干）')
+	assert.deepEqual(features.map(([label]) => label), ['dispatch_plan', 'dispatch_review', 'dispatch_build', 'dispatch_verify', 'dispatch_batch', 'dispatch_lessons', 'memory', 'see_image'], 'FEATURES 的标签集＝本包登记的工具面：装配四件、台账、复盘各占一行（彼此失败原因互不相干）——四件并一行＝逐工具隔离没了')
 	const glueImports = [...parseLocalImports(glue).values()].flat()
 	for (const [label, register] of features) {
 		assert.ok(glueImports.includes(register), `FEATURES 的 ${label} 指向 ${register}，而胶水没 import 它——apply 时撞 undefined，try/catch 接不住`)

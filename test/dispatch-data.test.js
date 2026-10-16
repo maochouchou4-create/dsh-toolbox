@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { assembleDispatch, computeCombo } from '../lib/dispatch/core.js'
+import { assembleDispatch, computeCombo, matchRhythm } from '../lib/dispatch/core.js'
 import { DATA_FILES, DEFAULT_DATA_DIR, SAFETY_CARRIER_IDS, ZERO_READER_LIST_FIELDS, loadDispatchData } from '../lib/dispatch/data.js'
 import { editData, withDataDir } from './helpers.js'
 
@@ -352,12 +352,21 @@ test('阶段表专核：uses 里的 plan-spec.json 与模板里的 plan-spec 占
 	})
 })
 
-test('阶段表专核：core 的 CONSTRUCTION_STAGE 落在词表内＝改 id 不再静默失效（根因三行按 stage id 匹配，落空时 brief 看着完整）', (t) => {
+test('阶段表专核：装配四件的契约阶段行缺席＝加载失败（拆分后四件各按固定阶段出稿，改 id 要同时改 core）', (t) => {
+	// 施工改名：根因分类三行按 stage id 匹配，落空时施工 brief 末尾少三行而其余部分照样出稿——
+	// 这个静默面在加载期就拦下（方案/门一/门二的缺行过去没有任何机器核，同一道检查一并管住）
 	withDataDir(t, (dir) => {
 		editData(dir, 'lifecycle.json', (lifecycle) => {
 			lifecycle.stages.find((row) => row.id === '施工').id = '动手'
 		})
-		assert.throws(() => loadDispatchData({ dataDir: dir }), /CONSTRUCTION_STAGE「施工」不在 lifecycle\.json 的 stage id.*动手/, '只改 lifecycle 不改 core：根因分类三行按 id 匹配，落空时施工 brief 末尾少三行而其余部分照样出稿')
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /装配工具的阶段行在 lifecycle\.json 里缺席（dispatch_build＝施工；现存 方案、门一、动手、门二、提交、复盘）/)
+	})
+	// 整行删掉：四件里缺谁、现存哪些阶段，错误里逐一点名（改的人一眼知道要在两边对表）
+	withDataDir(t, (dir) => {
+		editData(dir, 'lifecycle.json', (lifecycle) => {
+			lifecycle.stages = lifecycle.stages.filter((row) => row.id !== '方案')
+		})
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /缺席（dispatch_plan＝方案；现存 门一、施工、门二、提交、复盘）/, '方案行缺席同样拦下——dispatch_plan 出稿时才炸是数据坏行最远的余波')
 	})
 })
 
@@ -749,4 +758,25 @@ test('批1 数据迁移：砍刀/砍刀·diff 进对齐的主行门列、用户�
 		reentries.some((entry) => entry.note.includes('整套重派门一')),
 		'rhythm 含 when.stage=["门一"] 的重派动作条',
 	)
+})
+
+test('rhythm 的 when.stage 条目逐条可达（判据）：按条目自己的谓词合成参数，note 必须真的从 matchRhythm 出来', () => {
+	// 数据驱动：盘上加一条 when.stage 条目而它的谓词合成不出命中参数时，这条先红——
+	// 「可达性」不靠人眼对 pairing.json，也不在测试里手抄五条 note
+	const staged = loadDispatchData().pairing.rhythm.filter((row) => row.when.stage !== undefined)
+	assert.ok(staged.length >= 5, `盘上 when.stage 条目少于 5 条时这份样本失了代表性：实得 ${staged.length} 条`)
+	for (const row of staged) {
+		const params = {
+			stage: row.when.stage[0],
+			batchType: row.when.batchType?.[0] ?? '纯后端管线批',
+			provider: row.when.provider?.[0] ?? 'minimax-cn',
+			// 规模谓词只设上限：给上限内的值即命中；无规模谓词的条目给非零值不碍事
+			diffLines: row.when.diffLines?.max ?? 3,
+			changedFiles: row.when.changedFiles?.max ?? 1,
+		}
+		assert.ok(
+			matchRhythm(loadDispatchData(), params).includes(row.note),
+			`when.stage 条目「${row.note.slice(0, 24)}…」按自身谓词合成的参数命不中自己：${JSON.stringify(row.when)}`,
+		)
+	}
 })

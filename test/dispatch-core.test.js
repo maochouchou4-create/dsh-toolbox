@@ -50,7 +50,7 @@ const formIds = (combo) => combo.map((entry) => entry.form)
  * 含出不了稿阶段的名单选阶段，模型只会从「未知 stage」撞到「本工具不装配该阶段」，两道错。
  */
 const unknownStageError = (stage) => new RegExp(
-	`未知 stage「${stage}」.*能出稿的阶段＝${dispatchStages(data).join('、')}；提交/复盘由 dispatch_batch/dispatch_lessons 服务`,
+	`未知 stage「${stage}」.*装配四件各服务一个固定阶段（dispatch_plan＝方案、dispatch_review＝门一、dispatch_build＝施工、dispatch_verify＝门二）；提交/复盘由 dispatch_batch/dispatch_lessons 服务`,
 )
 
 /** 子串出现次数：「各恰一次」这类不变量按「有几条以它开头」数不住，只能数出现次数。 */
@@ -61,7 +61,7 @@ const construction = (overrides = {}) => ({
 	stage: '施工',
 	batchType: '纯后端管线批',
 	subject: '/home/nvse/code/实施方案/方案.md 批 1',
-	intent: '装配 dispatch 工具',
+	intent: '装配派发装配四件',
 	anchors: ['computeCombo', 'assembleBrief'],
 	...overrides,
 })
@@ -243,7 +243,7 @@ test('施工 brief：执行纪律内联在首段、对象行在位，自证与�
 	for (const fragment of [
 		'方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。',
 		'对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。',
-		'本批意图一句话：装配 dispatch 工具。',
+		'本批意图一句话：装配派发装配四件。',
 		'锚点（符号名，禁行号）：computeCombo、assembleBrief。',
 		'自证：上报必须附自验证据',
 		'提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做',
@@ -943,7 +943,7 @@ test('方案任务书：执行纪律指针、语义判定段位置、自查第 �
 	assert.ok(!layout.text.includes('（见「版面」节）'), '悬空自指清掉')
 })
 
-test('跨工具回填：dispatch(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async (t) => {
+test('跨工具回填：装配四件(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async (t) => {
 	const dir = tempRoot(t, 'dispatch-backfill')
 	const batch = 'dispatch-plugin-b4'
 	const decisions = ['台账落共享层', 'fold 集合式']
@@ -953,31 +953,32 @@ test('跨工具回填：dispatch(batch=) 先从台账补齐拍板清单/批型/�
 		fixture.advance({ batch, stage: '门一', rules: 'a1b2c3d4' }),
 	])
 	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
-	const review = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4' }, events).params
+	const review = backfillFromBatch(data, { batch, subject: '方案.md 批 4' }, events, '门一').params
 	assert.deepEqual(review.decisions, decisions, '拍板清单跟批次走：登记一次，此后每路 brief 自动带「不得重开」')
 	assert.equal(review.batchType, '纯后端管线批')
-	const output = assembleDispatch(data, review)
+	// stage 由装配层注入：单测直调时把契约阶段补上，与 dispatch_review 工具那一趟同形
+	const output = assembleDispatch(data, { ...review, stage: '门一' })
 	for (const brief of output.briefs) {
 		assert.ok(brief.text.includes(`拍板清单（不得重开）：${decisions.join('；')}。`), `${brief.form} 的 brief 带出台账登记的拍板清单`)
 		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的 brief 带上台账登记的意图`)
 	}
 	// 方案那一趟不消费 decisions/batchType：回填只给 intent，出稿不撞「不消费即报错」
-	const planParams = backfillFromBatch(data, { stage: '方案', batch, subject: '方案.md 批 4' }, events).params
-	assert.deepEqual(Object.keys(planParams).sort(), ['batch', 'intent', 'stage', 'subject'])
-	assert.doesNotThrow(() => assembleDispatch(data, planParams))
+	const planParams = backfillFromBatch(data, { batch, subject: '方案.md 批 4' }, events, '方案').params
+	assert.deepEqual(Object.keys(planParams).sort(), ['batch', 'intent', 'subject'], 'stage 不在回填产物里——它是装配层的注入载体，不随回填走')
+	assert.doesNotThrow(() => assembleDispatch(data, { ...planParams, stage: '方案' }))
 	// 显式参数优先，且与台账说岔了即报错：两个来源说同一件事说岔时静默取一个＝主会话以为自己改过
 	assert.throws(
-		() => backfillFromBatch(data, { stage: '门一', batch, subject: 'x', intent: '另一句意图' }, events),
+		() => backfillFromBatch(data, { batch, subject: 'x', intent: '另一句意图' }, events, '门一'),
 		/与批次「dispatch-plugin-b4」台账里登记的不一致/,
 	)
-	const agreed = backfillFromBatch(data, { stage: '门一', batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events)
+	const agreed = backfillFromBatch(data, { batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events, '门一')
 	assert.equal(agreed.params.intent, '台账落共享层', '与台账一致的显式值照用，不重复填也不报冲突')
 	assert.deepEqual(agreed.filled, [])
 	// 对象那格每阶段都必填：登记时带对象、这一趟不传，回填补齐后出稿
-	const build = backfillFromBatch(data, { stage: '施工', batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events)
+	const build = backfillFromBatch(data, { batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events, '施工')
 	assert.deepEqual(build.filled, ['batchType', 'subject', 'decisions'], '施工消费 batchType/subject/intent/anchors/decisions：台账补上没传的那几格')
 	assert.equal(build.params.subject, '方案.md 批 4', '对象从台账补齐——登记一次，每路 brief 指同一份对象指针')
-	for (const brief of assembleDispatch(data, build.params).briefs) {
+	for (const brief of assembleDispatch(data, { ...build.params, stage: '施工' }).briefs) {
 		assert.ok(brief.text.includes('对象（动工前先读对应批次节）：方案.md 批 4。'), `${brief.form} 的施工 brief 带出台账登记的对象`)
 		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的施工 brief 带上显式传的意图`)
 		assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享层；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
@@ -990,8 +991,8 @@ test('「先回填后校验」是契约（回填面那四格里两格每阶段�
 	])
 	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
 	const args = { stage: '门一', batch: 'order-batch' }
-	assert.throws(() => validateParams(data, args), /缺必填参数：batchType、subject、intent/, '不先回填就校验：报的是「你少传了」，而那两格本来就该由台账给')
-	const backfilled = backfillFromBatch(data, args, events).params
+	assert.throws(() => validateParams(data, args), /缺必填参数：batchType、subject、intent/, '不先回填就校验：报的是「你少传了」，而那几格本来就该由台账给')
+	const backfilled = backfillFromBatch(data, args, events, '门一').params
 	assert.doesNotThrow(() => validateParams(data, backfilled), '回填之后才校验：这两格齐了，出稿继续往下走')
 })
 
@@ -1009,7 +1010,7 @@ test('batchParameters 的键面＝工具逻辑层要的那几格（漏一个就�
 	assert.equal(parameters.action.description, BATCH_ACTIONS.join(' | '), 'action 的取值现读自逻辑层那份词表——描述里那四个动作与实现能跑的四个是同一份')
 	assert.equal(parameters.action.required, true, 'action 不在回填面，宿主层拦形态错误是好事')
 	for (const field of ['batchType', 'intent', 'subject', 'decisions']) {
-		assert.equal(parameters[field].required, undefined, `${field} 能由 dispatch 的 batch 回填，schema 上标必填＝回填永远到不了`)
+		assert.equal(parameters[field].required, undefined, `${field} 能由装配四件的 batch 回填，schema 上标必填＝回填永远到不了`)
 	}
 	const tooFew = { ...data, forms: { ...data.forms, forms: data.forms.forms.slice(0, 1) } }
 	assert.throws(() => batchParameters(tooFew), /至少要有两个形态才能给示例/, '形态表空到解构出 undefined 时示例会渲染成 "undefined": 2——当场点名，不让带病的示例出稿')

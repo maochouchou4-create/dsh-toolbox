@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { transcribe } from '../lib/see-image/vision.js'
 import { objectShape, stringList } from '../lib/tool-schema.js'
-import { dispatchStages, mainBatchTypes } from '../lib/dispatch/core.js'
+import { mainBatchTypes, stageVocabulary } from '../lib/dispatch/core.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
 import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
 
@@ -38,7 +38,10 @@ registerHooks({
 	},
 })
 
-const { registerDispatch, registerDispatchBatch, registerDispatchLessons, configShape } = await import('../lib/dispatch/index.js')
+const {
+	registerDispatchPlan, registerDispatchReview, registerDispatchBuild, registerDispatchVerify,
+	registerDispatchBatch, registerDispatchLessons, configShape,
+} = await import('../lib/dispatch/index.js')
 const { registerMemory } = await import('../lib/memory/index.js')
 const { registerSeeImage } = await import('../lib/see-image/index.js')
 
@@ -89,27 +92,54 @@ before((t) => {
 	ledger = join(root, 'dispatch-ledger.jsonl')
 })
 
-test('装配层冒烟：三件工具注册得出来，且 execute 真被调过一次（纯函数用例照不到的那一层）', async () => {
-	const dispatchCtx = ctxOf()
+test('装配层冒烟：六件工具注册得出来，且 execute 真被调过一次（纯函数用例照不到的那一层）', async () => {
+	const asmCtx = Object.fromEntries(['plan', 'review', 'build', 'verify'].map((kind) => [kind, ctxOf()]))
 	const batchCtx = ctxOf()
 	const lessonsCtx = ctxOf()
-	registerDispatch(dispatchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchPlan(asmCtx.plan.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchReview(asmCtx.review.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchBuild(asmCtx.build.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchVerify(asmCtx.verify.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	const dispatchTool = dispatchCtx.registered[0]
+	const [planTool, reviewTool, buildTool, verifyTool] = ['plan', 'review', 'build', 'verify'].map((kind) => asmCtx[kind].registered[0])
 	const batchTool = batchCtx.registered[0]
 	const lessonsTool = lessonsCtx.registered[0]
-	assert.equal(dispatchTool.name, 'dispatch')
-	assert.equal(batchTool.name, 'dispatch_batch')
-	assert.equal(lessonsTool.name, 'dispatch_lessons')
+	assert.deepEqual(
+		[planTool, reviewTool, buildTool, verifyTool, batchTool, lessonsTool].map((tool) => tool.name),
+		['dispatch_plan', 'dispatch_review', 'dispatch_build', 'dispatch_verify', 'dispatch_batch', 'dispatch_lessons'],
+		'一拆四各注册一件：四件并一行注册＝逐工具隔离没了（FEATURES 侧另有断言，这里钉注册出口这一侧）',
+	)
 	assert.deepEqual(Object.keys(configShape), ['dispatchDataDir', 'dispatchLedgerPath'], 'Config 两个键：数据目录与台账路径')
 
 	const exec = { signal: undefined, agent: { session: 'smoke' } }
 	const lines = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter((line) => line !== '') : []
-	// 不带 batch 的老路径也要能跑通——回填那段在 execute 里，它引用错一个变量就是这条全红
-	const plain = await dispatchTool.execute({ stage: '门一', batchType: '纯后端管线批', subject: 'README', intent: '冒烟' }, exec)
+	// 方案那一趟：不收 batchType（方案不判批型），任务书单路出稿
+	const plan = await planTool.execute({ subject: 'README', intent: '冒烟' }, exec)
+	assert.deepEqual(plan.briefs.map((brief) => brief.form), ['方案任务书'], '方案＝单路任务书')
+	// 不带 batch 的装配路径也要能跑通——回填那段在 execute 里，它引用错一个变量就是这条全红
+	const plain = await reviewTool.execute({ batchType: '纯后端管线批', subject: 'README', intent: '冒烟' }, exec)
 	assert.ok(plain.briefs.length > 0, '装配层 execute 要真能出稿：这条路径曾经 100% 抛 ReferenceError，而纯函数用例全绿')
 	assert.equal(plain.combo.length > 0, true)
+
+	// 未知键守卫（宿主把参数根编译成开放对象，只有 execute 看得见）：不声明的键点名、退役的
+	// stage 键走别名表指路到对应新工具、缺必填在 validateParams 点名（宿主 schema 拦必填那一层
+	// 要宿主重启才生效，真机验证待重启后补）
+	await assert.rejects(
+		() => planTool.execute({ subject: 'README', intent: '冒烟', decisions: ['拍板'] }, exec),
+		/未知参数「decisions」/,
+		'方案不收 decisions：开放对象 schema 拦不住，execute 的守卫才是那道闸',
+	)
+	await assert.rejects(
+		() => reviewTool.execute({ batchType: '纯后端管线批', subject: 'README', intent: '冒烟', stage: '门一' }, exec),
+		/「stage」已退役.*dispatch_review＝门一/,
+		'退役 stage 不当一般未知键：别名表指路到对应新工具',
+	)
+	await assert.rejects(
+		() => buildTool.execute({ batchType: '纯后端管线批', subject: 'README', intent: '冒烟' }, exec),
+		/缺必填参数：anchors/,
+		'施工缺锚点在运行期点名；宿主层 invalid arguments 待重启后另验',
+	)
 
 	const started = await batchTool.execute({ action: 'start', batch: 'smoke-batch', batchType: '纯后端管线批', intent: '台账落共享层', subject: 'README 装配层' }, exec)
 	assert.equal(started.ok, true)
@@ -158,10 +188,16 @@ test('装配层冒烟：三件工具注册得出来，且 execute 真被调过�
 	assert.match((await batchTool.output.render({ action: 'start', batch: 'smoke-batch' }, structuredClone(started)))[0].text, /批次 smoke-batch（纯后端管线批）/, '写动作深拷贝后同样靠 events 渲染')
 	assert.equal(lines().length, beforeCount, '渲染这条路上没有写台账')
 
-	// 跨工具那一趟：dispatch 带批次名跑一趟，回填把台账里的对象与意图补上
-	const cross = await dispatchTool.execute({ stage: '门一', batch: 'smoke-batch' }, exec)
+	// 跨工具那一趟：review 带批次名跑一趟，回填把台账里的对象与意图补上
+	const cross = await reviewTool.execute({ batch: 'smoke-batch' }, exec)
 	assert.ok(cross.briefs[0].text.includes('对象：README 装配层。'), `回填的对象要进 brief：${cross.briefs[0].text}`)
 	assert.ok(cross.briefs[0].text.includes('本批意图一句话：台账落共享层。'), `回填的意图要进 brief：${cross.briefs[0].text}`)
+
+	// 门二那一趟：subject 不从台账回填（BACKFILL_EXCLUDE）——显式给净 diff 命令，台账那格登记的
+	// 是方案路径。两格语义不同，回填它会要么说岔报错、要么把两个对象混进一格；显式值照用即是对的
+	const verify = await verifyTool.execute({ batch: 'smoke-batch', subject: 'git diff HEAD~1..HEAD', intent: '台账落共享层' }, exec)
+	assert.ok(verify.briefs.length > 0, '门二出稿不因台账里另有一个 subject 而说岔')
+	assert.ok(verify.briefs[0].text.includes('对象：git diff HEAD~1..HEAD。'), `门二的对象＝显式的净 diff 命令，不被台账方案路径覆盖：${verify.briefs[0].text}`)
 
 	// 复盘那一趟：读的是刚才写进同一台账的事件——端口、路径、词法三段接线错任何一段都在这里红
 	const pending = await lessonsTool.execute({}, exec)
@@ -207,28 +243,31 @@ test('复盘那一趟拿到的是只读门面：宿主 fs 的 writeText 就算�
 	)
 })
 
-test('宿主 schema 编译的静态自查：全仓五件工具的每个 object 节点都显式声明 additionalProperties，工厂产物同样过这道', () => {
+test('宿主 schema 编译的静态自查：全仓八件工具的每个 object 节点都显式声明 additionalProperties，工厂产物同样过这道', () => {
 	// 这一条是替身够不到的那层：夹具的 defineTool 原样交回定义，把宿主的 schema 编译替身吃掉了，
 	// 而真宿主在 object 节点没显式声明 additionalProperties 时整件工具注册失败（「unsupported JSON
 	// schema」）——不在这里静态钉住，就只能等下次宿主启动才发现那一件整件缺席（缺席的是整件工具，
 	// 不是某个字段被拒，从症状上看不出是 schema 的问题）。
-	// 覆盖面＝本包登记的全部工具（胶水 FEATURES 那五件）：漏注册一件，下面那次遍历对它空转而本
+	// 覆盖面＝本包登记的全部工具（胶水 FEATURES 那八件）：漏注册一件，下面那次遍历对它空转而本
 	// 条照样全绿，故工具名单照写不抄、并且断言它与胶水的 FEATURES 一致（imports.test.js 那条核 FEATURES）
 	const memoryCtx = ctxOf()
 	registerMemory(memoryCtx.ctx, { memoryRoot: join(root, 'memory-registration') })
 	const seeImageCtx = ctxOf()
 	registerSeeImage(seeImageCtx.ctx, {})
-	const ctx = ctxOf()
-	registerDispatch(ctx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	const asmCtxs = Object.fromEntries(['plan', 'review', 'build', 'verify'].map((kind) => [kind, ctxOf()]))
+	registerDispatchPlan(asmCtxs.plan.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchReview(asmCtxs.review.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchBuild(asmCtxs.build.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchVerify(asmCtxs.verify.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const batchCtx = ctxOf()
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const lessonsCtx = ctxOf()
 	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	const definitions = [memoryCtx, seeImageCtx, ctx, batchCtx, lessonsCtx].flatMap((one) => one.registered)
+	const definitions = [memoryCtx, seeImageCtx, ...Object.values(asmCtxs), batchCtx, lessonsCtx].flatMap((one) => one.registered)
 	assert.deepEqual(
 		definitions.map((definition) => definition.name).sort(),
-		['dispatch', 'dispatch_batch', 'dispatch_lessons', 'memory', 'see_image'],
-		'五件都在扫描面里：本包多注册一件工具而这张名单没跟上，下面的遍历对它空转而本条照样全绿',
+		['dispatch_batch', 'dispatch_build', 'dispatch_lessons', 'dispatch_plan', 'dispatch_review', 'dispatch_verify', 'memory', 'see_image'],
+		'八件都在扫描面里：本包多注册一件工具而这张名单没跟上，下面的遍历对它空转而本条照样全绿',
 	)
 	const bare = []
 	const walk = (node, where) => {
@@ -244,7 +283,7 @@ test('宿主 schema 编译的静态自查：全仓五件工具的每个 object �
 		walk(definition.parameters, `${definition.name}.parameters`)
 		walk(definition.output.schema, `${definition.name}.output.schema`)
 	}
-	// 工厂产物单独过一次：那两件是三族输出 schema 汇进去的地方，它哪天坏了，上面五件会一起红而
+	// 工厂产物单独过一次：那两件是三族输出 schema 汇进去的地方，它哪天坏了，上面八件会一起红而
 	// 报错路径指向的是消费方（看不出是哪一档形状先坏的）。开口那一档也过——它就是当前 BATCH
 	// 输出里事件行/摘要行在用的形状
 	walk(objectShape({ form: { type: 'string' } }), 'objectShape(缺省)')
@@ -272,34 +311,94 @@ test('宿主 schema 编译的静态自查：全仓五件工具的每个 object �
 	}
 })
 
-test('参数面 enum 与生产词表现读对齐：stage＝dispatchStages、batchType＝mainBatchTypes（addon 行只进描述）', () => {
+test('参数面 enum 与生产词表现读对齐：batchType＝mainBatchTypes、台账 stage＝全量词表、形态 id＝forms 现读', () => {
 	// 加 enum 的收益在宿主调用边界（dsh-tools 的 defineTool 先 validate(args)，不过就抛
 	// ToolArgsError 并把合法值清单带出来），而夹具的 defineTool 替身把那层吃掉了——所以这条断言
 	// 钉的是「enum 收的范围对不对」这一侧，且两侧都对着**生产函数**核。手抄一份派生式就是判据的
-	// 第三处表述：lifecycle 调序（dispatchStages 按 order 排）时它与生产说岔，症状是「数据没改错、
-	// 测试先红」，而报错指向的是一个不存在的方向。enum 从描述升进 schema 之后参数面这一格就是判据
-	// 本身，故两端同一个函数。
-	const ctx = ctxOf()
-	registerDispatch(ctx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	const parameters = ctx.registered[0].parameters
+	// 第三处表述：配对表调行序时它与生产说岔，症状是「数据没改错、测试先红」，而报错指向的是
+	// 一个不存在的方向。enum 从描述升进 schema 之后参数面这一格就是判据本身，故两端同一个函数。
 	const data = loadDispatchData()
-	for (const field of ['stage', 'batchType']) {
-		assert.ok(Array.isArray(parameters[field].enum) && parameters[field].enum.length > 0, `${field} 的词表要进 schema（宿主 StringValueSchemaSpec 收 enum，且逐值核）`)
-		assert.ok(parameters[field].enum.every((value) => typeof value === 'string'), `${field}.enum 的成员须全是字符串`)
+	for (const [register, label] of [
+		[registerDispatchReview, 'dispatch_review'], [registerDispatchBuild, 'dispatch_build'], [registerDispatchVerify, 'dispatch_verify'],
+	]) {
+		const one = ctxOf()
+		register(one.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+		assert.deepEqual(one.registered[0].parameters.batchType.enum, mainBatchTypes(data), `${label} 的 batchType enum 逐字等于 mainBatchTypes(data)：特殊行在内、addon 行不在`)
 	}
-	// stage 只收出得了稿的那几个阶段（提交/复盘归 dispatch_batch/dispatch_lessons，本工具对它们报
-	// 未知 stage，收进来等于放行一个必然在运行期才报的值）。收哪几个由 dispatchStages 单源定，故
-	// 这里不再手抄「哪几个该在」那份名单——它会随数据调序而与生产说岔。
-	assert.deepEqual(parameters.stage.enum, dispatchStages(data), 'stage enum 逐字等于 dispatchStages(data)：出得了稿的阶段，按 order 排')
-	// batchType 收配对表主行行名（含 needsBase/needsRootCause 的特殊行，只排除 addon 行）
-	assert.deepEqual(parameters.batchType.enum, mainBatchTypes(data), 'batchType enum 逐字等于 mainBatchTypes(data)：特殊行在内、addon 行不在')
+	// 台账工具：stage 收**全量**阶段词表（advance 记提交/复盘是正当一步，收装配那档会把「记到收尾」
+	// 挡在门外）；batchType 与装配件同一份词表——台账按名字索引，两边认的不同＝登记与出稿指两个东西
+	const batchCtx = ctxOf()
+	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	const batchParameters = batchCtx.registered[0].parameters
+	assert.deepEqual(batchParameters.stage.enum, stageVocabulary(data), '台账 stage enum＝lifecycle 全量词表（提交/复盘在列）')
+	assert.deepEqual(batchParameters.batchType.enum, mainBatchTypes(data), '台账 batchType enum 与装配四件同一份')
+	// 形态 id 的 enum＝forms 现读（combo/perFormCounts 条目）：快照取舍在参数描述里显式认领
+	for (const field of ['combo', 'recommended', 'perFormCounts']) {
+		assert.deepEqual(
+			batchParameters[field].items.properties.form.enum,
+			data.forms.forms.map((form) => form.id),
+			`${field} 条目的形态 id enum 现读 forms.json`,
+		)
+	}
+	assert.ok(
+		batchParameters.perFormCounts.description.includes('注册期快照'),
+		'形态 id enum 的「注册期快照需重启」取舍在参数描述里显式认领，不当沉默行为',
+	)
 	// addon 行不是 batchType 的合法值：收进 enum 就是让模型照着合法调用传一个必然被运行期拒的名字。
 	// 名单从数据面现读（配对表增删 addon 行时这条跟着走），不在测试里手抄一份
 	const addonNames = data.pairing.rows.filter((row) => row.kind === 'addon').map((row) => row.batchType)
 	assert.ok(addonNames.length > 0, '配对表里真得有几行 addon，否则这条断言空转')
 	for (const name of addonNames) {
-		assert.ok(!parameters.batchType.enum.includes(name), `batchType enum 收了 addon 行「${name}」——加挂行只能经 addons 参数，不作 batchType`)
-		assert.ok(parameters.batchType.description.includes(name) && parameters.batchType.description.includes('addons'), `描述里要点名 addon 行「${name}」并说清走 addons 参数：它不在 enum 里，模型只能从描述那条通道知道往哪填`)
+		assert.ok(!batchParameters.batchType.enum.includes(name), `batchType enum 收了 addon 行「${name}」——加挂行只能经 addons 参数，不作 batchType`)
+	}
+})
+
+test('装配四件的描述＝每件一句自述＋一句指路：体量有上限、四件分句两两不同头（矩阵散文不回潮）', () => {
+	// 描述是常驻召回面，体量就是成本：改 7 把矩阵散文删掉后要有机器判据守住「不再长回来」——
+	// 每件字符上限拦矩阵散文回潮；分句去重拦「同一段能力清单被复制四份」。描述只在注册产物上
+	// 可见（参数面与描述都定型在注册期），故这条放在装配层测试而不是纯函数层。
+	const tools = []
+	for (const register of [registerDispatchPlan, registerDispatchReview, registerDispatchBuild, registerDispatchVerify]) {
+		const one = ctxOf()
+		register(one.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+		tools.push(one.registered[0])
+	}
+	const DESCRIPTION_CAP = 160
+	const SHARED_HEAD = 10
+	// 分句＝按 。；; 切开、分隔符留在前句尾（整句复制连标点一起搬，留着分隔符判得更准）。
+	// 判据：不同件的两句开头 ≥10 字同头即判共享——整句复制与只换尾巴的复制都拦得住；
+	// 短语级重合（族名、README「dispatch 数据资产」这类指路短语）不算抄句：四件都指同一节是分工，不是复制。
+	const commonHead = (left, right) => {
+		let n = 0
+		while (n < left.length && n < right.length && left[n] === right[n]) n += 1
+		return n
+	}
+	const clauses = new Map()
+	for (const tool of tools) {
+		const description = tool.description
+		assert.ok(
+			description.length <= DESCRIPTION_CAP,
+			`${tool.name} 描述 ${description.length} 字，超上限 ${DESCRIPTION_CAP}——矩阵散文回潮的信号（对照表只在 README，能力清单在输出里本来可见）`,
+		)
+		clauses.set(tool.name, description.split(/(?<=[。；;])/).filter((part) => part.length >= SHARED_HEAD))
+	}
+	const names = [...clauses.keys()]
+	for (let i = 0; i < names.length; i += 1) {
+		for (let j = i + 1; j < names.length; j += 1) {
+			for (const left of clauses.get(names[i])) {
+				for (const right of clauses.get(names[j])) {
+					const head = commonHead(left, right)
+					assert.ok(
+						head < SHARED_HEAD,
+						`${names[i]} 与 ${names[j]} 的分句开头 ${head} 字同头（「${left.slice(0, head)}…」）——描述去重判据：四件各说各的，指路句也不许同款`,
+					)
+				}
+			}
+		}
+	}
+	// 指路面在：每件都把读者指向 README 的对照表一节（唯一的对照表出处）
+	for (const tool of tools) {
+		assert.ok(tool.description.includes('README'), `${tool.name} 的描述带指路：对照表唯一出处＝README「dispatch 数据资产」`)
 	}
 })
 
@@ -402,12 +501,12 @@ test('替身攒块语义对拍④：不认识的 chunk 类型当场抛错（真�
 
 test('模板坏了不连坐台账工具：注册期只读配对表/形态表/阶段表，status 照常可用', () => {
 	// 断的是「模板坏了 → 台账查询一起失败」这条连坐：台账记的是已经发生的批次，与出稿模板无关。
-	// 对照组是 dispatch 工具——它出稿要用模板，模板坏了就该注册失败（缺了它不如缺席）
+	// 对照组是装配四件——它出稿要用模板，模板坏了就该注册失败（缺了它不如缺席）
 	const brokenData = join(root, 'data-broken')
 	cpSync(DISPATCH_DATA_DIR, brokenData, { recursive: true })
 	writeFileSync(join(brokenData, 'templates.json'), '{ 这不是 JSON')
 	const batchCtx = ctxOf()
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: brokenData, dispatchLedgerPath: ledger })
 	assert.equal(batchCtx.registered.length, 1, '模板坏了，台账工具照样注册')
-	assert.throws(() => registerDispatch(ctxOf().ctx, { dispatchDataDir: brokenData }), /dispatch 数据/, '对照组：dispatch 的出稿面真要用模板，坏了就该注册失败')
+	assert.throws(() => registerDispatchPlan(ctxOf().ctx, { dispatchDataDir: brokenData }), /dispatch 数据/, '对照组：装配件的出稿面真要用模板，坏了就该注册失败')
 })
