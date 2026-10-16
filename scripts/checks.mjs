@@ -10,7 +10,7 @@
  * import 本文件拿 CHECKS，不必起子进程才能验一份清单。
  */
 import process from 'node:process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { composeMemory, readEntryHead, scanLayer } from '../lib/memory/assemble.js'
 import {
@@ -22,6 +22,7 @@ import {
 import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
 import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
 import { listLayerDirs } from '../lib/memory/layers.js'
+import { duplicateSectionHeadings, sectionDupNotice } from '../lib/memory/patterns.js'
 import { isNonBlankString } from '../lib/value.js'
 
 /**
@@ -56,7 +57,10 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 	const record = (kind) => (issue, path, detail) => {
 		issues.push({ kind, issue, path, detail })
 	}
-	const layers = listLayerDirs(root).map(({ kind, dir }) => {
+	// 层清点只发生一次，两个消费方（头读扫描与节重名整篇读）共用同一份清单：脚本自己
+	// 再列一遍目录，两次结果不一致时（中途增删条目）报告里的数字就互相对不上
+	const layerDirs = listLayerDirs(root)
+	const layers = layerDirs.map(({ kind, dir }) => {
 		// 层清点、派生行与这一层报出的 issue 出自同一次扫描：脚本自己再列一遍目录，
 		// 两次结果不一致时（中途增删条目）报告里的「条目文件数」与派生行数就对不上，
 		// 而那正是读报告的人唯一能自查的抓手。读法与注入侧同源（只读文件头），
@@ -75,6 +79,29 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 			retired: names.filter(isRetiredIndexFile),
 		}
 	})
+	// 节重名查的是正文，头读那份窗口看不到——这一项自己整篇读（与体检同一读法；读法是
+	// 消费方的知识）。逐文件降级：读不动的条目已由 entry-readable 认领 read-error，
+	// 这里跳过不重复报。issue kind entry-section-dup 由 entry-section-dup 检查项认领
+	// ——没人认领的新 kind 会被 issue-unclaimed 兜住，那是 CHECKS 数组结构给的保险
+	for (const { kind, dir } of layerDirs) {
+		let names
+		try {
+			names = readdirSync(dir)
+		} catch {
+			continue // 层目录读不动已在扫描期以 read-error 入账
+		}
+		for (const name of names) {
+			if (!isEntryName(name)) continue
+			const path = join(dir, name)
+			try {
+				for (const title of duplicateSectionHeadings(readFileSync(path, 'utf8'))) {
+					issues.push({ kind, issue: 'entry-section-dup', path, detail: sectionDupNotice(title) })
+				}
+			} catch {
+				continue // 单文件读失败已在扫描期以 read-error 入账
+			}
+		}
+	}
 	// 写侧纪律的字符数读不到即记一条 issue：静默归 0 会让整块变小、block-chars 随之达标，
 	// 脚本印「全部达标」，而规则块在运行期是被 warn 掉的——规则被静默丢掉比超预算更难查
 	const rulesPath = join(root.profile, WRITING_FILE)
@@ -189,6 +216,14 @@ export const CHECKS = [
 		guard: '扫描期 layer-title-coverage issue（每层一条，与该层有无撞名无关）',
 		claims: ['layer-title-coverage'],
 		run: (site) => site.issues.filter((item) => item.issue === 'layer-title-coverage').map((item) => `${item.kind}：${item.detail}`),
+	},
+	{
+		id: 'entry-section-dup',
+		label: '条目内没有重名的 ## 节标题（edit 按节锚定以标题为锚，重名即分不清锚在哪）',
+		guard: '整篇读条目正文，同一 ## 标题（去空白后）出现 ≥2 即判红；只查重名不查无节——无节条目是语料迁移收口前的存量常态',
+		claims: ['entry-section-dup'],
+		// detail 出自 patterns 的共享渲染点（与体检 warning 同一份口径），这里补上「哪一层」定位
+		run: (site) => site.issues.filter((item) => item.issue === 'entry-section-dup').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
 	{
 		id: 'block-chars',

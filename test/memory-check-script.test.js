@@ -42,10 +42,10 @@ function runScript(args, options = {}) {
 	return { code: result.status, stdout: result.stdout }
 }
 
-const layerDir = (memoryRoot, layer) => (layer === 'habit' ? join(memoryRoot, 'profile') : join(memoryRoot, 'workspaces', layer))
+const layerDir = (memoryRoot, layer) => (layer === 'profile' ? join(memoryRoot, 'profile') : join(memoryRoot, 'workspaces', layer))
 
 /**
- * 在临时根里铺一层条目（habit 铺习惯层，其余铺该工作区桶）。
+ * 在临时根里铺一层条目（profile 铺习惯层，其余铺该工作区桶）。
  * lines 走派生行再拆回两键，而不是直接写 frontmatter 文本：这样行预算与块定档的换算用的是
  * 注入侧同一份派生逻辑，测试里不会躺着第二份格式认知。
  */
@@ -54,7 +54,7 @@ function seedLayer(memoryRoot, layer, lines) {
 	mkdirSync(dir, { recursive: true })
 	// 习惯层连同 WRITING.md 一起铺：真实语料里它与层同在，缺了它「写侧纪律读不动」就是
 	// 一条真的判红（规则块在运行期被 warn 掉，块随之变小），而这些用例要判的是别的项
-	if (layer === 'habit') writeFileSync(join(dir, 'WRITING.md'), '# 写侧纪律\n\n测试语料占位。\n', 'utf8')
+	if (layer === 'profile') writeFileSync(join(dir, 'WRITING.md'), '# 写侧纪律\n\n测试语料占位。\n', 'utf8')
 	lines.forEach((line, index) => {
 		const file = `topic-${index}.md`
 		const [, title, , description] = /^- \[(.+)\]\((.+)\) — (.*)$/.exec(line)
@@ -90,7 +90,7 @@ test('合规语料：退出 0，自报名单与检查项数组逐项对得上（
 	const root = join(base, 'compliant')
 	mkdirSync(root, { recursive: true })
 	const cwd = '/盘/甲-project'
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词／召回词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词／召回词', file: 'profile-topic.md' })])
 	// 桶目录名问 core.js 同一份 slug 归一（脚本装配时也问它）：手写一个桶名而 cwd 归一出的
 	// 不是它，工作层就不在注入块里——那份报告仍会印「全部达标」，正是空跑假绿的形态
 	seedLayer(root, workspaceSlug(cwd), [deriveIndexLine({ title: '工作条目', description: '触发词／召回词', file: 'work-topic.md' })])
@@ -115,7 +115,7 @@ test('超预算语料：退出 1，报告里出现的每个检查项都在自报
 	// 没到顶）。条数按每层能把层内字符预算吃满来取，判据仍是常量推出来的
 	const perLayer = Math.ceil(INDEX_CHAR_BUDGET / (longLineOf(0).length + 1)) + 1
 	const lines = Array.from({ length: perLayer }, (_, index) => longLineOf(index))
-	seedLayer(root, 'habit', lines)
+	seedLayer(root, 'profile', lines)
 	seedLayer(root, workspaceSlug(cwd), lines.map((line, index) => longLineOf(index + perLayer)))
 	const { code, stdout } = runScript([root, cwd])
 	assert.equal(code, 1, `超预算语料须以 1 退出：\n${stdout}`)
@@ -213,7 +213,7 @@ test('层内 title 重名：只由那一项判红，且跨层同名不算（撞�
 		deriveIndexLine({ title: '独题条目', description: '触发词丙', file: 'c.md' }),
 	])
 	// 习惯层也放一条同名：两层各一行都看得清，跨层不构成不可区分
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '同题条目', description: '习惯层触发词', file: 'h.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '同题条目', description: '习惯层触发词', file: 'h.md' })])
 	const { code, stdout } = runScript([root, cwd])
 	assert.equal(code, 1, `层内重名须以 1 退出：\n${stdout}`)
 	// 按去重后的 id 断言：证明的是「只有这一项判红」，不是「这一项只列一行」——同一语料
@@ -244,15 +244,39 @@ test('层内重名结论的覆盖面：title 判不了的条目一并说出来�
 	assert.ok(violationIds(stdout).includes('entry-frontmatter'), stdout)
 })
 
+test('条目内 ## 节重名：只由那一项判红（edit 按节锚定以标题为锚，重名即分不清锚在哪）', () => {
+	const root = join(base, 'section-dup')
+	mkdirSync(root, { recursive: true })
+	const cwd = '/盘/节-project'
+	// 习惯层铺一条合规条目（seedLayer 连带铺 WRITING.md）：本用例只该由节重名那项判红，
+	// 不许让「写侧纪律读不动」混进来
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
+	seedLayer(root, workspaceSlug(cwd), [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 重名节条目（整篇读才看得到）＋不同名的多节条目（不得误伤）＋无节条目（存量常态不报）
+	seedRaw(root, workspaceSlug(cwd), 'dup.md', '---\ntitle: 重名节条目\ndescription: 触发词\n---\n\n## 状态\n\n第一处\n\n## 备注\n\n夹层\n\n## 状态\n\n第二处\n')
+	seedRaw(root, workspaceSlug(cwd), 'multi.md', '---\ntitle: 多节条目\ndescription: 触发词\n---\n\n## 甲\n\n一\n\n## 乙\n\n二\n')
+	seedRaw(root, workspaceSlug(cwd), 'flat.md', '---\ntitle: 无节条目\ndescription: 触发词\n---\n\n没有节结构的正文\n')
+	const { code, stdout } = runScript([root, cwd])
+	assert.equal(code, 1, `节重名须以 1 退出：\n${stdout}`)
+	assert.deepEqual([...new Set(violationIds(stdout))], ['entry-section-dup'], `只该由这一项判红：\n${stdout}`)
+	assert.ok(stdout.includes('dup.md') && stdout.includes('状态'), `病灶须点名条目与重名的节：\n${stdout}`)
+	assert.ok(!stdout.includes('flat.md'), `无节条目不报（存量常态，全量有节是语料迁移趟的判据）：\n${stdout}`)
+	assert.ok(!stdout.includes('multi.md'), `不同名的多节条目不报：\n${stdout}`)
+	// 认领在案：新 kind 若没人认领会落进 issue-unclaimed 兜底——这里钉的是它被正主认领了
+	const check = CHECKS.find((item) => item.id === 'entry-section-dup')
+	assert.ok(check, '节重名检查项必须在检查项数组里')
+	assert.deepEqual(check.claims, ['entry-section-dup'], '新 issue kind 必须被显式认领（否则 check:memory 红在 issue-unclaimed）')
+})
+
 test('没人认领的 issue kind：兜底项把它报出来，而不是让它随报告消失', () => {
 	// 这一条没法用子进程造：issue kind 由扫描器（assemble.js）发出，测试不该为它改扫描器。
 	// 直接拿现场片段喂那一项的 run，钉的是「未认领即判红」这个判定本身
 	const check = CHECKS.find((item) => item.id === 'issue-unclaimed')
 	assert.ok(check, '兜底项必须在检查项数组里——它是 issue 枚举会长大这件事的唯一哨兵')
-	const reported = check.run({ issues: [{ kind: 'habit', issue: 'future-kind', path: '/x.md', detail: '' }] })
+	const reported = check.run({ issues: [{ kind: 'profile', issue: 'future-kind', path: '/x.md', detail: '' }] })
 	assert.equal(reported.length, 1, '未认领的 kind 须报一行')
 	assert.ok(reported[0].includes('future-kind'), reported[0])
-	assert.deepEqual(check.run({ issues: [{ kind: 'habit', issue: 'entry-frontmatter', path: '/x.md', detail: '' }] }), [], '已认领的 kind 不该被兜底项重复报')
+	assert.deepEqual(check.run({ issues: [{ kind: 'profile', issue: 'entry-frontmatter', path: '/x.md', detail: '' }] }), [], '已认领的 kind 不该被兜底项重复报')
 })
 
 test('记忆根打错：退出 1 且由接线那项判红（扫到 0 层不等于没有问题）', () => {
@@ -274,7 +298,7 @@ test('记忆根存在但里面没有层：同样 exit 1（空目录与打错的�
 
 test('空跑（两参都没给）：退出 1 且由桶在场那项判红，不许照印全部达标', () => {
 	const root = join(base, 'empty-run')
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
 	// 两参都不给时脚本走默认记忆根（这里用 DSH_MEMORY_ROOT 指回临时根，不碰真实语料）与
 	// process.cwd()：后者取一个必然没有桶的临时目录，于是「忘了带参数」的判红条件成立，
 	// 且整条路径与跑测试的人站在哪个仓库无关
@@ -289,7 +313,7 @@ test('空跑（两参都没给）：退出 1 且由桶在场那项判红，不�
 
 test('空串两参：退出 1（空串与纯空白按没给算，且不许拿「新工作区属常态」打圆场）', () => {
 	const root = join(base, 'empty-string-args')
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
 	// 显式传空串：解析后与缺参同形，可它仍是调用方写下来的形参——判据必须看得见这件事，
 	// 否则一次「以为给了参数」的调用会以 0 退出并印「全部达标」
 	const noBucketCwd = join(base, 'empty-string-no-bucket')
@@ -303,7 +327,7 @@ test('空串两参：退出 1（空串与纯空白按没给算，且不许拿「
 
 test('空跑（只给了记忆根、没给工作区 cwd）：同样 exit 1，不许拿「新工作区属常态」打圆场', () => {
 	const root = join(base, 'root-only')
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
 	// 给了记忆根、cwd 缺省落到 process.cwd()：那次装配只量到习惯层，整块定档名不副实。
 	// 这与「两参都不给」是同一个空跑走的另一扇门，两者都必须判红
 	const noBucketCwd = join(base, 'root-only-no-bucket')
@@ -317,7 +341,7 @@ test('空跑（只给了记忆根、没给工作区 cwd）：同样 exit 1，不
 
 test('新工作区（两参齐备、桶真的不存在）：只提示不判红（那是常态，不是空跑）', () => {
 	const root = join(base, 'fresh-workspace')
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
 	const fresh = '/盘/癸-fresh'
 	const { code, stdout } = runScript([root, fresh])
 	assert.equal(code, 0, `新工作区是常态，不该判红：\n${stdout}`)
@@ -328,7 +352,7 @@ test('新工作区（两参齐备、桶真的不存在）：只提示不判红�
 test('软链调用：照样出报告（薄壳没有「被直接运行才执行」那道守卫可关）', () => {
 	const root = join(base, 'symlinked')
 	mkdirSync(root, { recursive: true })
-	seedLayer(root, 'habit', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'habit-topic.md' })])
+	seedLayer(root, 'profile', [deriveIndexLine({ title: '习惯条目', description: '触发词', file: 'profile-topic.md' })])
 	const cwd = '/盘/子-project'
 	seedLayer(root, workspaceSlug(cwd), [deriveIndexLine({ title: '工作条目', description: '触发词', file: 'work.md' })])
 	// 曾经有一道 `realpath(argv[1]) === import.meta.url` 的守卫，它在软链下不成立，

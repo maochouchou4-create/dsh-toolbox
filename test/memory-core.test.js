@@ -25,7 +25,7 @@ before((t) => {
 	memoryRoot = join(base, 'memory')
 })
 
-/** 独立根目录：建 habit 层，可选建工作桶；返回根与各目录。造法在 helpers.memoryTree（三处同款）。 */
+/** 独立根目录：建习惯层（profile），可选建工作桶；返回根与各目录。造法在 helpers.memoryTree（三处同款）。 */
 const fixture = (name) => memoryTree(base, name)
 
 test('workspaceSlug：分隔符归一、折叠、去首尾、不小写', () => {

@@ -1,6 +1,7 @@
 /**
  * dsh-memory 端口写侧单测（node:test，零宿主依赖）：frontmatter 契约、索引行派生、
- * 层路由、upsert（建/拦截/风格告警）、edit（字面替换/版本守卫/命中拦截）。
+ * 层路由、upsert（建/拦截/风格告警）、edit（按节锚定/按键改 frontmatter/版本守卫/目标组合拦截）、
+ * 节判定的共享谓词。
  * upsert/edit 走 fs 端口（createNodeFsPort 构造一次、逐用例复用），故是 async。
  * delete 与 lint 各有自己的文件（memory-delete.test.js／memory-lint.test.js，I/O 按
  * 设计留在 node:fs 保持同步）；本文件仍留一条横跨三个动作的会话策略用例——那条断言
@@ -18,6 +19,7 @@ import { DEFAULT_MEMORY_ROOT, resolveRoot } from '../lib/memory-root.js'
 import { deleteEntry } from '../lib/memory/delete.js'
 import { assertEntryFrontmatter, deriveIndexLine, findFenceEnd, frontmatterLines, FRONTMATTER_HEAD_MAX_BYTES, FRONTMATTER_HEAD_PROBE_BYTES, groupTitlesByTitle, hasClosedFence, parseFrontmatter } from '../lib/memory/frontmatter.js'
 import { lintMemory } from '../lib/memory/lint.js'
+import { assertEntryHasSection, duplicateSectionHeadings, sectionHeadings } from '../lib/memory/patterns.js'
 import { editEntry, upsertEntry } from '../lib/memory/write.js'
 import { entry, tempRoot } from './helpers.js'
 
@@ -142,7 +144,7 @@ test('upsertEntry：工作层新建＝建桶＋条目，返回派生索引行且
 test('upsertEntry：日期戳与派生行超长进 warnings（提示不拦截）', async () => {
 	const root = join(base, 'write-warn')
 	const long = '词'.repeat(INDEX_LINE_CHAR_BUDGET)
-	const r = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'dated.md', content: entry('带日期戳的条目', `2026-01-02 记录／${long}`) })
+	const r = await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'dated.md', content: entry('带日期戳的条目', `2026-01-02 记录／${long}`) })
 	assert.equal(r.warnings.length, 2)
 	assert.ok(r.warnings.some((w) => w.includes('日期戳')))
 	assert.ok(r.warnings.some((w) => w.includes('超') && w.includes(String(INDEX_LINE_CHAR_BUDGET))))
@@ -154,7 +156,7 @@ test('upsertEntry：日期戳与派生行超长进 warnings（提示不拦截）
 
 test('upsertEntry：frontmatter 契约不合规一律抛错且不落盘', async () => {
 	const root = join(base, 'write-fm')
-	const args = { port, memoryRoot: root, layer: 'habit', file: 'ok.md', content: entry('合规条目', '触发词') }
+	const args = { port, memoryRoot: root, layer: 'profile', file: 'ok.md', content: entry('合规条目', '触发词') }
 	await assert.rejects(() => upsertEntry({ ...args, content: '# 没有 frontmatter\n' }), /frontmatter 不合规/)
 	await assert.rejects(() => upsertEntry({ ...args, content: '---\nname: ok\ntitle: 多余键\ndescription: 触发词\n---\n\n正文\n' }), /多余键/)
 	await assert.rejects(() => upsertEntry({ ...args, content: entry('[带括号]', '触发词') }), /方括号/)
@@ -165,17 +167,17 @@ test('upsertEntry：frontmatter 契约不合规一律抛错且不落盘', async 
 
 test('upsertEntry：层内同名拦截且不落盘（处置是改 title 不 delete，且点名全部撞上的条目）', async () => {
 	const root = join(base, 'write-dup')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'first.md', content: entry('同一个标题', '触发词') })
-	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'second.md', content: entry('同一个标题', '另一词') }), /同名/)
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'first.md', content: entry('同一个标题', '触发词') })
+	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'second.md', content: entry('同一个标题', '另一词') }), /同名/)
 	assert.equal(existsSync(join(root, 'profile', 'second.md')), false, '拦截不得留孤儿条目')
 	// 同名但就是它自己（重写同一条目）不拦
-	const again = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'first.md', content: entry('同一个标题', '触发词改') })
+	const again = await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'first.md', content: entry('同一个标题', '触发词改') })
 	assert.equal(again.indexLine, '- [同一个标题](first.md) — 触发词改')
 	// 报错点名全部撞上的条目而不只是第一条：读者照着改要一次改对，撞一个改一个得来回几趟。
 	// 绕过写侧直接落盘（跨机合流的等价物）造出第二条撞名，报错须两个名字都给全
 	writeFileSync(join(root, 'profile', 'third.md'), entry('同一个标题', '第三词'), 'utf8')
 	await assert.rejects(
-		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'second.md', content: entry('同一个标题', '另一词') }),
+		() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'second.md', content: entry('同一个标题', '另一词') }),
 		(error) => {
 			assert.match(error.message, /first\.md/)
 			assert.match(error.message, /third\.md/)
@@ -195,8 +197,8 @@ test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语
 	// 方向一：写侧一条条造出来的语料（构造上就撞不了名）体检必干净。两个动作问的不是同一件事
 	// （写侧问「再写这个 title 会不会撞上」，体检问「盘上现有的 title 有没有已经撞上的」），
 	// 但「什么算撞名」这一个判据必须是同一份，否则会出现体检沉默而写侧事后拦的错位
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('标题一', '触发词') })
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'two.md', content: entry('标题二', '触发词') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'one.md', content: entry('标题一', '触发词') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'two.md', content: entry('标题二', '触发词') })
 	assert.deepEqual(dupWarnings(), [], '各占一个 title 的语料体检不报撞名')
 
 	// 跨机合流能造出写侧造不出的语料：绕过写侧直接落盘（git merge 的等价物）。习惯层是
@@ -207,9 +209,9 @@ test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语
 	assert.ok(reported[0].includes('one.md') && reported[0].includes('three.md'), '体检点名撞上的两条')
 
 	// 方向二：体检点名的那一组，写侧正在拦的正是那一个 title（不是别的）
-	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'four.md', content: entry('标题一', '触发词') }), /同名/)
+	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'four.md', content: entry('标题一', '触发词') }), /同名/)
 	// 撞名只挡那一个 title，不把整层封死：重名躺在盘上时换个 title 仍写得进去
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'five.md', content: entry('标题五', '触发词') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'five.md', content: entry('标题五', '触发词') })
 	const afterWrite = dupWarnings()
 	assert.equal(afterWrite.length, 1, '新写的条目不并入撞名组')
 	assert.ok(afterWrite[0].includes('one.md') && afterWrite[0].includes('three.md'), '撞名组仍是原来那两条')
@@ -227,7 +229,7 @@ test('同名判定：同一条目体检整篇读、写侧头读 64KB 封顶，�
 
 	// 写侧只读到 64KB，看不见收尾围栏 → 判成不合规 → 整层封死，连别的条目也写不了
 	await assert.rejects(
-		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'third.md', content: entry('第三个条目', '触发词') }),
+		() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'third.md', content: entry('第三个条目', '触发词') }),
 		(error) => {
 			assert.match(error.message, /frontmatter 不合规/)
 			assert.match(error.message, /wide\.md/)
@@ -270,41 +272,69 @@ test('upsertEntry：层内 frontmatter 不合规的条目逐条列全（报错�
 	writeFileSync(join(dir, 'legacy-two.md'), '---\ntitle: 另一个老条目\nmetadata:\n  type: user\n---\n\n老正文二。\n', 'utf8')
 	// 坏条目一次列全：只报撞到的那一条时，读到的人修完它会撞上下一条，来回几趟才撞得完
 	await assert.rejects(
-		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'other.md', content: entry('别的条目', '触发词') }),
 		(error) => {
 			assert.match(error.message, /层内 2 条 frontmatter 不合规/)
 			assert.match(error.message, /legacy\.md/)
 			assert.match(error.message, /legacy-two\.md/)
-			// 两条并存时 edit 改任一条都会被另一条挡住，文案不许说「edit 是唯一还能写的路径」
-			assert.match(error.message, /先 delete 掉其中多余的坏条目/)
+			// 两条并存时 write 重写任一条都会被另一条挡住，文案不许说「write 是唯一还能写的路径」
+			assert.match(error.message, /先 delete 掉多余的坏条目/)
 			return true
 		},
 		'拦截文案必须自带脱困路径与全部坏条目，否则读到的人会以为整层锁死，转而绕过工具裸编辑文件',
 	)
 	assert.equal(existsSync(join(dir, 'other.md')), false, '拦截不得留孤儿条目')
+	// edit 修不了缺键的坏条目：按键编辑只改现存键行，legacy.md 连 title: 行都没有——
+	// 老工具时代「edit 逐字改写 frontmatter」的脱困路随按节/按键契约退役，这里拦下并指给 write
 	await assert.rejects(
-		() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy.md', oldString: 'name: 老条目\nmetadata:\n  type: user', newString: 'title: 老条目\ndescription: 触发词' }),
-		/层内 1 条/,
-		'edit 只跳过自己：另一条坏条目在场时它同样写不了（文案因此不给「逐条 edit」这条路）',
+		() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'legacy.md', title: '老条目', description: '触发词' }),
+		/没有「title:」行/,
+		'edit 的按键编辑补不出缺失的键，脱困路径指给 write',
+	)
+	// 有键可改也不行，但拦它的是另一道门：title 行替换出的 next 内容自己就过不了
+	// upsert 的 frontmatter 契约（metadata 多余键＋description 缺键）——坏条目修不好自己，
+	// 谈不上「改 title」
+	await assert.rejects(
+		() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'legacy-two.md', title: '另一个老条目改' }),
+		/legacy-two\.md 的 frontmatter 不合规/,
+		'坏条目自身先过不了 upsert 契约（缺键＋多余键），edit 修不了它',
 	)
 	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8').includes('metadata'), true, '被拦的 edit 不得留下半截改动')
-	// 脱困姿势：先 delete 掉一条，剩最后一条时 edit 就是层内唯一还能写的路径
-	const deleted = deleteEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy-two.md' })
+	// edit 的层封路径可达于「编辑的是合规条目、坏的是同伴」：同名判定把 title 不可知的
+	// 同伴当潜在撞名源，宁可封层也不放行
+	const lockRoot = join(base, 'write-edit-lock')
+	const lockDir = join(lockRoot, 'profile')
+	mkdirSync(lockDir, { recursive: true })
+	await upsertEntry({ port, memoryRoot: lockRoot, layer: 'profile', file: 'valid.md', content: entry('编辑锁条目', '触发词', '## 节\n\n正文\n') })
+	writeFileSync(join(lockDir, 'broken.md'), '没有 frontmatter 的裸正文\n', 'utf8')
+	await assert.rejects(
+		() => editEntry({ port, memoryRoot: lockRoot, layer: 'profile', file: 'valid.md', title: '编辑锁条目改' }),
+		(error) => {
+			assert.match(error.message, /层内 1 条 frontmatter 不合规/)
+			assert.match(error.message, /broken\.md/)
+			return true
+		},
+		'edit 只跳过自己：同伴坏条目在场时它同样写不了',
+	)
+	// 脱困姿势：先 delete 掉一条，剩最后一条时 write 重写它就是层内唯一还能写的路径
+	// （同名扫描把待写这条排除在外）；坏条目缺的是键本身，edit 的按键编辑补不出缺失的键，
+	// 故脱困走 write 而非 edit
+	const deleted = deleteEntry({ port, memoryRoot: root, layer: 'profile', file: 'legacy-two.md' })
 	assert.equal(existsSync(join(dir, 'legacy-two.md')), false)
 	assert.deepEqual(deleted.references, [])
 	await assert.rejects(
-		() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'other.md', content: entry('别的条目', '触发词') }),
 		(error) => {
 			assert.match(error.message, /层内 1 条 frontmatter 不合规/)
 			assert.match(error.message, /legacy\.md/)
-			assert.match(error.message, /在同名扫描里被跳过，是层内唯一还能写的路径/)
+			assert.match(error.message, /同名扫描把待写这条排除在外，它是层内唯一还能写的路径/)
 			return true
 		},
 	)
-	const fixed = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'legacy.md', oldString: 'name: 老条目\nmetadata:\n  type: user', newString: 'title: 老条目\ndescription: 触发词' })
+	const fixed = await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'legacy.md', content: entry('老条目', '触发词', '老正文。') })
 	assert.equal(fixed.indexLine, '- [老条目](legacy.md) — 触发词')
 	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8'), entry('老条目', '触发词', '老正文。'))
-	const other = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') })
+	const other = await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'other.md', content: entry('别的条目', '触发词') })
 	assert.equal(other.indexLine, '- [别的条目](other.md) — 触发词', '修好之后层立即解锁')
 })
 
@@ -328,7 +358,7 @@ test('upsertEntry：同名判定只读文件头（探一次、闭合即停），
 			return port.readHead(target, maxBytes, signal)
 		},
 	}
-	const r = await upsertEntry({ port: spy, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('撞名标题', '另一词') })
+	const r = await upsertEntry({ port: spy, memoryRoot: root, layer: 'profile', file: 'other.md', content: entry('撞名标题', '另一词') })
 	assert.equal(readFileSync(join(dir, 'other.md'), 'utf8'), entry('撞名标题', '另一词'), '正文里出现的同名字样不撞名：判定只看头部那份 frontmatter')
 	assert.equal(r.indexLine, '- [撞名标题](other.md) — 另一词')
 	// 这条用例真正钉的是读法而不只是结论：整篇读一次都不该出现，围栏闭合即停不必付兜底往返
@@ -351,7 +381,7 @@ test('upsertEntry：头部未闭合的病态条目升到兜底上限读一次，
 		},
 	}
 	await assert.rejects(
-		() => upsertEntry({ port: spy, memoryRoot: root, layer: 'habit', file: 'other.md', content: entry('别的条目', '触发词') }),
+		() => upsertEntry({ port: spy, memoryRoot: root, layer: 'profile', file: 'other.md', content: entry('别的条目', '触发词') }),
 		(error) => {
 			assert.match(error.message, /层内 1 条 frontmatter 不合规/)
 			assert.match(error.message, /unclosed\.md/)
@@ -364,10 +394,12 @@ test('upsertEntry：头部未闭合的病态条目升到兜底上限读一次，
 	assert.equal(existsSync(join(dir, 'other.md')), false, '拦截不得留孤儿条目')
 })
 
-test('upsertEntry：前置拦截（未知层/空桶名/空 content/超限/非 kebab/保留名）', async () => {
+test('upsertEntry：前置拦截（空桶名/空 content/超限/非 kebab/保留名）', async () => {
 	const root = join(base, 'pre-reject')
-	const ok = { port, memoryRoot: root, layer: 'habit', file: 'ok.md', content: entry('合规条目', '触发词') }
-	await assert.rejects(() => upsertEntry({ ...ok, layer: 'bogus' }), /未知层/)
+	const ok = { port, memoryRoot: root, layer: 'profile', file: 'ok.md', content: entry('合规条目', '触发词') }
+	// 层值域不在这层守：layer 已进 schema enum，值错由宿主在调用边界拦（报错自带合法值
+	// 清单；裸仓 stub 无 validateArgs，宿主层那条待重启后真会话验证），写侧不再自带
+	// 未知层分支——传错值到这里属接线错误，不是要再拦一道的使用错误
 	await assert.rejects(() => upsertEntry({ ...ok, layer: 'workspace', cwd: '///' }), /桶名为空/)
 	await assert.rejects(() => upsertEntry({ ...ok, content: '   ' }), /content/)
 	await assert.rejects(() => upsertEntry({ ...ok, content: 'x'.repeat(RUNAWAY_CEILING + 1) }), /失控保护/)
@@ -379,7 +411,7 @@ test('upsertEntry：前置拦截（未知层/空桶名/空 content/超限/非 ke
 test('upsertEntry/editEntry/deleteEntry：会话策略不许写时三个动作全拒（只问端口，code 落宿主词表）', async () => {
 	const root = join(base, 'write-readonly')
 	const readOnly = createNodeFsPort({ sandboxPolicy: { mode: 'read-only', workspaceRoot: '/tmp', sessionId: 'session-1' } })
-	const args = { port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词') }
+	const args = { port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词') }
 	await assert.rejects(() => upsertEntry({ ...args, port: readOnly }), (error) => {
 		// code 在宿主词表内，harness 的 toolErrorResult 与模型才拿得到类型
 		assert.equal(error.code, 'FS_SANDBOX_DENIED')
@@ -389,11 +421,11 @@ test('upsertEntry/editEntry/deleteEntry：会话策略不许写时三个动作�
 	})
 	assert.equal(existsSync(join(root, 'profile')), false, '被拒的写入不得建桶落盘')
 	await upsertEntry(args)
-	await assert.rejects(() => editEntry({ port: readOnly, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '正文', newString: '正文改' }), /不允许写记忆/)
+	await assert.rejects(() => editEntry({ port: readOnly, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '节', body: '新正文' }), /不允许写记忆/)
 	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词'), '被拒的编辑不得落盘')
 	// delete 的 I/O 虽留在 node:fs（宿主契约无删除能力），照样接端口问能不能写：
 	// 四个 action 同一口径。它是同步函数（I/O 无 await），故用 throws 而非 rejects
-	assert.throws(() => deleteEntry({ port: readOnly, memoryRoot: root, layer: 'habit', file: 'topic.md' }), /不允许写记忆/)
+	assert.throws(() => deleteEntry({ port: readOnly, memoryRoot: root, layer: 'profile', file: 'topic.md' }), /不允许写记忆/)
 	assert.ok(existsSync(join(root, 'profile', 'topic.md')), '被拒的删除不得动条目')
 	// 策略缺省（无会话上下文）＝不受限：字段缺席不得被当成只读而误拒
 	const ok = await upsertEntry({ ...args, file: 'other.md', content: entry('另一条目', '触发词') })
@@ -404,15 +436,15 @@ test('upsertEntry/editEntry/deleteEntry：会话策略不许写时三个动作�
 
 test('upsertEntry：write 路径不带版本守卫（语义是「以我这份为准」，并发两次 write 后者赢）', async () => {
 	const root = join(base, 'write-no-guard')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('条目', '触发词', 'v1') })
-	const r = await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'one.md', content: entry('条目', '触发词', 'v2') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'one.md', content: entry('条目', '触发词', 'v1') })
+	const r = await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'one.md', content: entry('条目', '触发词', 'v2') })
 	assert.equal(readFileSync(join(r.dir, 'one.md'), 'utf8'), entry('条目', '触发词', 'v2'), 'write 无版本守卫：后者整份覆盖前者')
 })
 
 test('editEntry：并发两次改同一条目，后到者抛 FS_STALE_VERSION 且先到者正文完好', async () => {
 	const root = join(base, 'edit-guard')
 	const entryPath = join(root, 'profile', 'topic.md')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', 'v1 状态行') })
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词', '## 状态\n\nv1 状态行\n') })
 	// 竞态窗口在 editEntry 读条目与 upsert 写条目之间：在 readText 返回后立刻由并发方
 	// 直接改写正文（绕过端口），后到的 edit 才踩得到传下去的 entryVersion 守卫
 	let raced = false
@@ -428,7 +460,7 @@ test('editEntry：并发两次改同一条目，后到者抛 FS_STALE_VERSION �
 		},
 	}
 	await assert.rejects(
-		() => editEntry({ port: racing, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'v1 状态行', newString: 'v2 状态行' }),
+		() => editEntry({ port: racing, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '状态', body: 'v2 状态行\n' }),
 		(error) => {
 			assert.equal(error.code, 'FS_STALE_VERSION')
 			assert.match(error.message, /重试/)
@@ -440,48 +472,134 @@ test('editEntry：并发两次改同一条目，后到者抛 FS_STALE_VERSION �
 
 /* ===================== edit ===================== */
 
-test('editEntry：字面替换整文落盘，派生索引行按改完的 frontmatter 重算', async () => {
+test('editEntry：按节锚定整段替换正文（heading 唯一命中），结果报 section 与 file_path', async () => {
 	const root = join(base, 'edit-basic')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('旧标题', '旧触发词', '# 标题\n\nv1 状态行\n\n- 保留行') })
-	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'v1 状态行', newString: 'v2 状态行' })
-	assert.equal(r.replacements, 1)
-	// 全等而非 includes：edit 只许动被替换的那一段，frontmatter 与整篇形态一并钉死，
-	// 子串断言会让「顺带把 frontmatter 写坏了」这类回归绿灯通过
-	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('旧标题', '旧触发词', '# 标题\n\nv2 状态行\n\n- 保留行'))
-	assert.equal(r.indexLine, '- [旧标题](topic.md) — 旧触发词', '只改正文时索引行不变')
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词', '## 状态\n\nv1 状态行\n\n## 备注\n\n备注正文\n') })
+	const r = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '状态', body: '\nv2 状态行\n' })
+	assert.equal(r.section, '状态')
+	assert.equal(r.file_path, 'topic.md', '结果键与工具出参同名（file_path）')
+	// 全等而非 includes：edit 只许动锚定那一节的正文 span，frontmatter、节标题行与
+	// 下一节的正文一并钉死，子串断言会让「顺带把别的节写坏了」这类回归绿灯通过。
+	// body 是「标题行之下」的整段 span：紧贴标题行的那行空行也在 span 里，要保住隔行
+	// 就把它写进 body（机械全 span 语义，不替调用方补行删行）
+	assert.equal(
+		readFileSync(join(r.dir, 'topic.md'), 'utf8'),
+		entry('主题条目', '触发词', '## 状态\n\nv2 状态行\n\n## 备注\n\n备注正文\n'),
+		'只动锚定节的正文：标题行与其后各节逐字未动',
+	)
+	assert.equal(r.indexLine, '- [主题条目](topic.md) — 触发词', '只改正文时索引行不变')
 	assert.deepEqual(r.warnings, [], '正常 edit 不产生任何 warning')
-	const retitled = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'title: 旧标题', newString: 'title: 新标题' })
-	assert.equal(retitled.indexLine, '- [新标题](topic.md) — 旧触发词', '改了 title 即刻重算派生行')
 })
 
-test('editEntry：replaceAll 全替换并计处数', async () => {
-	const root = join(base, 'edit-advanced')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '甲旧\n乙旧\n丙新') })
-	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '旧', newString: '新', replaceAll: true })
-	assert.equal(r.replacements, 2)
-	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', '甲新\n乙新\n丙新'))
+test('editEntry：按键改 frontmatter（title/description 可同传），派生行按改完的两键重算', async () => {
+	const root = join(base, 'edit-frontmatter')
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('旧标题', '旧触发词', '## 节\n\n正文\n') })
+	const r = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', title: '新标题', description: '新触发词' })
+	assert.deepEqual(r.frontmatterEdited, ['title', 'description'])
+	assert.equal(r.indexLine, '- [新标题](topic.md) — 新触发词', '改了任一键即重算派生行')
+	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('新标题', '新触发词', '## 节\n\n正文\n'), '只有那两行被动过，正文逐字未动')
+	const single = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', title: '再改一次' })
+	assert.deepEqual(single.frontmatterEdited, ['title'], '单传一键只报一键')
 })
 
 test('editEntry：改出不合规 frontmatter 走同一条拦截链（先算后写，不留半截改动）', async () => {
 	const root = join(base, 'edit-fm')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '正文行') })
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'title: 主题条目', newString: 'title: [带括号]' }), /方括号/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '---\ntitle: 主题条目', newString: '---\nname: 多余\ntitle: 主题条目' }), /多余键/)
-	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词', '正文行'), '被拦后整份保持原样')
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词', '## 节\n\n正文行\n') })
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', title: '[带括号]' }), /方括号/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', description: '折\n行' }), /单行/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', title: '   ' }), /title 为空/, '空值键行写进去后由 frontmatter 契约拦')
+	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词', '## 节\n\n正文行\n'), '被拦后整份保持原样')
 })
 
-test('editEntry：命中拦截（不命中/多处未声明 replaceAll）与前置拦截（非 kebab/条目不存在/参数类型）', async () => {
+test('editEntry：锚定拦截（未命中列出全部节标题/重名拒绝/无节可锚）与目标组合拦截（并存/缺 body/body 无锚/无目标）', async () => {
 	const root = join(base, 'edit-reject')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '重复\n重复') })
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '不存在片段', newString: 'y' }), /未命中/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '独' }), /命中 2 处/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'Bad_Name.md', oldString: 'x', newString: 'y' }), /kebab/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'ghost.md', oldString: 'x', newString: 'y' }), /不存在/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '', newString: 'y' }), /oldString 不能为空/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: undefined, newString: 'y' }), /oldString 不能为空/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: null }), /newString/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '独', replaceAll: 1 }), /replaceAll/)
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '独', replaceAll: 'true' }), /replaceAll/)
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词', '## 状态\n\n正文\n\n## 备注\n\n另一段\n') })
+	// 未命中：报错列出全部节标题，调用方就地挑对（按节锚定的锚点是节标题，不逐字复述正文）
+	await assert.rejects(
+		() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '不存在节', body: 'x' }),
+		(error) => {
+			assert.match(error.message, /未命中/)
+			assert.match(error.message, /「状态」/)
+			assert.match(error.message, /「备注」/)
+			return true
+		},
+		'未命中须列出全部节标题',
+	)
+	// 重名拒绝：同名节有两处时锚不唯一，替换落到哪节全凭运气——拦
+	writeFileSync(
+		join(root, 'profile', 'dup.md'),
+		entry('重名节条目', '触发词', '## 状态\n\n第一处\n\n## 状态\n\n第二处\n'),
+		'utf8',
+	)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'dup.md', heading: '状态', body: 'x' }), /命中 2 处/)
+	// 无节可锚
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'flat.md', content: entry('无节条目', '触发词', '没有节结构的正文') })
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'flat.md', heading: '状态', body: 'x' }), /没有 ## 节/)
+	// 目标组合：并存/缺 body/body 无锚/无目标
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '状态', body: 'x', title: '新标题' }), /并存/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '状态' }), /heading 编辑必须带 body/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', body: 'x' }), /body 须与 heading 同传/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md' }), /没有编辑目标/)
+	// 前置拦截照旧（非 kebab/条目不存在）
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'Bad_Name.md', title: 'x' }), /kebab/)
+	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'ghost.md', title: 'x' }), /不存在/)
+})
+
+test('editEntry：body 空串删节正文保留标题行；多节条目编辑中间节不动前后节与尾空行', async () => {
+	const root = join(base, 'edit-body-empty')
+	await upsertEntry({
+		port,
+		memoryRoot: root,
+		layer: 'profile',
+		file: 'topic.md',
+		content: entry('主题条目', '触发词', '## 甲\n\n甲正文\n\n## 乙\n\n乙正文\n\n## 丙\n\n丙正文\n'),
+	})
+	const r = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '乙', body: '' })
+	assert.equal(r.section, '乙')
+	assert.equal(
+		readFileSync(join(r.dir, 'topic.md'), 'utf8'),
+		entry('主题条目', '触发词', '## 甲\n\n甲正文\n\n## 乙\n## 丙\n\n丙正文\n'),
+		'空 body 删光该节正文只留标题行；甲丙两节逐字未动',
+	)
+	// 尾部空行是 body span 的一部分（契约：含尾部空行；紧贴标题行的空行同样在 span 里），
+	// 作者写几行就是几行——这里钉「替调用方补/删空行」这类好心不得存在
+	const tailed = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '丙', body: '\n丙改\n\n\n' })
+	assert.equal(
+		readFileSync(join(tailed.dir, 'topic.md'), 'utf8'),
+		entry('主题条目', '触发词', '## 甲\n\n甲正文\n\n## 乙\n## 丙\n\n丙改\n\n'),
+		'body 按字面成行，空行不补不删',
+	)
+})
+
+test('editEntry：CRLF 正文照常工作，落盘归一 LF（git checkout 形态）', async () => {
+	const root = join(base, 'edit-crlf')
+	const dir = join(root, 'profile')
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(join(dir, 'topic.md'), '---\r\ntitle: 主题条目\r\ndescription: 触发词\r\n---\r\n\r\n## 节\r\n\r\n甲行\r\n\r\n', 'utf8')
+	const r = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '节', body: '\n乙行\n\n' })
+	assert.equal(r.section, '节')
+	assert.equal(r.indexLine, '- [主题条目](topic.md) — 触发词', 'CRLF frontmatter 照样派生出索引行')
+	// 一条全等钉住三件事：替换生效、落盘统一 LF、节结构与空行形态完好；拆成子串断言时
+	// 「frontmatter 被顺带改坏」这类回归照样绿灯通过
+	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: 主题条目\ndescription: 触发词\n---\n\n## 节\n\n乙行\n\n', 'CRLF 条目按节替换后整文正确（LF 归一＋span 语义按字面）')
+})
+
+test('editEntry：超失控保护与按键路径的契约拦截走同一条链（结果仍过 upsert 校验）', async () => {
+	const root = join(base, 'edit-validate')
+	const big = join(base, 'edit-big')
+	await upsertEntry({ port, memoryRoot: big, layer: 'profile', file: 'big.md', content: entry('大条目', '触发词', `## 节\n\n${'x'.repeat(RUNAWAY_CEILING - 200)}\n`) })
+	await assert.rejects(() => editEntry({ port, memoryRoot: big, layer: 'profile', file: 'big.md', heading: '节', body: `## 节\n\n${'yy'.repeat(RUNAWAY_CEILING)}\n` }), /失控保护/)
+	// 按键编辑只改现存键行：键不在（老布局条目）即拦并指给 write，不静默当作改成功
+	const legacyRoot = join(base, 'edit-legacy-key')
+	const dir = join(legacyRoot, 'profile')
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(join(dir, 'legacy.md'), '---\nname: 老条目\n---\n\n正文\n', 'utf8')
+	await assert.rejects(() => editEntry({ port, memoryRoot: legacyRoot, layer: 'profile', file: 'legacy.md', title: '新标题' }), /没有「title:」行/)
+	assert.equal(readFileSync(join(dir, 'legacy.md'), 'utf8'), '---\nname: 老条目\n---\n\n正文\n', '被拦后整份保持原样')
+	// 无节条目的 frontmatter 编辑照常可达（语料迁移收口前的存量常态，这条路必须畅通）
+	await upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'flat.md', content: entry('无节条目', '触发词', '没有节结构的正文') })
+	const flat = await editEntry({ port, memoryRoot: root, layer: 'profile', file: 'flat.md', description: '新触发词' })
+	assert.equal(flat.indexLine, '- [无节条目](flat.md) — 新触发词', '无节条目按键改 frontmatter 不受节结构影响')
 })
 
 test('editEntry：条目名被同名目录占用时按宿主词表拒改，与 upsert／delete 同一 name＋code', async () => {
@@ -496,99 +614,39 @@ test('editEntry：条目名被同名目录占用时按宿主词表拒改，与 u
 		}
 		return undefined
 	}
-	// 这道门在 edit 上是独立的一道：edit 是「判类型 → 读现文 → 内存里替换 → 交 upsert 落盘」，
-	// 少了它就拿着一个目录去 readText，炸成裸 node 的 EISDIR（调用方按 code 断会断不到）
-	const 编辑错误 = await 捕获(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'x', newString: 'y' }))
+	// 这道门在 edit 上是独立的一道：edit 是「判类型 → 读现文 → 内存里按节/按键改 → 交
+	// upsert 落盘」，少了它就拿着一个目录去 readText，炸成裸 node 的 EISDIR（调用方按
+	// code 断会断不到）
+	const 编辑错误 = await 捕获(() => editEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', heading: '节', body: 'x' }))
 	assert.equal(编辑错误?.code, 'FS_NOT_REGULAR_FILE', '拒改须报宿主那个码')
 	assert.equal(编辑错误?.name, 'FsPortError')
 	// 同一个故障在 upsert 与 edit 上是同一个错误对象形状：判定与错误工厂走 fs-guard.js
 	// 那一份（delete 路径上与 upsert 的对照在 memory-delete.test.js），三处必须一致
-	const 写错误 = await 捕获(() => upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词') }))
+	const 写错误 = await 捕获(() => upsertEntry({ port, memoryRoot: root, layer: 'profile', file: 'topic.md', content: entry('主题条目', '触发词') }))
 	assert.equal(写错误?.code, 编辑错误?.code)
 	assert.equal(写错误?.name, 编辑错误?.name)
 	assert.equal(statSync(join(dir, 'topic.md')).isDirectory(), true, '被拒的编辑不得动那个目录')
 })
 
-test('editEntry：全等替换（newString===oldString）命中≠改动，replacements=0 且正文不变', async () => {
-	const root = join(base, 'edit-noop')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '重复\n重复') })
-	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '重复', newString: '重复', replaceAll: true })
-	assert.equal(r.replacements, 0, '全等替换＝零改动，不得按命中处数谎报')
-	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', '重复\n重复'))
+/* ===================== 节判定（patterns 共享谓词） ===================== */
+
+test('sectionHeadings：只认「## 标题」行（剥 frontmatter 后按行定位），深浅标题与空标题不算节', () => {
+	const text = entry('主题', '触发词', '### 深标题\n\n## 甲\n\n甲正文\n\n##\n\n## 乙  \n\n乙正文\n')
+	assert.deepEqual(
+		sectionHeadings(text).map(({ title, line }) => [title, line]),
+		[['甲', 7], ['乙', 13]],
+		'### 是节内层级、空标题是病态写法；行号指向归一后行数组（0 起，含 frontmatter 与其后的空行），title 去首尾空白',
+	)
+	assert.deepEqual(duplicateSectionHeadings(entry('主题', '触发词', '## 甲\n\n一\n\n## 甲\n\n二\n\n## 乙\n\n三\n')), ['甲'], '同名节报标题不报处数')
+	assert.deepEqual(duplicateSectionHeadings(entry('主题', '触发词', '## 甲\n\n一\n\n## 乙\n\n二\n')), [], '各不同名不报')
+	// frontmatter 里的「## 」形态不该参与：剥围栏后再算，行号与「frontmatter 之后第几行」一致
+	const withFm = sectionHeadings(entry('主题', '触发词', '## 唯一\n'))
+	assert.deepEqual(withFm, [{ title: '唯一', line: 5 }])
 })
 
-test('editEntry：newString 里的 $ 模式（$` / $\' / $& / $$）按字面落盘，不得插回匹配前后文', async () => {
-	const root = join(base, 'edit-dollar')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content: entry('主题条目', '触发词', '甲行\n丙行') })
-	// 规则类正文很常带 ``$` `` 这类写法（写正则笔记），按 String.replace 解释它会静默复制整条
-	const replacement = "JS 正则无 m 标志时 `$` 只认串尾；$' $& $$ 一律按字面"
-	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行', newString: replacement })
-	assert.equal(r.replacements, 1)
-	assert.equal(readFileSync(join(r.dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', `${replacement}\n丙行`))
-})
-
-test('editEntry：CRLF 正文照常工作，落盘归一 LF、尾部空行保真（git checkout 形态）', async () => {
-	const root = join(base, 'edit-crlf')
-	const dir = join(root, 'profile')
-	mkdirSync(dir, { recursive: true })
-	writeFileSync(join(dir, 'topic.md'), '---\r\ntitle: 主题条目\r\ndescription: 触发词\r\n---\r\n\r\n甲行\r\n\r\n', 'utf8')
-	const r = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行', newString: '乙行' })
-	assert.equal(r.replacements, 1)
-	assert.equal(r.indexLine, '- [主题条目](topic.md) — 触发词', 'CRLF frontmatter 照样派生出索引行')
-	// 一条全等钉住三件事：替换生效、落盘统一 LF、尾部空行保真；拆成子串断言时
-	// 「frontmatter 被顺带改坏」这类回归照样绿灯通过
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: 主题条目\ndescription: 触发词\n---\n\n乙行\n\n', 'CRLF 正文替换后整文正确（LF 归一＋尾空行保真）')
-})
-
-test('editEntry：跨行 oldString 在 CRLF 正文下可达（归一后按 \\n 匹配）', async () => {
-	const root = join(base, 'edit-crlf-cross')
-	const dir = join(root, 'profile')
-	mkdirSync(dir, { recursive: true })
-	writeFileSync(join(dir, 'topic.md'), `${entry('主题条目', '触发词', 'line1\r\nline2')}`, 'utf8')
-	await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: 'line1\nline2', newString: 'L' })
-	// 整文全等而非 includes：跨行替换只许动 oldString 那两行，frontmatter 与其后的
-	// 空行形态一并钉死——子串断言会让「顺带把条目头部写坏了」这类回归绿灯通过
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), entry('主题条目', '触发词', 'L'), '跨行替换按 LF 口径命中，条目头部未被挪动')
-})
-
-test('editEntry：LF 正文多尾空行保真（替换不动作者行尾形态）', async () => {
-	const root = join(base, 'edit-tail')
-	const dir = join(root, 'profile')
-	mkdirSync(dir, { recursive: true })
-	writeFileSync(join(dir, 'topic.md'), '---\ntitle: A\ndescription: B\n---\n\na\n\n\n', 'utf8')
-	await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '\n\na', newString: '\n\nA' })
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\nA\n\n\n', '两个尾空行原样保留')
-})
-
-test('editEntry：命中域含尾换行（照 read 原文复制文末片段即命中，不必先掐掉换行）', async () => {
-	const root = join(base, 'edit-hit-tail')
-	const dir = join(root, 'profile')
-	mkdirSync(dir, { recursive: true })
-	writeFileSync(join(dir, 'topic.md'), '---\ntitle: A\ndescription: B\n---\n\n甲行\n\n乙行\n', 'utf8')
-	// 调用方是从 read 的原文里复制片段，而落盘恒以 \n 收尾：把尾换行切出命中域时，
-	// 下面第 1、3 两种写法（照抄文末几行）必然报「未命中」，报错还反指「勿凭印象」
-	const 带尾换行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '乙行\n', newString: '乙行改\n' })
-	assert.equal(带尾换行.replacements, 1)
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲行\n\n乙行改\n')
-	const 跨空行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '甲行\n\n乙行改', newString: '甲乙合一行' })
-	assert.equal(跨空行.replacements, 1)
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲乙合一行\n')
-	const 跨空行带尾换行 = await editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: '\n\n甲乙合一行\n', newString: '\n\n甲乙终行\n' })
-	assert.equal(跨空行带尾换行.replacements, 1)
-	assert.equal(readFileSync(join(dir, 'topic.md'), 'utf8'), '---\ntitle: A\ndescription: B\n---\n\n甲乙终行\n', '整文全等：前两行替换后未被覆盖的形态一并钉死')
-})
-
-test('editEntry：编辑后正文为空与超失控保护走同一条拦截链（结果仍过 upsert 校验）', async () => {
-	const root = join(base, 'edit-validate')
-	const content = entry('主题条目', '触发词', '唯一一行')
-	await upsertEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', content })
-	// 整条清空（含 frontmatter）才触得到「编辑后为空」：有 frontmatter 的条目删不干净，
-	// 剩下的空壳会由 upsert 的 frontmatter 契约拦——两条报错说的是两件事，故这里按各条
-	// 自己的报错句钉，不按「为空」两个字钉（upsert 那条也叫「content 不能为空」，
-	// 混着匹配就分不出是 editEntry 那道拦住了还是漏到了下一道）
-	await assert.rejects(() => editEntry({ port, memoryRoot: root, layer: 'habit', file: 'topic.md', oldString: content.replace(/\n$/, ''), newString: '' }), /编辑后正文为空/, '删掉正文那条拦截时，剩下的空壳会落到 upsert 那道「content 不能为空」——报错还在，但报的是下一道')
-	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), content, '拦截发生在写盘之前：原条目逐字未动，不留半截改动')
-	const big = join(base, 'edit-big')
-	await upsertEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', content: entry('大条目', '触发词', 'x'.repeat(RUNAWAY_CEILING - 200)) })
-	await assert.rejects(() => editEntry({ port, memoryRoot: big, layer: 'habit', file: 'big.md', oldString: 'x', newString: 'yy', replaceAll: true }), /失控保护/)
+test('assertEntryHasSection：无节的 content 拦（写入守卫），空白串与非字符串放行给 upsert 的 content 判空', () => {
+	assert.throws(() => assertEntryHasSection(entry('主题', '触发词', '没有节结构的正文')), /至少要有一个 ## 节/)
+	assert.doesNotThrow(() => assertEntryHasSection(entry('主题', '触发词', '## 节\n\n正文\n')))
+	assert.doesNotThrow(() => assertEntryHasSection('   \n\t'), '空白串不在这里拦——判空是 upsert 那道的事（「content 不能为空」），各报各的病因')
+	assert.doesNotThrow(() => assertEntryHasSection(undefined), '非字符串同理')
 })

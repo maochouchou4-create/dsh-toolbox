@@ -3,7 +3,9 @@
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
 单个工具初始化失败只丢那一件，不连坐整包。当前五件：
 
-- **memory**：分层记忆读写（习惯层/工作层，`write/edit/delete/lint` 四动作），
+- **memory**：分层记忆读写（习惯层 `profile`／工作层 `workspace`，`write/edit/delete/lint`
+  四动作）。edit 按节锚定：`heading`（条目内唯一的 `##` 标题）定位＋`body` 整段替换，
+  frontmatter 两键走 `title`/`description`；参数名与宿主自家编辑工具对齐（`file_path`）。
   附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
   frontmatter（恰好 `title`＋`description` 两键）现场派生，不落盘、不手写。
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
@@ -49,16 +51,19 @@
 **没有索引文件**，`write`/`edit` 也不碰索引；`delete` 只删条目文件，它那一行随文件消失。
 frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
 就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
-故层内同名条目会被写侧拦下（改 frontmatter 的 title 行，用 `edit`）；写侧那道拦截只在
+故层内同名条目会被写侧拦下（改 frontmatter 的 title 键，用 `edit` 的 `title` 参数）；写侧那道拦截只在
 进程内拦得住自己，而习惯层是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，
 所以 `lint` 也会点名同层撞名的条目。**写侧报错**＝你正要写的那条与另一条撞名了，
 **体检 warning**＝盘上已经存在撞名对；两种口径处置同向，都不是 `delete`——撞上的每一
 条都是各自带正文的现存条目（title 与文件名本就是两回事），要改的是那一组里的某一条。
+edit 按节锚定的锚点是条目内唯一的 `##` 标题：未命中时报错列出全部节标题，重名节（`lint`
+同报）在收敛前写不进——按节锚定消的是「逐字复述正文必漂」那类失败，不是再加一道门槛。
 同层某条目 frontmatter 不合规时同名
 判定不可信，写侧直接报错而不是放行，并列出层内全部不合规条目。**拦的只是别的条目**：
-不合规的那条本身被扫描跳过，层内只有它一条时可以用 edit 改它（oldString 先用宿主
-read 工具取现文）；两条以上时 edit 改任一条都会被另一条挡住，须先 delete 掉多余的，
-剩最后一条再 edit。修好之后该层立即恢复。
+不合规的那条本身被扫描跳过，层内只有它一条时可以用 `write` 以修好 frontmatter 的全文
+重写它（同名扫描把待写这条排除在外；`edit` 的按键编辑只改现存键行，补不出缺失的键）；
+两条以上时重写任一条都会被另一条挡住，须先 `delete` 掉多余的，剩最后一条再 `write`
+重写。修好之后该层立即恢复。
 
 ## memory 与 dispatch 写侧的文件策略边界
 
@@ -298,8 +303,8 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
   定档只量得到习惯层——扫到多少就量多少，扫不到层时接线那项也不许拿「全绿」收场）。
   本机正确形态：
   `npm run check:memory -- /home/nvse/.dsh/memory /home/nvse/code`
-  （扫两层目录，按注入侧同一份判定验预算、frontmatter 契约与层内 title 重名；接参
-  `[记忆根] [工作区 cwd]`；覆盖项见命令末尾自报名单）。
+  （扫两层目录，按注入侧同一份判定验预算、frontmatter 契约、层内 title 重名与条目内
+  ## 节重名；接参 `[记忆根] [工作区 cwd]`；覆盖项见命令末尾自报名单）。
 - 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
   将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply`——落盘前先
   把待改文件的改前原文备份到记忆根同级的 `memory-migrate-backups/<时间戳>/`，脚本可反复跑
@@ -318,8 +323,9 @@ lib/fs-port.js           包级 fs 端口：宿主 ctx.fs 与 node:fs 收敛成�
 lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路径共用一份，零 node:fs——并进端口会把直连拖进 write.js 的本地导入闭包，写侧「I/O 只经端口」当场失效）
 lib/tool-schema.js       工具 schema 的共用形状工厂（stringList／objectShape，三族工具的输出 schema 共用）。object 节点默认闭集、每次返回新对象、假值入参当场拒；「形状写一份」是宿主要求（object 节点缺 additionalProperties 整件工具注册失败，症状是工具从上下文里消失而不是某字段被拒）
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
+lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一＋退役别名表，零 node:fs、零依赖）。落 lib 根因为它是「工具入参形状」的守门人而不是 memory 的私产，批3 的四件 dispatch 工具复用同一份机械
 lib/memory-root.js       记忆根默认值与归一、工作区路径→桶名、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与桶名」，谁要谁向下指
-lib/memory/             记忆工具：index.js 装配 + core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
+lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS/LAYERS）+ core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/dispatch/           派发工具、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（前两件工具的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）

@@ -146,6 +146,29 @@ test('lintMemory：有 title 判不了的条目而本层不撞名，覆盖面缺
 	assert.ok(coverage[0].includes('broken.md') && coverage[0].includes('重名结论只覆盖其余条目'), coverage[0])
 })
 
+test('lintMemory：节重名逐条点名（判据＝条目内 ## 标题重复），无节条目不报（存量常态不制造噪音）', () => {
+	const { root, profile, bucket } = memoryTree(base, 'lint-section-dup', 'D-code')
+	// 同条目内两个 ## 同名：edit 按节锚定以标题为锚，重名即分不清锚在哪——任何时刻都是真问题
+	writeFileSync(
+		join(profile, 'dup.md'),
+		entry('重名节条目', '触发词', '## 状态\n\n第一处\n\n## 备注\n\n夹层\n\n## 状态\n\n第二处\n'),
+		'utf8',
+	)
+	// 无节条目是语料迁移收口前的存量常态（edit 改它们的 frontmatter 还指望这条路畅通），
+	// 新检查只查「节重名」不查「无节」——报了就是整屏噪音
+	writeFileSync(join(profile, 'flat.md'), entry('无节条目', '触发词', '没有节结构的正文'), 'utf8')
+	// 单节与多节不同名都不报；工作层各查各的
+	writeFileSync(join(bucket, 'ok.md'), entry('多节条目', '触发词', '## 甲\n\n一\n\n## 乙\n\n二\n'), 'utf8')
+	const report = lintMemory({ memoryRoot: root, cwd: 'D:\\code' })
+	const dup = report.warnings.filter((w) => w.includes('节重名'))
+	assert.equal(dup.length, 1, '只报真有重名的那一条')
+	assert.ok(dup[0].includes('状态') && dup[0].includes('dup.md'), '告警须指出重名的节标题与所在条目')
+	assert.ok(dup[0].includes('profile'), '告警带层前缀，定位形态与其余 warning 一致')
+	assert.ok(dup[0].includes('按节锚定'), '文案须说清为什么重名碍事（按节锚定以标题为锚）')
+	assert.ok(!report.warnings.some((w) => w.includes('无节') || (w.includes('节') && w.includes('flat.md'))), '无节条目不报')
+	assert.ok(!report.warnings.some((w) => w.includes('节重名') && w.includes('ok.md')), '不同名的多节条目不报')
+})
+
 test('lintMemory：层目录清点抛错即中止并点名（workspaces 是文件＝确定性触发）', () => {
 	const root = join(base, 'lint-layer-enum-fail')
 	mkdirSync(join(root, 'profile'), { recursive: true })

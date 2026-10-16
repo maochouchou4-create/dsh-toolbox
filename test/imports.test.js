@@ -89,15 +89,42 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 })
 
 test('memory 工具参数面与写侧函数签名一致（action→入参字段逐一对齐）', async () => {
-	const source = readLib('memory/index.js')
-	const parameters = [...source.matchAll(/^\s{3}(\w+):\s*\{\s*type:/gm)].map((m) => m[1])
-	for (const expected of ['action', 'layer', 'file', 'content', 'oldString', 'newString', 'replaceAll']) {
+	// 参数面单源在 params.js（纯模块）：这里 import 现值断言，不再静态解析 index.js 源码
+	// 抽参数名——源码正则绑定的是写法不是契约，表挪个位置断言就空转（改写申报：原版对
+	// index.js 的 /^\s{3}(\w+):\s*\{\s*type:/ 抽取退役，换成本条的 import 现值断言）
+	const { MEMORY_PARAMS, RETIRED_PARAM_GUIDES, guardMemoryParams } = await loadModule('memory/params.js')
+	const parameters = Object.keys(MEMORY_PARAMS)
+	for (const expected of ['action', 'layer', 'file_path', 'content', 'heading', 'body', 'title', 'description']) {
 		assert.ok(parameters.includes(expected), `工具 parameters 缺 "${expected}"`)
 	}
-	// 索引行是 frontmatter 的派生产物：schema 里留着 indexLine 而实现已不接它，
-	// 子代理照 schema 传参就会撞上「参数不存在」——schema 与实现必须同退同进
-	assert.ok(!parameters.includes('indexLine'), 'indexLine 已退场，工具 parameters 不得再列它')
+	// 退役参数与派生名同退同进：schema 里留着而实现不接，子代理照 schema 传参就撞
+	// 「参数不存在」；反过来实现还认着的退役名也不许从 schema 里凭空消失——两边同退
+	for (const retired of ['file', 'oldString', 'newString', 'replaceAll', 'indexLine']) {
+		assert.ok(!parameters.includes(retired), `退役参数 "${retired}" 不得回到工具 parameters`)
+	}
+	// action/layer 的 enum 各读单源（core.js），且是同一份引用不是抄本——抄本与单源在
+	// 下一轮改词表时分叉，报错清单就会教一个 schema 不收的值
+	const core = await loadModule('memory/core.js')
+	assert.equal(MEMORY_PARAMS.action.enum, core.MEMORY_ACTIONS, 'action enum 须引用 MEMORY_ACTIONS 单源本体')
+	assert.equal(MEMORY_PARAMS.layer.enum, core.LAYERS, 'layer enum 须引用 LAYERS 单源本体')
+	assert.deepEqual([...core.LAYERS], ['profile', 'workspace'], '层值词表＝profile | workspace（目录名与值同名，注入索引教的即 schema 收的）')
+	// 层值字面量不得回流：schema/路由/注入/标签全部走 LAYERS 单源后，'habit' 在 lib/memory
+	// 下任何一处重新出现都是「一边收 profile 一边教 habit」那条老病根复发
+	for (const file of ['memory/index.js', 'memory/core.js', 'memory/assemble.js', 'memory/layers.js', 'memory/params.js']) {
+		assert.ok(!readLib(file).includes("'habit'"), `${file} 不得再出现层值字面量 'habit'（层值单源＝core 的 LAYERS）`)
+	}
+	// index.js 只引用单源表与守卫（宿主包导入不可加载，接线用源码钉）：parameters 直指
+	// MEMORY_PARAMS、execute 先点名未知键再看动作、条件必填运行期点名——三处断线都会让
+	// 契约测试测的与运行期跑的脱钩
+	const source = readLib('memory/index.js')
+	assert.ok(source.includes('parameters: MEMORY_PARAMS'), 'index.js 的 parameters 须引用 params.js 单源表')
+	// 判层句按单源渲染的源码哨兵：description 模板串里出现的是具名引用（宿主包导入不可
+	// 加载，接线用源码钉）——写成裸串「跨机成立→profile」即测这句与 LAYERS 脱钩
+	assert.ok(source.includes('跨机成立→${PROFILE_LAYER}'), '工具 description 的判层句须按 LAYERS 单源渲染（PROFILE_LAYER 出场）')
 	const executeBody = source.slice(source.indexOf('async execute'), source.indexOf('function renderToolResult'))
+	assert.ok(executeBody.includes('guardMemoryParams'), 'execute 须先走入参守卫（未知键点名）')
+	assert.ok(executeBody.indexOf('guardMemoryParams') < executeBody.indexOf("args.action === 'write'"), '入参守卫须先于动作分派（点名先于按动作取值）')
+	assert.ok(executeBody.includes('assertRequiredParams'), 'execute 须运行期点名条件必填（layer/file_path/content 按动作）')
 	// 写侧三个动作各成一文件（write.js 是端口写侧，delete/lint 刻意直连 node:fs），
 	// execute 的分派面按模块归属一起核。动作模块的集合现场扫出来而不是手写枚举：枚举
 	// 漏登记一个文件时不会红，而分派面恰恰靠「全部动作模块导出面的并集」才查得全
@@ -110,6 +137,17 @@ test('memory 工具参数面与写侧函数签名一致（action→入参字段�
 		assert.ok(executeBody.includes(fn), `execute 未分派 "${fn}"`)
 	}
 	assert.ok(executeBody.includes('未知 action'), '未知 action 须显式 throw（不得静默成功）')
+	// 别名表逐键可指路（键按折叠口径匹配，退役名的每个常见拼写都得落进某一条指引），
+	// 否则撞上那个拼写的调用方只会拿到兜底句，指路名存实亡
+	const { foldParamName } = await loadModule('param-guard.js')
+	assert.equal(typeof guardMemoryParams, 'function', 'guardMemoryParams 须可调用（execute 的入参守卫）')
+	for (const retired of ['oldString', 'old_string', 'newString', 'new_string', 'replaceAll', 'file', 'indexLine']) {
+		const folded = foldParamName(retired)
+		assert.ok(
+			Object.keys(RETIRED_PARAM_GUIDES).some((key) => foldParamName(key) === folded),
+			`退役名 "${retired}" 在别名表没有折叠命中的键`,
+		)
+	}
 })
 
 test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', async () => {
@@ -182,6 +220,7 @@ const NODE_FS_DIRECT = new Map([
 	['memory/frontmatter.js', false],
 	['memory/core.js', false],
 	['memory/patterns.js', false],
+	['memory/params.js', false],
 	['memory/delete.js', true],
 	['memory/lint.js', true],
 	['memory/assemble.js', true],
@@ -198,6 +237,7 @@ const NODE_FS_DIRECT = new Map([
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
+	['param-guard.js', false],
 	['memory-root.js', false],
 	['fs-port.js', true],
 	['fs-guard.js', false],
