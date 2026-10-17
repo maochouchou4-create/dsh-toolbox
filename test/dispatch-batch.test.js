@@ -9,8 +9,8 @@
  */
 import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import {
 	advanceEvent,
@@ -27,6 +27,7 @@ import {
 } from '../lib/dispatch/batch.js'
 import { DATA_FILES, loadDispatchData, loadDispatchTables, readDataBytes } from '../lib/dispatch/data.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { expandHome } from '../lib/paths.js'
 import { copyDataFiles, DISPATCH_DATA_DIR, tempRoot } from './helpers.js'
 
 const dataDir = DISPATCH_DATA_DIR
@@ -59,7 +60,7 @@ const freshLedger = (name) => {
 	return ledger
 }
 
-const START = { batch: 'dispatch-plugin-b4', batchType: '纯后端管线批', intent: '台账落共享层', decisions: ['台账落共享层', 'fold 集合式'] }
+const START = { batch: 'dispatch-plugin-b4', batchType: '纯后端管线批', intent: '台账落共享段', decisions: ['台账落共享段', 'fold 集合式'] }
 
 const run = (action, params = {}) => runBatchAction({ port, path: ledger, loadTables, dataDir, action, params })
 const start = (overrides = {}) => run('start', { ...START, ...overrides })
@@ -73,10 +74,12 @@ before((t) => {
 	root = tempRoot(t, 'dispatch-batch')
 })
 
-test('台账路径：显式配置优先，空串按 memoryRoot 推导到习惯层底目录的 data/ 下（两机共享的那一层）', () => {
+test('台账路径：显式配置优先，空串按 memoryRoot 推导到 store 下的 data/ 下（两机共享的那一处）', () => {
 	assert.equal(resolveLedgerPath({ configuredPath: '/tmp/自定义台账.jsonl', memoryRoot: '/nowhere' }), '/tmp/自定义台账.jsonl')
-	assert.equal(resolveLedgerPath({ configuredPath: '', memoryRoot: '/nowhere' }), join('/nowhere', 'profile', 'data', 'dispatch-ledger.jsonl'))
-	assert.equal(resolveLedgerPath({ memoryRoot: '~/mem' }), join(process.env.HOME ?? '', 'mem', 'profile', 'data', 'dispatch-ledger.jsonl'), '~ 展开与绝对化走 memory 那份归一，不是自己拼串')
+	assert.equal(resolveLedgerPath({ configuredPath: '', memoryRoot: '/nowhere' }), join(resolve('/nowhere'), 'profile', 'data', 'dispatch-ledger.jsonl'))
+	// 家目录取 expandHome（与实现同一份 ~ 展开源）：Windows 上是 USERPROFILE、类 Unix 上是 HOME，
+	// 写死其中一个的话这里只在写它的那台机器上成立
+	assert.equal(resolveLedgerPath({ memoryRoot: '~/mem' }), join(resolve(expandHome('~/mem')), 'profile', 'data', 'dispatch-ledger.jsonl'), '~ 展开与绝对化走 memory 那份归一，不是自己拼串')
 })
 
 test('rules 指纹＝pairing＋forms 的原始字节按固定顺序拼一次 sha256 取前 8 位（两机同字节同值）', () => {
@@ -229,7 +232,7 @@ test('双 start 取 t 最小者并出告警（跨机并发登记的正常吸收�
 	const status = await run('status', { batch: START.batch })
 	const state = foldBatch(status.events, data)
 	assert.equal(state.batchType, '纯后端管线批', '取 t 最小的那条')
-	assert.equal(state.intent, '台账落共享层')
+	assert.equal(state.intent, '台账落共享段')
 	assert.ok(renderBatchResult(status, data).includes('2 条 start 事件'))
 })
 
@@ -422,7 +425,7 @@ test('start/advance 的返回值＝写前读到的全量＋新事件（渲染不
 	const advanced = await advance({ batch: START.batch, stage: '门一', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 })
 	assert.deepEqual(advanced.events.map((event) => event.action), ['start', 'advance', 'advance'], '同一批的三条事件都在')
 	const text = renderBatchResult(advanced, data)
-	assert.ok(text.includes('意图：台账落共享层'), `丢意图行的渲染会让人以为登记时没写：${text}`)
+	assert.ok(text.includes('意图：台账落共享段'), `丢意图行的渲染会让人以为登记时没写：${text}`)
 	assert.ok(text.includes('门一 第 2 轮（采纳 3／重叠 0／拒收 0）'), text)
 	assert.ok(!text.includes('缺记录'), `门一刚记过就不该甩假告警：${text}`)
 	assert.ok(text.includes('下一步：施工'), text)
@@ -870,7 +873,10 @@ test('渲染输入在值自己身上：text 随值一起交出，render 只投�
 	assert.equal(renderBatchResult(started, data), started.text, '算式与值同源：值里那份 text 就是按那份算式现算出来的那份，两处不会各说一套')
 	// 渲染是纯投影：execute 那一次就把文本定下来了。之后台账删掉、数据面读不动，投影照样出得来
 	// ——render 里再去读一次或重折一遍，那份文本就是「读到什么算什么」，同一批两次渲染能不一样
-	rmSync(ledger, { force: true })
+	// 用 unlinkSync 而非 rmSync：Windows 上被删路径的末段（basename）非 ASCII 时，fs.rmSync 会让整个
+	// 进程以 0xC0000409 当场死掉（父目录非 ASCII 无害；本机 Node 24 实测，unlinkSync 与 PowerShell 删同一
+	// 文件都正常）；台账名带中文，末段正踩这条
+	unlinkSync(ledger)
 	assert.match(started.text, /批次 dispatch-plugin-b4（纯后端管线批）/u, '台账已删，值里那份文本照旧')
 	assert.match(advanced.text, /已记录：门一 第 1 轮/u, '同上')
 	assert.throws(

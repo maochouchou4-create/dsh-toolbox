@@ -3,10 +3,14 @@
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
 单个工具初始化失败只丢那一件，不连坐整包。当前五件：
 
-- **memory**：分层记忆读写（习惯层 `profile`／工作层 `workspace`，`write/edit/delete/lint`
-  四动作）。edit 按节锚定：`heading`（条目内唯一的 `##` 标题）定位＋`body` 整段替换，
+- **memory**：单仓记忆读写（store 顶层＝两机共享条目，`machines/<机器名>/`＝本机私有条目），
+  `write/edit/delete/lint` 四动作。`write` 收可选 `scope`（缺省＝本机段，未配机器名时＝共享段）；
+  `edit`/`delete` 只认 `file_path`：裸名（共享段与本机段范围内唯一命中）或
+  `machines/<机器名>/<文件名>` 全形式——跨机帮写帮改走全形式，对机 pull 后生效。
+  edit 按节锚定：`heading`（条目内唯一的 `##` 标题）定位＋`body` 整段替换，
   frontmatter 两键走 `title`/`description`；参数名与宿主自家编辑工具对齐（`file_path`）。
-  附会话 systemPrompt 索引注入（`memory:index`，order 200）。索引行由条目
+  附会话 systemPrompt 索引注入（`memory:index`，order 200），分「共享（跨机同步）」与
+  「本机（<机器名>）」两段。索引行由条目
   frontmatter（恰好 `title`＋`description` 两键）现场派生，不落盘、不手写。
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
@@ -29,44 +33,67 @@
 
 ## memory 的索引与条目契约
 
-索引块每轮上下文都装一份，所以它有四重预算，全在 `lib/memory/core.js` 声明：层内索引的
+记忆只有一处落点：`~/.dsh/memory/profile`（下称 store；家机上是指向 agent-data 仓
+`profile-memory` 的目录联接）。store 顶层放两机共享条目，`machines/<机器名>/` 放各机私有
+条目，全部记忆同在这一处。注入分两段——「共享（跨机同步）」与「本机（<机器名>）」，
+标题与基目录都写在块里。`machines/` 下非本机的段不进注入（有几条都不进），只在块尾留一行
+「另：machines/<id> N 条未注入，可直接读文件」，每条机器段一行、空段不报。机器名来自
+Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落共享段；`shared` 是保留字，
+不可作机器名。跨机帮写帮改用 `file_path=machines/<机器名>/<文件名>` 全形式。
+
+机器名写在 profile 的 cordis 配置里（值＝小写字母数字与中划线，如 `home`）：
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: dsh-toolbox
+  name: dsh-toolbox
+  config:
+    machine: home
+```
+
+索引块每轮上下文都装一份，所以它有四重预算，全在 `lib/memory/core.js` 声明：段内索引的
 **行数与字符数**、单条派生行的**字符数**，以及**注入块整块的字符数**（含写侧纪律
-`WRITING.md`）。前三重由注入时逐层施加，越线截断并带显式标注（不静默丢）；整块这一重
+`WRITING.md`）。前三重由注入时逐段施加，越线截断并带显式标注（不静默丢）；整块这一重
 **运行期不截**——截整块会连写侧纪律一起截掉，规则被静默丢掉比超预算更难查，所以它只判红，
 由 `npm run check:memory` 离线做。数值别照抄本文档里的，那条命令会打印当前定档与实测。
 `memory` 工具的 `lint` 与它逐条报病灶。整块那一重的线按「**还能装几条新条目**」换算（用
 实测的条目派生行均长），不按百分比——百分比定的线在语料一变就名不副名。运行期关于「索引
-没装全」只有一个信号：某一层真被截断时块尾多一行「本次注入有 N 层索引超预算已截断」，报出
-层数、层名与切在哪一重；一层都没截断时那行不出现。
+没装全」只有一个信号：某一段真被截断时块尾多一行「本次注入有 N 段索引超预算已截断」，报出
+段数、段名与切在哪一重；一段都没截断时那行不出现。
 
 索引不是数据：条目文件是唯一事实源，注入时按文件名排序扫目录、用
 `frontmatter.title`＋`description` 重建每一行。组装入口 `composeMemory` 有一层**进程内缓存**，
-键＝调用方 cwd＋两层落点＋每层的目录 mtime 与文件名列表＋`WRITING.md` 的 size/mtime，任一维度
+键＝store 根路径＋本机机器名＋store 顶层的目录 mtime 与文件名列表＋`machines/` 下的子目录名
+清单与各子目录自己的 mtime 与文件名列表＋`WRITING.md` 的 size/mtime，任一维度
 变即换键全量重算，故写侧工具的增删改名立刻可见。缓存**不含条目内容指纹**：不经写侧工具的原地
 手改某个条目，要到下一次增删改名才刷新那一行的触发词（正文本来就不注入，窗口只到「一行触发词
 陈旧」）。不经写侧工具的原地改法（手改某个条目、或 `git checkout` 在两台之间对齐同一批文件）
 在任何文件系统精度下都既不动目录 mtime 也不动名字集合——这类改法一律要等下一次增删改名才
 刷新；粗粒度文件系统（秒级 mtime）上，写侧工具自己的发布在一秒内连做两次同样落进这格。命中
 那一趟**不重复上报读侧诊断**（frontmatter 不合规、条目重名那几条），要等键变了重算时才再报一次
-——同进程同根同 cwd 的第二次调用起就在这个窗口里（多 cwd 反而安全：键里有 cwd，不串块也不吞诊断）。
-体检走纯函数那条路（`scanLayer`）；离线自检（`check:memory`）是独立进程、每进程只调一次，
+——同进程同根同机器名的第二次调用起就在这个窗口里（换根或换机器名反而安全：键里有它们，不串块也不吞诊断）。
+体检走纯函数那条路（`scanSegment`）；离线自检（`check:memory`）是独立进程、每进程只调一次，
 首调即满算，不吃陈旧值。因此
 **没有索引文件**，`write`/`edit` 也不碰索引；`delete` 只删条目文件，它那一行随文件消失。
 frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
 就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
-故层内同名条目会被写侧拦下（改 frontmatter 的 title 键，用 `edit` 的 `title` 参数）；写侧那道拦截只在
-进程内拦得住自己，而习惯层是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，
-所以 `lint` 也会点名同层撞名的条目。**写侧报错**＝你正要写的那条与另一条撞名了，
+故段内同名条目会被写侧拦下（改 frontmatter 的 title 键，用 `edit` 的 `title` 参数）；写侧那道拦截只在
+进程内拦得住自己，而共享段是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，
+所以 `lint` 也会点名同段撞名的条目。**写侧报错**＝你正要写的那条与另一条撞名了，
 **体检 warning**＝盘上已经存在撞名对；两种口径处置同向，都不是 `delete`——撞上的每一
 条都是各自带正文的现存条目（title 与文件名本就是两回事），要改的是那一组里的某一条。
 edit 按节锚定的锚点是条目内唯一的 `##` 标题：未命中时报错列出全部节标题，重名节（`lint`
 同报）在收敛前写不进——按节锚定消的是「逐字复述正文必漂」那类失败，不是再加一道门槛。
-同层某条目 frontmatter 不合规时同名
-判定不可信，写侧直接报错而不是放行，并列出层内全部不合规条目。**拦的只是别的条目**：
-不合规的那条本身被扫描跳过，层内只有它一条时可以用 `write` 以修好 frontmatter 的全文
+同段某条目 frontmatter 不合规时同名
+判定不可信，写侧直接报错而不是放行，并列出段内全部不合规条目。**拦的只是别的条目**：
+不合规的那条本身被扫描跳过，段内只有它一条时可以用 `write` 以修好 frontmatter 的全文
 重写它（同名扫描把待写这条排除在外；`edit` 的按键编辑只改现存键行，补不出缺失的键）；
 两条以上时重写任一条都会被另一条挡住，须先 `delete` 掉多余的，剩最后一条再 `write`
-重写。修好之后该层立即恢复。
+重写。修好之后该段立即恢复。
+
+`edit`/`delete` 的裸名寻址按「共享段＋本机段」这个范围解析：唯一命中即动手，两段都有同名
+条目则报错并列出候选，要跨机或消歧就用全形式。`scope` 只有 `write` 消费——`edit`/`delete`
+收到它即报错，寻址一律走 `file_path`（同一个位置两种表述迟早说岔）。
 
 ## memory 与 dispatch 写侧的文件策略边界
 
@@ -267,10 +294,10 @@ const results = await parallel(briefs.map(b => async () => {
 
 ## dispatch_batch 批次台账
 
-一个批次的一生记成一行一事件的 JSONL，默认落在**习惯层底目录下的
+一个批次的一生记成一行一事件的 JSONL，默认落在**store 下的
 `data/dispatch-ledger.jsonl`**：Config 的 `dispatchLedgerPath` 显式路径优先，空串按
-`memoryRoot` 推导，与 memory 写侧共用同一份「记忆根 → 层目录」归一（`~` 展开、绝对化都走
-那一处）。习惯层在两台机器上都落在 agent-data 仓里，台账跟着它走才叫两机共享——
+`memoryRoot` 推导，与 memory 写侧共用同一份「记忆根 → store」归一（`~` 展开、绝对化都走
+那一处）。store 在两台机器上都落在 agent-data 仓里，台账跟着它走才叫两机共享——
 `agent-data/.gitattributes` 给这一行配 `merge=union`：两台同时追加的行都保留、零文本冲突，
 行序非时间序由集合式推导吸收（展示按事件时间 `t` 排序）。跨机并发 `start` 各登各自合法，
 合并后出现双 `start` 是正常吸收态：`status` 取 `t` 最小的一条并出告警，不当事故。
@@ -313,18 +340,19 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
 - 单测：`npm test`（node --test；三类面：零宿主依赖层（纯函数直测＋node 适配器的
   真 I/O，跑在临时目录上）、端口宿主适配器的**替身**（`ctx.fs` 替身，不是宿主
   通道）、接线静态解析）。
-- 记忆注入块：`npm run check:memory -- <记忆根> <工作区 cwd>`——**两参必须带全**（少给任一参
-  或给空串，桶在场那项判红、命令以 1 退出：工作层按 `process.cwd()` 算出
-  `home-nvse-code-repos-dsh-toolbox` 这个不存在的桶，该层在**注入块装配**里被省略，整块
-  定档只量得到习惯层——扫到多少就量多少，扫不到层时接线那项也不许拿「全绿」收场）。
-  本机正确形态：
-  `npm run check:memory -- /home/nvse/.dsh/memory /home/nvse/code`
-  （扫两层目录，按注入侧同一份判定验预算、frontmatter 契约、层内 title 重名与条目内
-  ## 节重名；接参 `[记忆根] [工作区 cwd]`；覆盖项见命令末尾自报名单）。
+- 记忆注入块：`npm run check:memory -- <记忆根> <机器id>`——机器 id 决定「本机段」是哪一段，
+  与 Config 的 `machine` 同形同值域。**两参必须带全**：未给机器 id 而 `machines/` 下已有带
+  条目的机器段时判红（本次只装共享段、本机段整段缺失，是空跑而不是全绿）；给了机器 id 而
+  `machines/<id>/` 不存在也判红（配了机器名却没有私有目录——先做条目迁移，见
+  `agent-data-sync.md` 的对机迁移节）。只有共享段的记忆根（还没分机器段）未给第二个实参
+  不算错，命令末尾会提示未给机器 id。本机正确形态：
+  `npm run check:memory -- /home/nvse/.dsh/memory home`
+  （扫 store 顶层与 `machines/<id>/` 两段，按注入侧同一份判定验预算、frontmatter 契约、
+  段内 title 重名与条目内 ## 节重名；接参 `[记忆根] [机器id]`；覆盖项见命令末尾自报名单）。
 - 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
-  将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply`——落盘前先
-  把待改文件的改前原文备份到记忆根同级的 `memory-migrate-backups/<时间戳>/`，脚本可反复跑
-  （已合规条目不动、不进备份）。
+  将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply` 才落盘。脚本
+  可反复跑（已合规条目不动）；单仓化后全部记忆都在 agent-data 仓里，改写与删除都进 git，
+  要回退走版本控制，脚本不再自己另存备份。
 - 识图质量端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，
   答案与图吻合才留——不测易分辨的图，测「像素真喂进去了」。
 
@@ -340,12 +368,12 @@ lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路�
 lib/tool-schema.js       工具 schema 的共用形状工厂（stringList／objectShape，三族工具的输出 schema 共用）。object 节点默认闭集、每次返回新对象、假值入参当场拒；「形状写一份」是宿主要求（object 节点缺 additionalProperties 整件工具注册失败，症状是工具从上下文里消失而不是某字段被拒）
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一＋退役别名表，零 node:fs、零依赖）。落 lib 根因为它是「工具入参形状」的守门人而不是 memory 的私产，批3 的四件 dispatch 工具复用同一份机械
-lib/memory-root.js       记忆根默认值与归一、工作区路径→桶名、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与桶名」，谁要谁向下指
-lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS/LAYERS）+ core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/layers。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
+lib/memory-root.js       记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与 store」，谁要谁向下指
+lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS）+ core/frontmatter/patterns 纯模块 + write/delete/lint/assemble/segments。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/dispatch/           派发装配四件、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（装配四件与台账两件的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
-scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘并先备份）
+scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录那一族

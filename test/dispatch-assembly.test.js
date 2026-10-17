@@ -141,7 +141,7 @@ test('装配层冒烟：六件工具注册得出来，且 execute 真被调过�
 		'施工缺锚点在运行期点名；宿主层 invalid arguments 待重启后另验',
 	)
 
-	const started = await batchTool.execute({ action: 'start', batch: 'smoke-batch', batchType: '纯后端管线批', intent: '台账落共享层', subject: 'README 装配层' }, exec)
+	const started = await batchTool.execute({ action: 'start', batch: 'smoke-batch', batchType: '纯后端管线批', intent: '台账落共享段', subject: 'README 装配层' }, exec)
 	assert.equal(started.ok, true)
 	// 两个写动作的返回值也要渲染得出来：它们曾只回新事件、渲染回落去现读数据面而抛错，
 	// 而 render 那条路在纯函数用例里照不到（要宿主才有的 output.render 接线）
@@ -191,11 +191,11 @@ test('装配层冒烟：六件工具注册得出来，且 execute 真被调过�
 	// 跨工具那一趟：review 带批次名跑一趟，回填把台账里的对象与意图补上
 	const cross = await reviewTool.execute({ batch: 'smoke-batch' }, exec)
 	assert.ok(cross.briefs[0].text.includes('对象：README 装配层。'), `回填的对象要进 brief：${cross.briefs[0].text}`)
-	assert.ok(cross.briefs[0].text.includes('本批意图一句话：台账落共享层。'), `回填的意图要进 brief：${cross.briefs[0].text}`)
+	assert.ok(cross.briefs[0].text.includes('本批意图一句话：台账落共享段。'), `回填的意图要进 brief：${cross.briefs[0].text}`)
 
 	// 门二那一趟：subject 不从台账回填（BACKFILL_EXCLUDE）——显式给净 diff 命令，台账那格登记的
 	// 是方案路径。两格语义不同，回填它会要么说岔报错、要么把两个对象混进一格；显式值照用即是对的
-	const verify = await verifyTool.execute({ batch: 'smoke-batch', subject: 'git diff HEAD~1..HEAD', intent: '台账落共享层' }, exec)
+	const verify = await verifyTool.execute({ batch: 'smoke-batch', subject: 'git diff HEAD~1..HEAD', intent: '台账落共享段' }, exec)
 	assert.ok(verify.briefs.length > 0, '门二出稿不因台账里另有一个 subject 而说岔')
 	assert.ok(verify.briefs[0].text.includes('对象：git diff HEAD~1..HEAD。'), `门二的对象＝显式的净 diff 命令，不被台账方案路径覆盖：${verify.briefs[0].text}`)
 

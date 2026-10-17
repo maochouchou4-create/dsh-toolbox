@@ -946,10 +946,10 @@ test('方案任务书：执行纪律指针、语义判定段位置、自查第 �
 test('跨工具回填：装配四件(batch=) 先从台账补齐拍板清单/批型/意图/对象再出稿，且回填不触发「不消费即报错」', async (t) => {
 	const dir = tempRoot(t, 'dispatch-backfill')
 	const batch = 'dispatch-plugin-b4'
-	const decisions = ['台账落共享层', 'fold 集合式']
+	const decisions = ['台账落共享段', 'fold 集合式']
 	const fixture = makeEvent()
 	const path = seedLedger(dir, 'dispatch-ledger', [
-		fixture.start(batch, '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享层', subject: '方案.md 批 4', decisions }),
+		fixture.start(batch, '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享段', subject: '方案.md 批 4', decisions }),
 		fixture.advance({ batch, stage: '门一', rules: 'a1b2c3d4' }),
 	])
 	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
@@ -960,7 +960,7 @@ test('跨工具回填：装配四件(batch=) 先从台账补齐拍板清单/批�
 	const output = assembleDispatch(data, { ...review, stage: '门一' })
 	for (const brief of output.briefs) {
 		assert.ok(brief.text.includes(`拍板清单（不得重开）：${decisions.join('；')}。`), `${brief.form} 的 brief 带出台账登记的拍板清单`)
-		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的 brief 带上台账登记的意图`)
+		assert.ok(brief.text.includes('本批意图一句话：台账落共享段。'), `${brief.form} 的 brief 带上台账登记的意图`)
 	}
 	// 方案那一趟不消费 decisions/batchType：回填只给 intent，出稿不撞「不消费即报错」
 	const planParams = backfillFromBatch(data, { batch, subject: '方案.md 批 4' }, events, '方案').params
@@ -971,23 +971,23 @@ test('跨工具回填：装配四件(batch=) 先从台账补齐拍板清单/批�
 		() => backfillFromBatch(data, { batch, subject: 'x', intent: '另一句意图' }, events, '门一'),
 		/与批次「dispatch-plugin-b4」台账里登记的不一致/,
 	)
-	const agreed = backfillFromBatch(data, { batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享层', decisions }, events, '门一')
-	assert.equal(agreed.params.intent, '台账落共享层', '与台账一致的显式值照用，不重复填也不报冲突')
+	const agreed = backfillFromBatch(data, { batch, subject: '方案.md 批 4', batchType: '纯后端管线批', intent: '台账落共享段', decisions }, events, '门一')
+	assert.equal(agreed.params.intent, '台账落共享段', '与台账一致的显式值照用，不重复填也不报冲突')
 	assert.deepEqual(agreed.filled, [])
 	// 对象那格每阶段都必填：登记时带对象、这一趟不传，回填补齐后出稿
-	const build = backfillFromBatch(data, { batch, intent: '台账落共享层', anchors: ['makeBatchTool'] }, events, '施工')
+	const build = backfillFromBatch(data, { batch, intent: '台账落共享段', anchors: ['makeBatchTool'] }, events, '施工')
 	assert.deepEqual(build.filled, ['batchType', 'subject', 'decisions'], '施工消费 batchType/subject/intent/anchors/decisions：台账补上没传的那几格')
 	assert.equal(build.params.subject, '方案.md 批 4', '对象从台账补齐——登记一次，每路 brief 指同一份对象指针')
 	for (const brief of assembleDispatch(data, { ...build.params, stage: '施工' }).briefs) {
 		assert.ok(brief.text.includes('对象（动工前先读对应批次节）：方案.md 批 4。'), `${brief.form} 的施工 brief 带出台账登记的对象`)
-		assert.ok(brief.text.includes('本批意图一句话：台账落共享层。'), `${brief.form} 的施工 brief 带上显式传的意图`)
-		assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享层；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
+		assert.ok(brief.text.includes('本批意图一句话：台账落共享段。'), `${brief.form} 的施工 brief 带上显式传的意图`)
+		assert.ok(brief.text.includes('拍板清单（不得重开）：台账落共享段；fold 集合式。'), `${brief.form} 的施工 brief 带出台账登记的拍板清单`)
 	}
 })
 
 test('「先回填后校验」是契约（回填面那四格里两格每阶段必填，顺序反了就是先报缺必填）', async (t) => {
 	const path = seedLedger(tempRoot(t, 'dispatch-order'), 'dispatch-ledger', [
-		makeEvent().start('order-batch', '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享层', subject: '方案.md 批 4' }),
+		makeEvent().start('order-batch', '纯后端管线批', 'a1b2c3d4', { intent: '台账落共享段', subject: '方案.md 批 4' }),
 	])
 	const events = await readLedgerEvents({ port: createNodeFsPort(), path })
 	const args = { stage: '门一', batch: 'order-batch' }

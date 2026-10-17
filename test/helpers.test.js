@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { advanceEvent, startEvent } from '../lib/dispatch/batch.js'
 import {
@@ -19,6 +19,7 @@ import {
 	isoClock,
 	makeEvent,
 	memoryTree,
+	removeTempRoot,
 	requireTestContext,
 	seedLedger,
 	tempRoot,
@@ -93,6 +94,35 @@ test('withTempDir：同步回调走同步路径（返回原值、返回前已删
 	assert.equal(existsSync(boomPath), false, 'fn 抛错时目录照样删')
 })
 
+test('removeTempRoot：子目录、文件与符号链接一并删净（中文名不崩，链接只删链接本身）', (t) => {
+	const root = tempRoot(t, 'remove-tree')
+	// 两个链接的目标都放在临时根之外：判定若用 stat 而非 lstat，就会跟进去把目标那棵树也删掉，
+	// 而症状是另一个用例的夹具凭空少文件——指向的是那个用例，不是这里
+	const outside = tempRoot(t, 'remove-tree-outside')
+	const target = join(outside, '外部目标.md')
+	writeFileSync(target, '外部目标\n', 'utf8')
+	const outsideDir = join(outside, '外部目录')
+	mkdirSync(outsideDir, { recursive: true })
+	writeFileSync(join(outsideDir, '目标.md'), '正文\n', 'utf8')
+	mkdirSync(join(root, '子目录', '更深'), { recursive: true })
+	writeFileSync(join(root, '子目录', '更深', '条目.md'), '正文\n', 'utf8')
+	writeFileSync(join(root, '顶层条目.md'), '正文\n', 'utf8')
+	symlinkSync(target, join(root, '文件链接.md'))
+	// 目录链接用 junction：Windows 上不需要符号链接特权，POSIX 忽略这个类型参数
+	symlinkSync(outsideDir, join(root, '目录链接'), 'junction')
+	removeTempRoot(root)
+	assert.equal(existsSync(root), false, '整棵树删净：中文名文件与目录走的正是 rmSync／recursive rmdir 会整进程 0xC0000409 的那一档')
+	assert.equal(existsSync(target), true, '链接只删链接本身，不跟进去删目标')
+	assert.ok(existsSync(join(outsideDir, '目标.md')), '目录链接同样只删链接本身：跟进去删会把别处的语料一起带走')
+})
+
+test('removeTempRoot：目录本就不在时跳过不抛（收尾路径上的抛错会顶掉用例自己的结果）', (t) => {
+	const root = tempRoot(t, 'remove-absent')
+	assert.doesNotThrow(() => removeTempRoot(join(root, '从没建过')), '不存在的路径按「已删」跳过，与原先 force 的语义一致')
+	removeTempRoot(root)
+	assert.doesNotThrow(() => removeTempRoot(root), '删过的树再删一次同样跳过（t.after 与手工删会撞上这一档）')
+})
+
 test('临时根脱离 node:test 上下文当场报错：安静建一个没人删的目录，泄漏要到下次有人清 /tmp 才发现', () => {
 	const fake = { after: undefined }
 	assert.throws(() => requireTestContext(fake, 'tempRoot'), /须在 node:test 的上下文里调/)
@@ -124,17 +154,18 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	// 空名：join(base, '') 落回 base，于是「各自的树」全部叠在同一棵上，用例之间互相污染
 	assert.throws(() => memoryTree(base, ''), /非空/, '空名要当场拒：join 会把它落回 base，多个用例的树叠成一棵')
 	assert.throws(() => memoryTree(base, '   '), /非空/, '空白名同样拒')
-	// 带分隔符：造出一棵比调用方想的那棵深的树，而报错点在某个用例读不到 profile 时
+	// 带分隔符：造出一棵比调用方想的那棵深的树，而报错点在某个用例读不到自己那一段时
 	assert.throws(() => memoryTree(base, 'a/b'), /路径分隔符/, '名字里带分隔符要当场拒：层级是调用方拼的，不是夹具拼的')
 	assert.throws(() => memoryTree(base, '../escape'), /路径分隔符|路径穿越/, '名字里带 .. 同样拒')
-	const { root, profile, bucket } = memoryTree(base, 'case', 'D-code')
+	assert.throws(() => memoryTree(base, 'case-machine', 'a/b'), /路径分隔符/, '机器 id 同样受一层限制（它是段目录名）')
+	const { root, store, machineDir } = memoryTree(base, 'case', 'home')
 	assert.deepEqual(
-		[profile, bucket],
-		[join(root, 'profile'), join(root, 'workspaces', 'D-code')],
-		'给了工作区桶就建桶，不给的那一档是 undefined（调用方据此知道这条用例只碰习惯层）',
+		[store, machineDir],
+		[join(root, 'profile'), join(root, 'profile', 'machines', 'home')],
+		'给了机器 id 就建私有段，不给的那一档是 undefined（调用方据此知道这条用例只碰共享段）',
 	)
-	assert.ok(existsSync(profile) && existsSync(bucket))
-	assert.equal(memoryTree(base, 'no-bucket').bucket, undefined)
+	assert.ok(existsSync(store) && existsSync(machineDir))
+	assert.equal(memoryTree(base, 'no-machine').machineDir, undefined)
 })
 
 test('copyDataFiles：五份逐字节相等（解析过再写的形状对不上就红），跑两遍结果同', (t) => {

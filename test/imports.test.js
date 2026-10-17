@@ -97,37 +97,52 @@ test('memory 工具参数面与写侧函数签名一致（action→入参字段�
 	// index.js 的 /^\s{3}(\w+):\s*\{\s*type:/ 抽取退役，换成本条的 import 现值断言）
 	const { MEMORY_PARAMS, RETIRED_PARAM_GUIDES, guardMemoryParams } = await loadModule('memory/params.js')
 	const parameters = Object.keys(MEMORY_PARAMS)
-	for (const expected of ['action', 'layer', 'file_path', 'content', 'heading', 'body', 'title', 'description']) {
+	for (const expected of ['action', 'scope', 'file_path', 'content', 'heading', 'body', 'title', 'description']) {
 		assert.ok(parameters.includes(expected), `工具 parameters 缺 "${expected}"`)
 	}
 	// 退役参数与派生名同退同进：schema 里留着而实现不接，子代理照 schema 传参就撞
 	// 「参数不存在」；反过来实现还认着的退役名也不许从 schema 里凭空消失——两边同退
-	for (const retired of ['file', 'oldString', 'newString', 'replaceAll', 'indexLine']) {
+	for (const retired of ['layer', 'file', 'oldString', 'newString', 'replaceAll', 'indexLine']) {
 		assert.ok(!parameters.includes(retired), `退役参数 "${retired}" 不得回到工具 parameters`)
 	}
-	// action/layer 的 enum 各读单源（core.js），且是同一份引用不是抄本——抄本与单源在
-	// 下一轮改词表时分叉，报错清单就会教一个 schema 不收的值
+	// action 的 enum 读单源（core.js），且是同一份引用不是抄本——抄本与单源在下一轮改
+	// 词表时分叉，报错清单就会教一个 schema 不收的值。
+	// scope 反过来：值域一个字都不写进 schema——宿主参数 DSL 的白名单只收 type/oneOf/
+	// properties/…，pattern 键会让工具在宿主侧静默消失；而「本机机器名是什么」是本机
+	// 配置里的事实，schema 里写不下（写成 enum 就要求每台机器改 schema）。
+	// 值域的单源因此落在 core：shared 是保留值，机器 id 过 MACHINE_ID_RE。
 	const core = await loadModule('memory/core.js')
 	assert.equal(MEMORY_PARAMS.action.enum, core.MEMORY_ACTIONS, 'action enum 须引用 MEMORY_ACTIONS 单源本体')
-	assert.equal(MEMORY_PARAMS.layer.enum, core.LAYERS, 'layer enum 须引用 LAYERS 单源本体')
-	assert.deepEqual([...core.LAYERS], ['profile', 'workspace'], '层值词表＝profile | workspace（目录名与值同名，注入索引教的即 schema 收的）')
-	// 层值字面量不得回流：schema/路由/注入/标签全部走 LAYERS 单源后，'habit' 在 lib/memory
-	// 下任何一处重新出现都是「一边收 profile 一边教 habit」那条老病根复发
-	for (const file of ['memory/index.js', 'memory/core.js', 'memory/assemble.js', 'memory/layers.js', 'memory/params.js']) {
-		assert.ok(!readLib(file).includes("'habit'"), `${file} 不得再出现层值字面量 'habit'（层值单源＝core 的 LAYERS）`)
-	}
+	const scopeParam = MEMORY_PARAMS.scope
+	assert.equal(scopeParam.type, 'string', 'scope 只声明字符串')
+	assert.equal(scopeParam.enum, undefined, 'scope 不得带 enum（机器名随机器配置，schema 里写不下）')
+	assert.equal(scopeParam.pattern, undefined, 'scope 不得带 pattern（宿主参数 DSL 白名单不收，工具会静默消失）')
+	assert.equal(core.SHARED_SEGMENT, 'shared', '共享段的段值单源＝core.SHARED_SEGMENT')
+	assert.ok(core.MACHINE_ID_RE.test('home') && !core.MACHINE_ID_RE.test('shared'), '机器 id 值域单源＝core.MACHINE_ID_RE（shared 是保留值，不是机器名）')
+	// 机器名的位置表达单源：configShape 的机器名须引用 MACHINE_ID_RE，不得内联正则抄本
+	// （schemastery 只有 .pattern()，没有 .regex／.optional——写错一处即整包起不来）
+	assert.ok(readLib('memory/index.js').includes('pattern(MACHINE_ID_RE)'), 'configShape 的机器名判定须引用 MACHINE_ID_RE 单源')
 	// index.js 只引用单源表与守卫（宿主包导入不可加载，接线用源码钉）：parameters 直指
 	// MEMORY_PARAMS、execute 先点名未知键再看动作、条件必填运行期点名——三处断线都会让
 	// 契约测试测的与运行期跑的脱钩
 	const source = readLib('memory/index.js')
 	assert.ok(source.includes('parameters: MEMORY_PARAMS'), 'index.js 的 parameters 须引用 params.js 单源表')
-	// 判层句按单源渲染的源码哨兵：description 模板串里出现的是具名引用（宿主包导入不可
-	// 加载，接线用源码钉）——写成裸串「跨机成立→profile」即测这句与 LAYERS 脱钩
-	assert.ok(source.includes('跨机成立→${PROFILE_LAYER}'), '工具 description 的判层句须按 LAYERS 单源渲染（PROFILE_LAYER 出场）')
+	// 判归属句按单源渲染的源码哨兵：description 模板串里出现的是具名引用（宿主包导入不可
+	// 加载，接线用源码钉）——写成裸串「两机都成立→shared」即测这句与 WRITING_FILE 脱钩
+	assert.ok(source.includes('写前按 ${WRITING_FILE} 判归属'), '工具 description 的判归属句须按 WRITING_FILE 单源渲染')
+	// 输出 schema 是闭集（objectShape 缺省 additionalProperties:false）：lint 结果里那个机器
+	// 身份字段不在 properties 里就等于拒收整份体检结果——只有宿主验返回值时才显形，直调测不到
+	assert.ok(/machine:\s*\{\s*type:\s*'string'\s*\}/.test(source), '输出 schema 须声明 lint 的机器身份字段（闭集缺它就拒收该返回值）')
 	const executeBody = source.slice(source.indexOf('async execute'), source.indexOf('function renderToolResult'))
 	assert.ok(executeBody.includes('guardMemoryParams'), 'execute 须先走入参守卫（未知键点名）')
 	assert.ok(executeBody.indexOf('guardMemoryParams') < executeBody.indexOf("args.action === 'write'"), '入参守卫须先于动作分派（点名先于按动作取值）')
-	assert.ok(executeBody.includes('assertRequiredParams'), 'execute 须运行期点名条件必填（layer/file_path/content 按动作）')
+	assert.ok(executeBody.includes('assertRequiredParams'), 'execute 须运行期点名条件必填（file_path/content 按动作）')
+	// 逐分支切片，不对整份源码做子串匹配：函数定义处（function assertScopeNotAccepted）本身就满足
+	// 整份源码的匹配，于是「edit/delete 真调了它」恒真——切片后剩下的只有分支体内那几行
+	const editBody = executeBody.slice(executeBody.indexOf("args.action === 'edit'"), executeBody.indexOf("args.action === 'delete'"))
+	const deleteBody = executeBody.slice(executeBody.indexOf("args.action === 'delete'"), executeBody.indexOf("args.action === 'lint'"))
+	assert.ok(editBody.includes('assertScopeNotAccepted'), 'edit 分支须显式拒 scope（scope 只归 write 消费，逐动作的 Fail Fast 落点）')
+	assert.ok(deleteBody.includes('assertScopeNotAccepted'), 'delete 分支须显式拒 scope（逐分支切片，函数定义处满足不了它）')
 	// 写侧三个动作各成一文件（write.js 是端口写侧，delete/lint 刻意直连 node:fs），
 	// execute 的分派面按模块归属一起核。动作模块的集合现场扫出来而不是手写枚举：枚举
 	// 漏登记一个文件时不会红，而分派面恰恰靠「全部动作模块导出面的并集」才查得全
@@ -144,7 +159,7 @@ test('memory 工具参数面与写侧函数签名一致（action→入参字段�
 	// 否则撞上那个拼写的调用方只会拿到兜底句，指路名存实亡
 	const { foldParamName } = await loadModule('param-guard.js')
 	assert.equal(typeof guardMemoryParams, 'function', 'guardMemoryParams 须可调用（execute 的入参守卫）')
-	for (const retired of ['oldString', 'old_string', 'newString', 'new_string', 'replaceAll', 'file', 'indexLine']) {
+	for (const retired of ['oldString', 'old_string', 'newString', 'new_string', 'replaceAll', 'file', 'indexLine', 'layer']) {
 		const folded = foldParamName(retired)
 		assert.ok(
 			Object.keys(RETIRED_PARAM_GUIDES).some((key) => foldParamName(key) === folded),
@@ -227,7 +242,7 @@ const NODE_FS_DIRECT = new Map([
 	['memory/delete.js', true],
 	['memory/lint.js', true],
 	['memory/assemble.js', true],
-	['memory/layers.js', true],
+	['memory/segments.js', true],
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],

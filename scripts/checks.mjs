@@ -12,38 +12,46 @@
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { composeMemory, readEntryHead, scanLayer } from '../lib/memory/assemble.js'
+import { composeMemory, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
 	INDEX_CHAR_BUDGET,
 	INDEX_LINE_BUDGET,
 	INDEX_LINE_CHAR_BUDGET,
+	MACHINES_DIR,
+	SHARED_SEGMENT,
+	assertMachineId,
+	resolveScopeDir,
 } from '../lib/memory/core.js'
-import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot, workspaceSlug } from '../lib/memory-root.js'
+import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory-root.js'
 import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
-import { listLayerDirs } from '../lib/memory/layers.js'
+import { listSegmentDirs } from '../lib/memory/segments.js'
 import { duplicateSectionHeadings, sectionDupNotice } from '../lib/memory/patterns.js'
 import { isNonBlankString } from '../lib/value.js'
 
 /**
  * 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。
  *
+ * 两参＝记忆根与机器 id（决定注入装本机段的是机器身份，不再是工作区 cwd——归属不再与
+ * 工作目录相关）。argv[3] 就是机器 id：它同时也是 `machines/<id>/` 的目录名，故与插件
+ * config.machine 同形、同值域。
+ *
  * 「给了」问 lib/value.js 那份跨族原语——本文件要与 dsh-memory 的 Config 回退判同一件事，
  * 两者各抄一份时「算不算给了」就在脚本与插件之间分叉。判的是解析后的值而不是数位置参数
  * 个数：空串与纯空白经 `||` 回落后与缺参同形，可它们仍是调用方**写下来**的形参，判据必须
- * 看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了两个空串，脚本却拿
- * process.cwd() 去算桶，然后拿只量到习惯层的块印「全部达标」，那是「检查没跑」却报成功。
+ * 看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了两个空串，脚本却拿默认根
+ * 与空机器名去算，然后印「全部达标」，那是「检查没跑」却报成功。
  */
 export function readOptions(argv = process.argv, env = process.env) {
 	// 用 `||` 不用 `??`：显式传空串（想只跑默认值）不该被当成「记忆根就是当前目录」，
 	// 那会让脚本在一片空地上报「全部达标」
 	const memoryRoot = argv[2] || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
-	const cwd = argv[3] || process.cwd()
+	const machine = argv[3] || ''
 	return {
 		memoryRoot,
-		cwd,
+		machine,
 		rootGiven: isNonBlankString(argv[2]),
-		cwdGiven: isNonBlankString(argv[3]),
+		machineGiven: isNonBlankString(argv[3]),
 	}
 }
 
@@ -51,21 +59,21 @@ export function readOptions(argv = process.argv, env = process.env) {
  * 采集：跑一遍注入侧同一份扫描，把各检查项要判的东西一次性收齐。
  * 检查项只读现场，不自己再去读盘——检查与采集各读一次盘，两者就会在「读到哪一刻」上分家。
  */
-export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
+export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 	const root = resolveRoot(memoryRoot)
 	const issues = []
 	const record = (kind) => (issue, path, detail) => {
 		issues.push({ kind, issue, path, detail })
 	}
-	// 层清点只发生一次，两个消费方（头读扫描与节重名整篇读）共用同一份清单：脚本自己
+	// 段清点只发生一次，两个消费方（头读扫描与节重名整篇读）共用同一份清单：脚本自己
 	// 再列一遍目录，两次结果不一致时（中途增删条目）报告里的数字就互相对不上
-	const layerDirs = listLayerDirs(root)
-	const layers = layerDirs.map(({ kind, dir }) => {
-		// 层清点、派生行与这一层报出的 issue 出自同一次扫描：脚本自己再列一遍目录，
+	const segmentDirs = listSegmentDirs(root)
+	const segments = segmentDirs.map(({ kind, dir }) => {
+		// 段清点、派生行与这一段报出的 issue 出自同一次扫描：脚本自己再列一遍目录，
 		// 两次结果不一致时（中途增删条目）报告里的「条目文件数」与派生行数就对不上，
 		// 而那正是读报告的人唯一能自查的抓手。读法与注入侧同源（只读文件头），
 		// 故派生行与判据量的是同一段文本
-		const scan = scanLayer(dir, { read: readEntryHead, report: record(kind) })
+		const scan = scanSegment(dir, { read: readEntryHead, report: record(kind) })
 		const names = scan?.names ?? []
 		const lines = scan?.lines ?? []
 		return {
@@ -83,12 +91,12 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 	// 消费方的知识）。逐文件降级：读不动的条目已由 entry-readable 认领 read-error，
 	// 这里跳过不重复报。issue kind entry-section-dup 由 entry-section-dup 检查项认领
 	// ——没人认领的新 kind 会被 issue-unclaimed 兜住，那是 CHECKS 数组结构给的保险
-	for (const { kind, dir } of layerDirs) {
+	for (const { kind, dir } of segmentDirs) {
 		let names
 		try {
 			names = readdirSync(dir)
 		} catch {
-			continue // 层目录读不动已在扫描期以 read-error 入账
+			continue // 段目录读不动已在扫描期以 read-error 入账
 		}
 		for (const name of names) {
 			if (!isEntryName(name)) continue
@@ -104,28 +112,49 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 	}
 	// 写侧纪律的字符数读不到即记一条 issue：静默归 0 会让整块变小、block-chars 随之达标，
 	// 脚本印「全部达标」，而规则块在运行期是被 warn 掉的——规则被静默丢掉比超预算更难查
-	const rulesPath = join(root.profile, WRITING_FILE)
+	const rulesPath = join(root.store, WRITING_FILE)
 	let rulesChars = 0
 	try {
 		rulesChars = readFileSync(rulesPath, 'utf8').length
 	} catch (error) {
 		record('写侧纪律')('read-error', rulesPath, describeError(error))
 	}
-	// 装配侧的 issue 与层扫描走同一个收集器：少了它，WRITING.md 与层目录的读失败一条都进不了
+	// 机器 id 不合规（与 config.machine 同值域）在这里就拦：它是路径的一段，放过去会让
+	// 后面每一次 resolveScopeDir 都抛，而机器名写错该报的是「这个名字不合规」而不是崩溃。
+	// 不合规时后面一律按「没给机器身份」装配：否则 composeMemory 会在这句话之后当场抛，
+	// 报告一个字都印不出来——那正是一个「写错参数就零输出」的假绿形态
+	let machineDir = ''
+	let machineDirExists = false
+	let machineValid = false
+	if (isNonBlankString(machine)) {
+		try {
+			// 机器身份先过 assertMachineId 而不是借 resolveScopeDir 顺带校验：后者收的是段值域，
+			// 会把保留字 shared 放行成机器名——本机段与共享段落进同一个目录，注入块里同一段
+			// 内容出现两遍、对机段整段漏装，而报告照样印「全部达标」
+			assertMachineId(machine)
+			machineDir = resolveScopeDir(root, machine)
+			machineDirExists = existsSync(machineDir)
+			machineValid = true
+		} catch (error) {
+			machineDir = join(root.store, MACHINES_DIR, machine)
+			record('机器身份')('bad-machine', machine, describeError(error))
+		}
+	}
+	// 装配侧的 issue 与段扫描走同一个收集器：少了它，WRITING.md 与段目录的读失败一条都进不了
 	// 现场，而块却照样算出来、照样被判达标
-	const block = composeMemory({ memoryRoot, cwd, onIssue: record('注入块') })
-	const bucket = workspaceSlug(cwd)
+	const block = composeMemory({ memoryRoot, machine: machineValid ? machine : '', onIssue: record('注入块') })
 	return {
 		root,
 		memoryRoot,
 		rootGiven,
-		cwd,
-		cwdGiven,
-		layers,
+		machine,
+		machineGiven,
+		segments,
 		issues,
 		block,
-		bucket,
-		bucketExists: existsSync(join(root.workspaces, bucket)),
+		machineDir,
+		machineDirExists,
+		machineValid,
 		rulesChars,
 	}
 }
@@ -140,39 +169,44 @@ export function collectSite({ memoryRoot, cwd, rootGiven, cwdGiven }) {
 export const CHECKS = [
 	{
 		id: 'memory-root-wired',
-		label: '记忆根接上了线且扫得到层（扫到 0 层不是「没有问题」，是「什么都没检」）',
-		guard: `记忆根存在且 listLayerDirs 扫到 ≥1 层（profile/ 与 workspaces/*）`,
-		run: (site) => (site.layers.length === 0
-			? [
-					`记忆根下扫到 0 层：${site.root.profile} 的父目录 ${site.root.workspaces} 不存在或无子目录——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见 README），或把第一个实参指向真正在用的记忆根`,
-				]
-			: []),
+		label: '记忆根接上了线且扫得到条目（扫到 0 条不是「没有问题」，是「什么都没检」）',
+		guard: 'store 顶层或 machines/ 下某个机器段扫到 ≥1 条 .md（段按条目数算，空目录不算）',
+		run: (site) => {
+			// 判「段在场」按有条目的段算而不是按目录数：空 machines/<id>/ 是首跑常态，拿它当
+			// 「扫到了东西」会让「共享段 0 条＋本机段空」报成「N 项检查全过」——正是这一项
+			// label 说的那种空跑假绿
+			const filled = site.segments.filter((segment) => (segment.entryFiles ?? 0) > 0)
+			if (filled.length > 0) return []
+			return [
+				`记忆根下扫到 0 条条目：${site.root.store} 顶层与 machines/ 下各段都没有 .md——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见 README），或把第一个实参指向真正在用的记忆根`,
+			]
+		},
 	},
 	{
-		id: 'layer-index-lines',
-		label: '层内索引行数在逐层预算内',
+		id: 'segment-index-lines',
+		label: '段内索引行数在逐段预算内',
 		guard: `INDEX_LINE_BUDGET=${INDEX_LINE_BUDGET}`,
 		run: (site) =>
-			site.layers
-				.filter((layer) => layer.lines.length > INDEX_LINE_BUDGET)
-				.map((layer) => `${layer.kind}：索引 ${layer.lines.length} 行超 ${INDEX_LINE_BUDGET} 行预算（注入会被截断）`),
+			site.segments
+				.filter((segment) => segment.lines.length > INDEX_LINE_BUDGET)
+				.map((segment) => `${segment.kind}：索引 ${segment.lines.length} 行超 ${INDEX_LINE_BUDGET} 行预算（注入会被截断）`),
 	},
 	{
-		id: 'layer-index-chars',
-		label: '层内索引字符数在逐层预算内',
+		id: 'segment-index-chars',
+		label: '段内索引字符数在逐段预算内',
 		guard: `INDEX_CHAR_BUDGET=${INDEX_CHAR_BUDGET}`,
 		run: (site) =>
-			site.layers
-				.filter((layer) => layer.chars > INDEX_CHAR_BUDGET)
-				.map((layer) => `${layer.kind}：索引 ${layer.chars} 字符超 ${INDEX_CHAR_BUDGET} 字符预算（注入会被截断）`),
+			site.segments
+				.filter((segment) => segment.chars > INDEX_CHAR_BUDGET)
+				.map((segment) => `${segment.kind}：索引 ${segment.chars} 字符超 ${INDEX_CHAR_BUDGET} 字符预算（注入会被截断）`),
 	},
 	{
 		id: 'entry-index-line',
 		label: '单条派生索引行在行预算内',
 		guard: `INDEX_LINE_CHAR_BUDGET=${INDEX_LINE_CHAR_BUDGET}`,
 		run: (site) =>
-			site.layers.flatMap((layer) =>
-				layer.overLine.map((line) => `${layer.kind}：派生索引行 ${line.length} 字符超 ${INDEX_LINE_CHAR_BUDGET} —— ${line}`),
+			site.segments.flatMap((segment) =>
+				segment.overLine.map((line) => `${segment.kind}：派生索引行 ${line.length} 字符超 ${INDEX_LINE_CHAR_BUDGET} —— ${line}`),
 			),
 	},
 	{
@@ -187,42 +221,42 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-readable',
-		label: `条目、层目录与写侧纪律 ${WRITING_FILE} 读得动（读失败即失去判定覆盖面，不许静默）`,
-		guard: `扫描期 read-error issue（层目录、${WRITING_FILE} 与注入块装配三路都收）`,
+		label: `条目、段目录与写侧纪律 ${WRITING_FILE} 读得动（读失败即失去判定覆盖面，不许静默）`,
+		guard: `扫描期 read-error issue（段目录、${WRITING_FILE} 与注入块装配三路都收）`,
 		claims: ['read-error'],
 		run: (site) => site.issues.filter((item) => item.issue === 'read-error').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
 	{
 		id: 'retired-index-file',
-		label: '层内没有退役的索引文件残留',
+		label: '段内没有退役的索引文件残留',
 		guard: `保留名折叠后等于 ${RETIRED_INDEX_NAME} 的文件（大小写不敏感）`,
 		run: (site) =>
-			site.layers
-				.filter((layer) => layer.retired.length > 0)
-				.map((layer) => `${layer.kind}：${layer.retired.map((name) => join(layer.dir, name)).join('、')} 是已退役的索引文件（索引由条目 frontmatter 现场派生，不再读它）——删掉它`),
+			site.segments
+				.filter((segment) => segment.retired.length > 0)
+				.map((segment) => `${segment.kind}：${segment.retired.map((name) => join(segment.dir, name)).join('、')} 是已退役的索引文件（索引由条目 frontmatter 现场派生，不再读它）——删掉它`),
 	},
 	{
-		id: 'layer-title-dup',
-		label: '层内没有 title 重名（撞名的各行在注入块里按 title 分不出谁是谁）',
+		id: 'segment-title-dup',
+		label: '段内没有 title 重名（撞名的各行在注入块里按 title 分不出谁是谁）',
 		guard: '按 frontmatter 的 title 字段分组，同组 >1 即判红；title 判不了的条目不占坑',
-		claims: ['layer-title-dup'],
+		claims: ['segment-title-dup'],
 		// 文案不再自己渲染：detail 出自 frontmatter.js 那份共享渲染点，与体检 warning、
-		// 写侧报错同一份口径；这里只补上「哪一层」这半句定位前缀
-		run: (site) => site.issues.filter((item) => item.issue === 'layer-title-dup').map((item) => `${item.kind}：${item.detail}`),
+		// 写侧报错同一份口径；这里只补上「哪一段」这半句定位前缀
+		run: (site) => site.issues.filter((item) => item.issue === 'segment-title-dup').map((item) => `${item.kind}：${item.detail}`),
 	},
 	{
-		id: 'layer-title-coverage',
-		label: '层内 title 判定覆盖得到整层（判不了 title 的条目不参与重名比对，缺口得说出来）',
-		guard: '扫描期 layer-title-coverage issue（每层一条，与该层有无撞名无关）',
-		claims: ['layer-title-coverage'],
-		run: (site) => site.issues.filter((item) => item.issue === 'layer-title-coverage').map((item) => `${item.kind}：${item.detail}`),
+		id: 'segment-title-coverage',
+		label: '段内 title 判定覆盖得到整段（判不了 title 的条目不参与重名比对，缺口得说出来）',
+		guard: '扫描期 segment-title-coverage issue（每段一条，与该段有无撞名无关）',
+		claims: ['segment-title-coverage'],
+		run: (site) => site.issues.filter((item) => item.issue === 'segment-title-coverage').map((item) => `${item.kind}：${item.detail}`),
 	},
 	{
 		id: 'entry-section-dup',
 		label: '条目内没有重名的 ## 节标题（edit 按节锚定以标题为锚，重名即分不清锚在哪）',
 		guard: '整篇读条目正文，同一 ## 标题（去空白后）出现 ≥2 即判红；只查重名不查无节——无节条目是语料迁移收口前的存量常态',
 		claims: ['entry-section-dup'],
-		// detail 出自 patterns 的共享渲染点（与体检 warning 同一份口径），这里补上「哪一层」定位
+		// detail 出自 patterns 的共享渲染点（与体检 warning 同一份口径），这里补上「哪一段」定位
 		run: (site) => site.issues.filter((item) => item.issue === 'entry-section-dup').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
 	{
@@ -231,21 +265,31 @@ export const CHECKS = [
 		guard: `BLOCK_CHAR_BUDGET=${BLOCK_CHAR_BUDGET}`,
 		run: (site) =>
 			site.block.length > BLOCK_CHAR_BUDGET
-				? [`注入块 ${site.block.length} 字符超 ${BLOCK_CHAR_BUDGET} 整块定档（写侧纪律 ${site.rulesChars} ＋ 两层索引）`]
+				? [`注入块 ${site.block.length} 字符超 ${BLOCK_CHAR_BUDGET} 整块定档（写侧纪律 ${site.rulesChars} ＋ 两段索引）`]
 				: [],
 	},
 	{
-		id: 'workspace-bucket',
-		label: '工作区桶在场（空跑不假绿：工作区 cwd 没给全——缺参、空串、纯空白都算——即判红）',
-		guard: '工作区 cwd 实参非空白且该桶在场',
+		id: 'machine-arg',
+		label: '机器身份在场（空跑不假绿：未给机器 id 而 machines/ 下有条目即判红；给了却没有那个目录也判红）',
+		guard: '机器 id 实参非空白且 machines/<id>/ 在场；或未给机器 id 时 machines/ 下没有任何有条目的目录',
+		claims: ['bad-machine'],
 		run: (site) => {
-			if (site.bucket.length === 0 || site.bucketExists) return []
-			// 桶不在场与「工作区 cwd 没给」是两件事：给了有效 cwd 而桶不在＝新工作区，
-			// 属常态、只提示；没给则是整块定档只量到习惯层的空跑，照印「全部达标」＝假绿
-			if (site.cwdGiven) return []
-			return [
-				`未给工作区 cwd 参数（空串与纯空白按没给算）：按进程 cwd=${site.cwd} 算出桶 ${site.bucket}，而它不存在——整块定档只量到习惯层，本次是空跑。要真检某个工作区请带上 <记忆根> <工作区 cwd>`,
-			]
+			const issues = site.issues
+				.filter((item) => item.issue === 'bad-machine')
+				.map((item) => `机器 id「${item.path}」不合规——${item.detail}`)
+			// 配了机器名而目录缺席＝那台机器的条目还没迁进来（lint 判不了这一条：空目录与
+			// 首跑不可区分；而离线自检跑在迁移之后，语境明确，缺席就是迁移没做）。
+			// 名字不合规那一格由上面的 bad-machine 认领：那时「目录缺席」是同义的第二种说法
+			if (site.machineGiven && site.machineValid && !site.machineDirExists) {
+				issues.push(`配了机器名 ${site.machine} 却没有私有目录 ${site.machineDir}——先做条目迁移（见 agent-data-sync.md 对机迁移节）`)
+			}
+			// 未给机器 id 而 machines/ 下有条目：本次装配只装共享段，本机段整段缺失，
+			// 照印「全部达标」就是空跑假绿
+			const withEntries = site.segments.filter((segment) => segment.kind !== SHARED_SEGMENT && segment.entryFiles > 0)
+			if (!site.machineGiven && withEntries.length > 0) {
+				issues.push(`未给机器 id 参数：machines/ 下有 ${withEntries.length} 个有条目的机器段（${withEntries.map((segment) => segment.kind).join('、')}），本次注入只装共享段、本机段整段缺失——空跑。要真检某台机器请带上 <记忆根> <机器id>`)
+			}
+			return issues
 		},
 	},
 	{
@@ -276,32 +320,32 @@ export function collectViolations(site) {
 export function renderReport(site) {
 	const out = []
 	const push = (line = '') => out.push(line)
-	push(`习惯层：${site.root.profile}`)
+	push(`共享段：${site.root.store}`)
 	// 记忆根取自哪个来源要印出来：空串回落成默认根时，那不是调用方要检的那个语料，
 	// 而报告里的一切数字都是相对它量的
 	push(`记忆根来源：${site.rootGiven ? '本次实参' : '默认值（未显式给出）'}`)
-	push(`工作区 cwd（决定装配哪一层）：${site.cwd}`)
+	push(`机器 id（决定本机段）：${site.machineGiven ? site.machine : '（未给）'}`)
 	push()
-	push('层\t条目文件\t派生行\t索引字符\t最长行\t超单行预算')
-	for (const layer of site.layers) {
-		const longest = layer.lines.length === 0 ? 0 : Math.max(...layer.lines.map((line) => line.length))
-		push(`${layer.kind}\t${layer.entryFiles}\t${layer.lines.length}\t${layer.chars}\t${longest}\t${layer.overLine.length}`)
+	push('段\t条目文件\t派生行\t索引字符\t最长行\t超单行预算')
+	for (const segment of site.segments) {
+		const longest = segment.lines.length === 0 ? 0 : Math.max(...segment.lines.map((line) => line.length))
+		push(`${segment.kind}\t${segment.entryFiles}\t${segment.lines.length}\t${segment.chars}\t${longest}\t${segment.overLine.length}`)
 	}
-	// cwd 的桶不在场时这一栏只数到习惯层：说清是「本次装配本就如此」还是「桶名算错了」，
+	// 未给机器 id 时这一栏只数到共享段：说清是「本次装配本就如此」还是「机器名给错了」，
 	// 否则报告里的字符数会被当成全量而误判
 	push()
-	push(`注入块（cwd=${site.cwd}，桶 ${site.bucket}）：${site.block.length} 字符／${site.block.split('\n').length} 行（含规则块与索引）`)
-	if (site.bucket.length > 0 && !site.bucketExists) {
-		// 「属常态」只在工作区 cwd 有效给出时成立：那时桶不在场确实只说明这是新工作区；
-		// 没给全时这句话是在替一次空跑打圆场，判红的那一项已经把它说清楚了
-		push(`提示：该工作区无桶，本次装配只有习惯层${site.cwdGiven ? '（新工作区属常态）' : ''}`)
+	push(`注入块（机器 ${site.machineGiven ? site.machine : '未给'}）：${site.block.length} 字符／${site.block.split('\n').length} 行（含规则块与索引）`)
+	if (!site.machineGiven) {
+		// 「只有共享段」在没给机器 id 时是预期形态，但注入块本身也少了本机段与尾行——
+		// 这句话是把「本次量到的不是全量」说清楚，判红的那一项另说
+		push('提示：未给机器 id，本次装配只有共享段（本机段与尾行均不含本机）')
 	}
 	push(
-		`预算：层内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐层），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符`,
+		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符`,
 	)
 	push(`其中写侧纪律 ${WRITING_FILE} 占 ${site.rulesChars} 字符`)
 	push()
-	if (site.block.length === 0) push('（无内容：记忆根未接线，或该工作区尚无桶）')
+	if (site.block.length === 0) push('（无内容：记忆根未接线，或共享段与本机段都无条目）')
 
 	const violations = collectViolations(site)
 	if (violations.length > 0) {

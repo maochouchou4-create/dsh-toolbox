@@ -15,7 +15,7 @@
  *   memory-core 的「~ 展开」用例把目录造在 homedir 之下——它要验的正是根被展开到 homedir，
  *   挪进临时根就验不到那一层了。
  *
- * ③记忆树（根加习惯层加可选工作层桶）与现读数据目录（拷一份真数据再改坏）此前各有三四个文件
+ * ③记忆树（store 顶层共享段加可选机器私有段）与现读数据目录（拷一份真数据再改坏）此前各有三四个文件
  *   各写一遍，目录名各拼各的——测试盘上摆了什么，读用例的人得逐个文件自己认。现读面那份文件名
  *   清单也从生产侧（data.js 的 DATA_FILES）现读，不在本模块手抄。
  *
@@ -25,7 +25,7 @@
  *   本身，用夹具替身造事件等于把被验对象换掉。而「同形」这件事由 helpers.test.js 对着生产
  *   构造器核键集钉住，不靠这里写注释自觉。
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,11 +53,29 @@ export const DISPATCH_DATA_FILES = DATA_FILES.map((e) => e.file)
 /* ---------- 临时根 ---------- */
 
 const makeTempRoot = (label) => mkdtempSync(join(tmpdir(), `dsh-${label}-`))
-const removeTempRoot = (dir) => rmSync(dir, { recursive: true, force: true })
+
+/**
+ * 递归删一棵临时树。不用 rmSync／rmdirSync 的 recursive：Node v24.13.0 在 Windows 上，被删路径的
+ * 末段（basename）非 ASCII 会让整个进程以 0xC0000409 死掉（父目录非 ASCII 无害；不带 recursive
+ * 的 rmdirSync 与 unlinkSync 都不受影响），而临时树里装的正是测试自己造的条目名。目录本就不在时
+ * 按「已删」跳过，与原先 force 的语义一致；判定用 lstat 不跟符号链接，与 rmSync 一样只删链接本身。
+ *
+ * 导出是因为这条删除路径要能被单测：它绕开的是「整进程硬崩」而不是抛错，藏在 withTempDir 里
+ * 失效时没有任何一处报得出原因（跑着跑着进程没了，TAP 输出都没了）。
+ */
+export const removeTempRoot = (dir) => {
+	if (!existsSync(dir)) return
+	for (const name of readdirSync(dir)) {
+		const child = join(dir, name)
+		if (lstatSync(child).isDirectory()) removeTempRoot(child)
+		else unlinkSync(child)
+	}
+	rmdirSync(dir)
+}
 
 /**
  * 临时根的收尾挂在 node:test 的上下文上：t.after 在用例（或文件）收尾时跑，于是每个文件不必
- * 再写一份 rmSync 样板。上下文缺位时当场报错，而不是安静建一个没人删的目录——那种泄漏要到下次
+ * 再写一份删除样板。上下文缺位时当场报错，而不是安静建一个没人删的目录——那种泄漏要到下次
  * 有人清 /tmp 才发现，而症状（某个用例突然读到了上一轮的残留）指向的是别处。
  *
  * 导出是因为这条守卫本身要能被单测：它是共用件里唯一一条「守卫型」的逻辑，藏起来就没人能
@@ -100,30 +118,37 @@ export const withTempDir = (t, label, fn) => {
 	return result
 }
 
-/* ---------- 记忆树（根加习惯层加可选工作层桶） ---------- */
+/* ---------- 记忆树（store 顶层共享段 ＋ 可选机器私有段） ---------- */
 
 /**
- * 在 base 下建一棵可写的记忆树。给 workspaceSlug 就顺带建工作层桶（没给的那一档 bucket 是
- * undefined，调用方据此知道这条用例只碰习惯层）。返回各层路径，省掉调用方重拼目录名。
- *
- * 名字当场拒空与分隔符：层级是调用方拼的，夹具只该在 base 底下加一层。空名会被 join 落回 base，
- * 于是多个用例的「各自的树」叠成一棵而互相污染；带分隔符则造出一棵比调用方想的那棵深的树——
- * 两种症状都出现在别的用例上（读到别人的数据／读不到 profile），指向的是别处。
+ * 夹具只在给定目录底下加一层：名字当场拒空与分隔符——空名会被 join 落回上一层，多个用例的
+ * 「各自的树」叠成一棵而互相污染；带分隔符则造出一棵比调用方想的那棵深的树。两种症状都
+ * 出现在别的用例上（读到别人的数据／读不到自己那一段），指向的是别处。
  */
-export const memoryTree = (base, name, workspaceSlug) => {
-	if (typeof name !== 'string' || name.trim() === '') {
-		throw new Error(`memoryTree 的名字须是非空串（它落在 base 之下，层级由调用方拼），实得 ${JSON.stringify(name) ?? String(name)}——空名会被 join 落回 base，多个用例的树叠成一棵`)
+const assertSingleLevelName = (value, who) => {
+	if (typeof value !== 'string' || value.trim() === '') {
+		throw new Error(`${who} 须是非空串（它落在上一层目录之下，层级由调用方拼），实得 ${JSON.stringify(value) ?? String(value)}——空名会被 join 落回上一层，多个用例的树叠成一棵`)
 	}
-	if (name.includes('/') || name.includes('\\') || name === '..' || name === '.') {
-		throw new Error(`memoryTree 的名字「${name}」带路径分隔符或路径穿越：夹具只在 base 底下建一层，多写的层级会造出一棵比调用方预期深的树，报错点在别的用例读不到 profile 上`)
+	if (value.includes('/') || value.includes('\\') || value === '..' || value === '.') {
+		throw new Error(`${who}「${value}」带路径分隔符或路径穿越：夹具只在上一层目录底下建一层，多写的层级会造出一棵比调用方预期深的树`)
 	}
+}
+
+/**
+ * 在 base 下建一棵可写的记忆树：store（＝<root>/profile，顶层就是共享段）＋可选的
+ * machines/<机器id>（那台机器的私有段）。给 machineId 就顺带建私有段（没给的那一档
+ * machineDir 是 undefined，调用方据此知道这条用例只碰共享段）。返回各段路径，省掉调用方重拼目录名。
+ */
+export const memoryTree = (base, name, machineId) => {
+	assertSingleLevelName(name, 'memoryTree 的名字')
 	const root = join(base, name)
-	const profile = join(root, 'profile')
-	mkdirSync(profile, { recursive: true })
-	if (workspaceSlug === undefined) return { root, profile, bucket: undefined }
-	const bucket = join(root, 'workspaces', workspaceSlug)
-	mkdirSync(bucket, { recursive: true })
-	return { root, profile, bucket }
+	const store = join(root, 'profile')
+	mkdirSync(store, { recursive: true })
+	if (machineId === undefined) return { root, store, machineDir: undefined }
+	assertSingleLevelName(machineId, 'memoryTree 的机器 id')
+	const machineDir = join(store, 'machines', machineId)
+	mkdirSync(machineDir, { recursive: true })
+	return { root, store, machineDir }
 }
 
 /* ---------- 现读数据目录（拷真数据 → 改坏 → 断言 → 删） ---------- */

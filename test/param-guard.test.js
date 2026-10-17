@@ -16,7 +16,7 @@ test('折叠归一：变体写法点名到正名（filePath／file-path → file
 	const { guardMemoryParams } = await loadModule('memory/params.js')
 	// 机判②：filePath 去分隔符＋小写后与 file_path 同形 → 变体句指回正名
 	assert.throws(
-		() => guardMemoryParams({ action: 'write', layer: 'profile', filePath: 'a.md', content: 'x' }),
+		() => guardMemoryParams({ action: 'write', filePath: 'a.md', content: 'x' }),
 		(error) => {
 			assert.match(error.message, /未知参数「filePath」/)
 			assert.match(error.message, /「filePath」是「file_path」的变体写法——直接改用「file_path」重发。/)
@@ -26,13 +26,13 @@ test('折叠归一：变体写法点名到正名（filePath／file-path → file
 	)
 	// file-path 同折为 filepath，同一条变体路
 	assert.throws(
-		() => guardMemoryParams({ action: 'delete', layer: 'profile', 'file-path': 'a.md' }),
+		() => guardMemoryParams({ action: 'delete', 'file-path': 'a.md' }),
 		/「file-path」是「file_path」的变体写法/,
 	)
 	// fileName 与 file_path 是不同的词：归一不中、别名表也没有 → 兜底句。钉的是反向
 	// （不同词不得误中变体句），归一若退化成子串包含就会在这里红
 	assert.throws(
-		() => guardMemoryParams({ action: 'delete', layer: 'profile', fileName: 'a.md' }),
+		() => guardMemoryParams({ action: 'delete', fileName: 'a.md' }),
 		(error) => {
 			assert.match(error.message, /未知参数「fileName」/)
 			assert.match(error.message, /delete 的参数见工具描述/)
@@ -64,12 +64,17 @@ test('退役别名表：old_string／OldString 走别名指引（heading＋body�
 	)
 	// 其余退役键各有各的指引
 	assert.throws(
-		() => guardMemoryParams({ action: 'write', layer: 'profile', file: 'a.md', content: 'x' }),
+		() => guardMemoryParams({ action: 'write', file: 'a.md', content: 'x' }),
 		/「file」已退役——改用 file_path。/,
 	)
 	assert.throws(
-		() => guardMemoryParams({ action: 'write', layer: 'profile', file_path: 'a.md', content: 'x', indexLine: '- [t](f) — d' }),
+		() => guardMemoryParams({ action: 'write', file_path: 'a.md', content: 'x', indexLine: '- [t](f) — d' }),
 		/「indexLine」已退役——索引行由插件按 frontmatter 自动生成，不用手写。/,
+	)
+	// 层值退役后的指路：layer 不得只落在兜底句上（照旧值传参的人要能一次改对）
+	assert.throws(
+		() => guardMemoryParams({ action: 'write', layer: 'home', file_path: 'a.md', content: 'x' }),
+		/「layer」已退役——改用 scope（/,
 	)
 })
 
@@ -91,15 +96,15 @@ test('多未知键一次点名齐全，报错头带完整收到清单；全声�
 test('缺必填点名：缺哪个报哪个＋收到键清单（「别猜，看描述」）', async () => {
 	const { assertRequiredParams } = await loadModule('param-guard.js')
 	assert.throws(
-		() => assertRequiredParams({ action: 'delete' }, ['layer', 'file_path'], { action: 'delete' }),
+		() => assertRequiredParams({ action: 'delete' }, ['file_path'], { action: 'delete' }),
 		(error) => {
-			assert.match(error.message, /缺必填「layer」「file_path」（delete）/)
+			assert.match(error.message, /缺必填「file_path」（delete）/)
 			assert.match(error.message, /本次收到的键：action——缺的就在没收的那几个里，别猜，看描述。/)
 			return true
 		},
 	)
 	assert.doesNotThrow(
-		() => assertRequiredParams({ layer: 'profile', file_path: 'a.md' }, ['layer', 'file_path'], { action: 'edit' }),
+		() => assertRequiredParams({ file_path: 'a.md' }, ['file_path'], { action: 'edit' }),
 		'必填全在时不抛',
 	)
 })

@@ -93,8 +93,8 @@ test('resolveActiveCwd：无 agent 返回 undefined，有 agent 取会话 header
 	assert.equal(resolveActiveCwd({ session: { header: { cwd: '/work/live' } } }), '/work/live')
 	// 会话没带 cwd（宿主里 cwd 是可选字段）＝合法缺省，不是契约断裂
 	assert.equal(resolveActiveCwd({ session: { header: {} } }), undefined)
-	// 契约断裂当场抛：静默回落成 undefined 会让层路由整体退到习惯层、相对路径改按启动
-	// 目录解析，症状出现在几层之外，最难查
+	// 契约断裂当场抛：静默回落成 undefined 会让消费方的相对路径改按启动目录解析，
+	// 症状出现在几层之外，最难查
 	assert.throws(() => resolveActiveCwd({}), /session\.header/)
 	assert.throws(() => resolveActiveCwd({ session: {} }), /session\.header/)
 })
