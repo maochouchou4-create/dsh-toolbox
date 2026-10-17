@@ -100,6 +100,10 @@ pi-ai openai-completions 的 zai thinking 映射）。换路由＝profile 层覆
 图片经 attachments 服务存为 durable 引用后，由适配层按模型目录的 inputLimits
 自动缩放/压缩（glm-5.3-flash：≤2000×2000、≤4.5 MiB、jpegQuality 80）。
 
+输出预算单次 16384 token——防模型复读失控的保险丝，不是功能旋钮（省略不发给
+服务商时，上限换成对方的隐藏默认值，不受本仓控制）。真撞线时不报错：正文末尾加
+「转写被截断」尾注降级交货，需要剩余内容时把图裁块分别再识。
+
 **存储增长口径**：每次 see_image 调用都会在宿主附件仓留下 durable 附件（内容
 寻址、同图去重）；宿主当前没有附件 GC/释放 API，长期使用会单调增长，属已知
 边界——不接受就别把 see_image 开给高频自动化流程。

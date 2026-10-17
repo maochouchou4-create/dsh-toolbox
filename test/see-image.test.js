@@ -36,8 +36,7 @@ test('finishError：正常收尾不造错，失败态映射为显式错误', () 
 	const aborted = finishError({ kind: 'aborted' })
 	assert.match(aborted.message, /aborted.*unknown failure/, '缺 failure 细节时兜底文案')
 
-	const capped = finishError({ kind: 'max-tokens' })
-	assert.match(capped.message, /truncated/)
+	assert.equal(finishError({ kind: 'max-tokens' }), undefined, '截断不算调用失败——降级交货在 transcribe')
 })
 
 const HEX64 = '053eb17e'.padEnd(64, '0')
@@ -175,15 +174,21 @@ test('transcribe：喂流取正文（只留 text 块并去空白），chunks 逐
 	assert.deepEqual(assembler.pushed, chunks)
 })
 
-test('transcribe：终态出错与空正文都抛（空转述比失败更难被调用方察觉）', async () => {
+test('transcribe：终态出错与空正文都抛；截断降级交货（空转述比失败更难被调用方察觉）', async () => {
 	await assert.rejects(() => transcribe({
 		stream: 假流([]),
 		assembler: 假Assembler([], { kind: 'error', failure: { message: 'upstream 503' } }),
 	}), /upstream 503/)
+	const degraded = await transcribe({
+		stream: 假流([]),
+		assembler: 假Assembler([{ type: 'text', text: '已转出的前半段' }], { kind: 'max-tokens' }),
+	})
+	assert.ok(degraded.startsWith('已转出的前半段'), '已转出正文原样保留')
+	assert.ok(degraded.includes('【转写被截断：已达单次输出上限'), '尾注标明截断与去向')
 	await assert.rejects(() => transcribe({
 		stream: 假流([]),
 		assembler: 假Assembler([], { kind: 'max-tokens' }),
-	}), /truncated/)
+	}), /truncated/, '截断且零正文＝没有可降级交出的货，仍抛')
 	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([]) }), /空正文/)
 	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([{ type: 'reasoning', text: '只有思考' }]) }), /空正文/)
 })
