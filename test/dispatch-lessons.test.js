@@ -17,6 +17,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeFormCounts, parseFormList } from '../lib/dispatch/batch.js'
+import { RETROSPECTIVE_STAGE } from '../lib/dispatch/core.js'
 import { collectStats, judgePoint, pointOf, renderLessonsResult, runLessons } from '../lib/dispatch/lessons.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
 import { createNodeFsPort, createReadOnlyPort } from '../lib/fs-port.js'
@@ -416,7 +417,8 @@ test('修复轮数、零 findings 形态与记账缺格各走各的那条建议'
 	const { suggestions, stats } = await run(path, { force: true })
 	const joined = suggestions.join('\n')
 	assert.match(joined, /修复轮数：批次 r1（依赖原批型 纯后端管线批）：门二 记了 3 轮（修复轮数 2）/u)
-	assert.match(joined, /长期零 findings 形态（规则版本 v1）：契约一致性/u)
+	// 降级证据跨全量台账累积，增量 versions 组容不下纯旧批的形态
+	assert.match(joined, /长期零 findings 形态：契约一致性——派过 ≥2 次仍零 findings，请裁决降级（配对表改派）或转手动指派（跨全量台账累积，含已复盘批）/u)
 	assert.match(stats, /门二 修复轮数合计 2（多轮批 1）/u)
 	// S4：行数类数字台账事件没有维度，这一条永不产出，写成用例是为了钉住「不出」而不是「出」
 	assert.ok(!joined.includes('小批化'), '描述已删「小批化数字校准」，输出里也不许再冒出来')
@@ -563,4 +565,155 @@ test('新形状事件走全链：findings 按份数求和（不是条数）、�
 		!cleanRun.suggestions.some((line) => line.includes('实派了却没记 findings 数的形态')),
 		'键域对得上就不出漏记建议：新形状的每一行不许被误判成整格漏记（虚高方向判据）',
 	)
+})
+
+/* ---------- 增量口径：复盘事件＝全仓销账点（最后一条复盘事件的 t；同刻不算、批粒度整批进出） ---------- */
+
+test('无复盘事件＝全量口径：cutoff 为 null，首行不带「上次复盘」（首次复盘前的兼容面）', async () => {
+	const path = seedLedger(root, 'cutoff空', reached())
+	const value = await run(path)
+	assert.equal(
+		collectStats(readEvents(path), { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) }).cutoff,
+		null,
+		'台账里一条复盘事件都没有：销账点不存在，初始态是全量而不是错误',
+	)
+	assert.ok(!value.stats.includes('上次复盘'), '没有销账点就没有增量口径：首行保持「N 批（批型 M 种…）」的现状文本')
+})
+
+test('有复盘事件：销账点后有事件的批进增量、纯旧批被销，旧批的 findings 不再进统计', async () => {
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		advance({ batch: 'old1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 }),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('new1', '机械搬运/小修', 'v1'),
+		start('new2', '用户可见功能批', 'v1'),
+		start('new3', '跨端契约批', 'v1'),
+		start('new4', '配置/迁移批', 'v1'),
+		start('new5', '配置/迁移批', 'v1'),
+	]
+	const stats = collectStats(readEvents(seedLedger(root, '增量集', events)), { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	assert.equal(stats.cutoff, events[2].t, '销账点＝那条复盘事件的时间')
+	assert.equal(stats.batchCount, 5, 'old1 的全部事件都不晚于销账点——整批被销，窗口里只剩 new1–new5')
+	assert.equal(stats.batchTypeCount, 4)
+	assert.equal(stats.totals.found, 0, '旧批的 findings 不随旧批进增量窗口')
+	const value = await run(seedLedger(root, '增量集文案', events))
+	assert.ok(
+		value.stats.includes(`上次复盘〔${events[2].t}〕后增量 5 批／台账全量 6 批（增量批型 4 种：机械搬运/小修、用户可见功能批、跨端契约批、配置/迁移批）`),
+		'首行报增量口径；批型数与清单不可丢——点位是批数∧批型数双门槛',
+	)
+})
+
+test('cutoff 取最后一条复盘事件而不是台账最后一条事件（防实现滑成「最后事件时刻」）', () => {
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('new1', '机械搬运/小修', 'v1'),
+		advance({ batch: 'new1', stage: RETROSPECTIVE_STAGE }),
+		advance({ batch: 'new1' }),
+	]
+	const stats = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	assert.equal(stats.cutoff, events[3].t, '两条复盘事件取更晚那条为销账点；台账最后一条是普通 advance，不参与')
+})
+
+test('与销账点同刻的事件不算增量（严格大于——复盘事件自己是 max，把它算进增量的实现会在这一步红）', () => {
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('same1', '机械搬运/小修', 'v1'),
+	]
+	events[2] = { ...events[2], t: events[1].t }
+	const stats = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	assert.equal(stats.cutoff, events[1].t)
+	assert.equal(stats.batchCount, 0, '同刻并列按不晚于销账点处理：≥ 会把销账事件自己算进增量')
+})
+
+test('批粒度：跨点批（start 在销账点前、advance 在后）整批进增量，销账点前的旧事件也进统计', () => {
+	const events = [
+		start('x1', '纯后端管线批', 'v1'),
+		advance({ batch: 'x1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: [{ form: '锚点核对', count: 2 }], adopted: 2 }),
+		advance({ batch: 'x1', stage: RETROSPECTIVE_STAGE }),
+		advance({ batch: 'x1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: [{ form: '锚点核对', count: 3 }], adopted: 3 }),
+	]
+	const stats = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	assert.equal(stats.cutoff, events[2].t)
+	assert.equal(stats.batchCount, 1, 'x1 的 start 早于销账点但销账点后还有 advance——跨点活跃批整批进')
+	assert.equal(stats.totals.found, 5, '销账点前的旧 advance（2 份）也进统计：切事件会造出半批统计')
+	assert.equal(stats.fixRounds[0].rounds, 1, '修复轮数按批粒度：销账点前那趟门二也计入（2 趟门二−1；切事件只数销账点后会是 0）')
+	assert.equal(stats.reviewEventCount, 2, '复核事件按批粒度整批进：销账点前那趟也数（切事件会是 1）')
+})
+
+test('零 findings 跨全量累积：纯旧批的两次零 findings 仍出降级建议，带固定后缀、不带版本标签', async () => {
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		advance({ batch: 'old1', combo: '砍刀', recommended: '砍刀', perFormCounts: [{ form: '砍刀', count: 0 }] }),
+		advance({ batch: 'old1', combo: '砍刀', recommended: '砍刀', perFormCounts: [{ form: '砍刀', count: 0 }] }),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('new1', '机械搬运/小修', 'v1'),
+		advance({ batch: 'new1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 }),
+	]
+	const value = await run(seedLedger(root, '零findings全量', events), { force: true })
+	const line = value.suggestions.find((entry) => entry.includes('长期零 findings 形态'))
+	assert.ok(line !== undefined && line.includes('砍刀'), '证据全在销账点之前：销账销裁决待办不销证据，降级线索仍要进裁决队列')
+	assert.ok(line.includes('（跨全量台账累积，含已复盘批）'), '固定后缀点明口径，不至于把这条读成增量面')
+	assert.ok(!line.includes('规则版本'), '不按规则版本分组：增量 versions 组容不下纯旧批的形态，版本考古归裁决日志')
+})
+
+test('同刻不同时区拼写的复盘事件：cutoff 按字典序定向，对输入行序独立', () => {
+	// 两个 t 是同一时刻的两种拼写（Date.parse 相等）：字典序大的是 '+08:00' 那条
+	const base = [
+		start('old1', '纯后端管线批', 'v1'),
+		{ ...advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }), t: '2026-01-01T00:00:00+00:00' },
+		{ ...advance({ batch: 'old2', stage: RETROSPECTIVE_STAGE }), t: '2026-01-01T08:00:00+08:00' },
+	]
+	for (const events of [base, [...base].reverse()]) {
+		const stats = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+		assert.equal(stats.cutoff, '2026-01-01T08:00:00+08:00', '同刻并列取字典序大者：换输入行序结果逐字不变（输出是事件集合的函数）')
+	}
+})
+
+test('allForms 跨销账点两侧累积：times 跨界累加，删掉复盘事件证据面逐键不变', async () => {
+	const zero = (batch) => advance({ batch, combo: '砍刀', recommended: '砍刀', perFormCounts: [{ form: '砍刀', count: 0 }] })
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		zero('old1'),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('new1', '机械搬运/小修', 'v1'),
+		zero('new1'),
+	]
+	const withRetro = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	assert.deepEqual(
+		withRetro.allForms.get('砍刀'),
+		{ found: 0, times: 2 },
+		'销账点前后各一趟：times 跨界累加到 2（切进增量窗口会被饿死成 1，凑不齐降级门槛）',
+	)
+	const value = await run(seedLedger(root, '零两侧', events), { force: true })
+	const line = value.suggestions.find((entry) => entry.includes('长期零 findings 形态'))
+	assert.ok(line !== undefined && line.includes('砍刀'), '两侧累加过 ≥2 门槛，降级建议要列出')
+	const withoutRetro = collectStats(
+		events.filter((event) => event.stage !== RETROSPECTIVE_STAGE),
+		{ point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) },
+	)
+	assert.deepEqual(
+		withoutRetro.allForms.get('砍刀'),
+		withRetro.allForms.get('砍刀'),
+		'allForms 从全量 rows 累积：有无销账点不改变证据面（销账不销证据）',
+	)
+})
+
+test('迟到事件（t 早于已有事件、后并入台账）：cutoff 与增量批名单都不变（集合式推导不认写入序）', () => {
+	const events = [
+		start('old1', '纯后端管线批', 'v1'),
+		advance({ batch: 'old1', stage: RETROSPECTIVE_STAGE }),
+		start('new1', '机械搬运/小修', 'v1'),
+		advance({ batch: 'new1', combo: '锚点核对', recommended: '锚点核对', perFormCounts: [{ form: '锚点核对', count: 1 }], adopted: 1 }),
+	]
+	const baseline = collectStats(events, { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+	// 后写但 t 更早：普通 advance 与复盘事件各试一式
+	const lateNormal = { ...advance({ batch: 'new1' }), t: events[0].t }
+	const lateRetro = { ...advance({ batch: 'old2', stage: RETROSPECTIVE_STAGE }), t: events[0].t }
+	for (const late of [lateNormal, lateRetro]) {
+		const stats = collectStats([...events, late], { point: pointOf(data.lifecycle), vocabulary: new Set(vocabulary) })
+		assert.equal(stats.cutoff, baseline.cutoff, '更早的迟到事件抬不动销账点：cutoff 是 max（迟到复盘事件也一样）')
+		assert.deepEqual(stats.batches.map((row) => row.batch), baseline.batches.map((row) => row.batch), '增量批名单不变：迟到的旧事件不把已销的批拉回窗口')
+	}
 })
