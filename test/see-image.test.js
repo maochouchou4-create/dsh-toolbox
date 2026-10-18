@@ -1,13 +1,15 @@
 /**
  * see_image 内缝单测（node:test，零宿主依赖）：魔数嗅探＋流终态映射＋附件占位符解析
- * （标识归一／存区根解析／前缀定位对象）＋两个编排函数（入口定位、转写取正文）。
- * 端到端识图质量不在此层（需活宿主＋视觉模型，验收口径见 README）。
+ * （标识归一／存区根解析／前缀定位对象）＋两个编排函数（入口定位、转写取正文）
+ * ＋识图路由现读（route.js 的句柄取值与回落）。端到端识图质量不在此层（需活宿主＋
+ * 视觉模型，验收口径见 README）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DEFAULT_MODEL, DEFAULT_PROVIDER, resolveVisionRoute } from '../lib/see-image/route.js'
 import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, resolveTarget, sniffImageMediaType, transcribe } from '../lib/see-image/vision.js'
 import { tempRoot } from './helpers.js'
 
@@ -234,4 +236,49 @@ test('transcribe：终态出错与空正文都抛；截断降级交货（空转�
 	}), /truncated/, '截断且零正文＝没有可降级交出的货，仍抛')
 	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([]) }), /空正文/)
 	await assert.rejects(() => transcribe({ stream: 假流([]), assembler: 假Assembler([{ type: 'reasoning', text: '只有思考' }]) }), /空正文/)
+})
+
+/* ---------- 识图路由内缝（route.js）：现读句柄＋空白回落 ---------- */
+
+/** 可变的 volatile 句柄：get() 现读当前值——「宿主保存就地改值、不重挂插件」的替身。 */
+const 假句柄 = (initial) => {
+	let value = initial
+	return { get: () => value, set: (next) => { value = next } }
+}
+
+test('resolveVisionRoute：每次调用现读句柄（改设置即生效，注册期不落快照）', () => {
+	const provider = 假句柄('zai-coding-cn')
+	const model = 假句柄('glm-5.3-flash')
+	const config = { visionProvider: provider, visionModel: model }
+	assert.deepEqual(resolveVisionRoute(config), { provider: 'zai-coding-cn', model: 'glm-5.3-flash' })
+	// 宿主保存 volatile 字段是就地改句柄取值：同一个 config 对象的第二次调用必须拿到新值，
+	// 缓存住第一次的取值＝把「保存即生效」退化成「下次重启才生效」
+	provider.set('openai')
+	model.set('gpt-5')
+	assert.deepEqual(resolveVisionRoute(config), { provider: 'openai', model: 'gpt-5' })
+})
+
+test('resolveVisionRoute：取值空白回落出厂路由（清空字段＝回默认，与 Config 的 default 同源）', () => {
+	for (const blank of ['', '   ', undefined, 42]) {
+		const config = { visionProvider: 假句柄(blank), visionModel: 假句柄(blank) }
+		assert.deepEqual(
+			resolveVisionRoute(config),
+			{ provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
+			`${JSON.stringify(blank)} 应回落出厂路由`,
+		)
+	}
+	// 回落逐字段独立：一半有值、一半空白时有值的那半原样用，只有空白的那半回默认。
+	// 「任一空白即整体回落」会把用户只清空 model 时连 provider 一起换成出厂值——路由成对，但两个字段各读各的
+	const 半截 = (provider, model) => resolveVisionRoute({ visionProvider: 假句柄(provider), visionModel: 假句柄(model) })
+	assert.deepEqual(半截('openai', '   '), { provider: 'openai', model: DEFAULT_MODEL }, 'provider 有值＋model 空白：只回落 model')
+	assert.deepEqual(半截(undefined, 'gpt-5'), { provider: DEFAULT_PROVIDER, model: 'gpt-5' }, 'provider 空白＋model 有值：只回落 provider')
+})
+
+test('resolveVisionRoute：句柄缺席当场报错（默认值不替接线错误背书）', () => {
+	// 两种真实成因都落进这一档：configShape 少声明 .volatile()、调用方递了取值快照（旧形态）
+	assert.throws(() => resolveVisionRoute({ visionProvider: 'zai-coding-cn', visionModel: 'glm-5.3-flash' }), /volatile 句柄/)
+	assert.throws(() => resolveVisionRoute({}), /visionProvider/)
+	assert.throws(() => resolveVisionRoute(undefined), /visionProvider/)
+	// 一在场一缺席也要报错，不许「半截默认路由」静默通过
+	assert.throws(() => resolveVisionRoute({ visionProvider: 假句柄('openai') }), /visionModel/)
 })

@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { LIB_DIR } from './helpers.js'
@@ -216,6 +216,57 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 })
 
 /**
+ * 浏览器半的三件声明必须同进退：package.json 的 dsh.client、exports["./client"] 与盘上那个
+ * 实体文件。宿主侧扫描（dsh-client-modules）只认 dsh.client.platform === 'web'，且声明在场
+ * 而 exports["./client"] 缺失时是 loud throw——症状是整个 web 引导起不来，不是这一块不显示，
+ * 故这三件的自洽留在接线单测里，不留给运行期发现。
+ */
+test('浏览器半的声明自洽（dsh.client / exports["./client"] / 实体文件三者同进退）', () => {
+	const pkg = JSON.parse(readFileSync(join(libDir, '..', 'package.json'), 'utf8'))
+	const decl = pkg.dsh?.client
+	assert.ok(decl !== undefined, 'dsh.client 须声明：浏览器半靠它被宿主扫描进 web 引导（声明缺位时这条用例此前静默 return，整块断言变成空转）')
+	assert.equal(decl.platform, 'web', 'dsh.client.platform 须为 web（宿主扫描跳过非 web 行）')
+	assert.ok(Array.isArray(decl.inject) && decl.inject.every((item) => typeof item === 'string'), 'dsh.client.inject 须是字符串数组（解析器对形状是 fail fast）')
+	// 两种合法形态：裸串与带 default 的一层条件对象（clientExportOf 收这两种）
+	const raw = pkg.exports?.['./client']
+	const clientRel = typeof raw === 'string' ? raw : raw?.default
+	assert.ok(typeof clientRel === 'string', 'dsh.client 在场时 exports["./client"] 须指向客户端包体（缺了即宿主扫描 loud throw）')
+	assert.ok(existsSync(join(libDir, '..', clientRel)), `exports["./client"] 指向的 ${clientRel} 不在盘上`)
+	// 客户端模块的注册 id 与 bundle 槽位键都取包名：宿主按包名定位客户端包体、插件页按包名查 keyed 槽
+	assert.ok(readLib('client.js').includes(`id: '${pkg.name}'`), 'client.js 的模块 id 须等于包名（宿主按包名定位客户端包体）')
+})
+
+/**
+ * 浏览器半的依赖面：client.js 的静态 require 只认「前端壳的预置模块表 ＋ package.json 的
+ * dsh.client.external／inject 声明」。新加一个依赖而不进声明面＝宿主不把它装进模块表，
+ * 运行期 require 直接抛（client-modules：missed the module table），症状是这块界面整个不渲染，
+ * 而报错指向 client.js，看不出根在 package.json。
+ */
+test('浏览器半的依赖面哨兵：client.js 静态 require 的每件都在预置表或声明面里', () => {
+	const pkg = JSON.parse(readFileSync(join(libDir, '..', 'package.json'), 'utf8'))
+	// 预置表里那两件（前端壳的静态模块种子：react 系与 ui-primitives）：基线模块，不进声明面。
+	// 声明面两栏各收各的（宿主 client-modules 的口径）：external＝要解析成模块的非基线请求，
+	// inject＝必须先就位的插件 row（本包那四件就是后者），两者都在解析序里，故都算已声明。
+	const allowed = new Set([
+		'react',
+		'@deepseek-ai/dsh-client-ui-primitives',
+		...(pkg.dsh?.client?.external ?? []),
+		...(pkg.dsh?.client?.inject ?? []),
+	])
+	const required = [...readLib('client.js').matchAll(/\brequire\(\s*'([^']+)'\s*\)/g)].map((match) => match[1])
+	// 扫描退化成空转时下面那条过滤恒真：先把「抽得到已知的两件」判红
+	assert.ok(
+		required.includes('react') && required.includes('@deepseek-ai/dsh-client-ui-primitives'),
+		`client.js 的 require 扫描没抽到预置表那两件（抽到：${required.join('、')}）——正则与写法脱节时这条用例会空转`,
+	)
+	assert.deepEqual(
+		required.filter((name) => !allowed.has(name)),
+		[],
+		'client.js require 了未声明的模块：非基线请求进 dsh.client.external，要按 row 就位的进 dsh.client.inject，两者都不是的话它就该在预置表里',
+	)
+})
+
+/**
  * node:fs 直连的判定表（按文件，不按函数窗口）：false＝该文件零直连，true＝按设计
  * 直连且必须直连。取舍的理由写在各文件头，不写在测试里，测试只钉「直不直」。
  *
@@ -247,6 +298,10 @@ const NODE_FS_DIRECT = new Map([
 	['memory/index.js', true],
 	['see-image/vision.js', true],
 	['see-image/index.js', false],
+	// 识图路由内缝：与 vision.js 同款零宿主依赖的纯模块，值判据走 value.js
+	['see-image/route.js', false],
+	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
+	['client.js', false],
 	['dispatch/core.js', false],
 	['dispatch/parameters.js', false],
 	['dispatch/batch.js', false],

@@ -71,7 +71,9 @@ const hostFsOf = () => {
  * 宿主上下文的替身：tools.register 收下定义（五个注册入口都要它），fs 走本仓 node 端口，
  * logger 与 systemPrompt 在此只为让 memory 的注册入口跑完——它注册期要挂一段注入块文本，
  * 那段文本本文件的用例都不执行，故给空实现即可。get 返回 undefined 是「按需服务取不到」的
- * 正常态（沙箱策略缺失时生产也走这条），不是替身偷懒。
+ * 正常态（沙箱策略缺失时生产也走这条），不是替身偷懒。inject 是 cordis 的 scoped 注入
+ * （see_image 注册期用它挂「关掉宿主自动配置页」的策略）：回调要 settings 服务在场才跑，
+ * 替身不建服务容器，故只收下不调用。
  */
 const ctxOf = () => {
 	const registered = []
@@ -79,6 +81,7 @@ const ctxOf = () => {
 		ctx: {
 			fs: hostFsOf(),
 			get: () => undefined,
+			inject: () => {},
 			logger: { warn: () => {} },
 			systemPrompt: { context: () => {} },
 			tools: { register: (definition) => registered.push(definition) },
@@ -86,6 +89,12 @@ const ctxOf = () => {
 		registered,
 	}
 }
+
+/** 识图路由的 config 句柄替身：形状照宿主注入面（每个 volatile 字段一个 .get()），闭包变量可改。 */
+const visionHandle = (cur) => ({
+	visionProvider: { get: () => cur.provider },
+	visionModel: { get: () => cur.model },
+})
 
 before((t) => {
 	root = tempRoot(t, 'dispatch-assembly')
@@ -253,7 +262,8 @@ test('宿主 schema 编译的静态自查：全仓八件工具的每个 object �
 	const memoryCtx = ctxOf()
 	registerMemory(memoryCtx.ctx, { memoryRoot: join(root, 'memory-registration') })
 	const seeImageCtx = ctxOf()
-	registerSeeImage(seeImageCtx.ctx, {})
+	// 句柄值此刻不被读（execute 才现读）：这条用例只跑注册期的 schema 自查，缺了句柄反而是注册面出错
+	registerSeeImage(seeImageCtx.ctx, visionHandle({ provider: '', model: '' }))
 	const asmCtxs = Object.fromEntries(['plan', 'review', 'build', 'verify'].map((kind) => [kind, ctxOf()]))
 	registerDispatchPlan(asmCtxs.plan.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	registerDispatchReview(asmCtxs.review.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
@@ -497,6 +507,62 @@ test('替身攒块语义对拍④：不认识的 chunk 类型当场抛错（真�
 		/替身不认识的 chunk 类型.*brand-new-chunk-type/,
 		'未知 chunk 类型要当场抛：吞掉的话协议漂移无声，症状是转述少一段而不是报错',
 	)
+})
+
+test('识图路由接线 oracle：注册期不读 config 句柄，execute 现读——改句柄返回值即改下一次调用的路由', async () => {
+	// 「注册期不落快照」只在这条路上可观测：注册时收了句柄但把 get() 的值存进闭包，工具照样注册得出来、
+	// 描述照样对，症状要等用户改过设置、下一张图还按旧路由跑才显形——静态自查那层照不到这个时序。
+	// 描述里那句「插件页·识图路由」与 test/client.test.js 的 visionRouteTitle 断言互为指路锚。
+	const imagePath = join(root, 'vision-route.png')
+	writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]))
+	const cur = { provider: 'zai-coding-cn', model: 'glm-5.3-flash' }
+	const reads = []
+	const 宿主 = ctxOf()
+	const streamed = []
+	// execute 的五段接线里够不到的三件宿主面（读字节／附件存区／llm 通道）在这里补上，其余走 ctxOf
+	const ctx = {
+		...宿主.ctx,
+		fs: { ...宿主.ctx.fs, readBytes: async () => readFileSync(imagePath) },
+		attachments: {
+			imageLimits: { maxImageBytes: 8_000_000, maxMessageImageBytes: 8_000_000 },
+			saveImages: async (images) => images.map((image) => ({ mediaType: image.mediaType, name: image.name })),
+		},
+		llm: {
+			stream: (args) => {
+				streamed.push(args)
+				return streamOf([
+					{ type: 'block-start', index: 0, blockType: 'text' },
+					{ type: 'text-delta', index: 0, text: '图里写着 路由' },
+					{ type: 'finish', reason: { kind: 'stop' } },
+				])
+			},
+		},
+	}
+	registerSeeImage(ctx, {
+		visionProvider: { get: () => { reads.push('provider'); return cur.provider } },
+		visionModel: { get: () => { reads.push('model'); return cur.model } },
+	})
+	const tool = 宿主.registered.find((one) => one.name === 'see_image')
+	assert.ok(tool !== undefined, 'see_image 注册得出来')
+	assert.ok(tool.description.includes('识图路由'), '工具描述须指路「识图路由」（与卡片区块标题同字，调用方据此去插件页看当次生效值）')
+	assert.ok(!tool.description.includes('设置页'), '描述不含「设置页」：识图路由的渲染面在插件管理页，设置页那支是另一套只读 tab')
+	assert.deepEqual(reads, [], '注册期一次都不许读 config：读了就是把那一刻的值落成快照')
+
+	const exec = { signal: undefined, agent: undefined }
+	const 首次 = await tool.execute({ path: imagePath }, exec)
+	assert.deepEqual(reads, ['provider', 'model'], 'execute 每次现读两个字段')
+	assert.equal(首次.provider, 'zai-coding-cn')
+	assert.equal(首次.model, 'glm-5.3-flash')
+	assert.equal(首次.description, '图里写着 路由', '五段接线整条跑通（读到字节→存附件→调模型→整形输出）')
+	assert.equal(streamed[0].provider, 'zai-coding-cn', '路由进了 llm 通道，不只在返回值里')
+
+	// 用户改了设置：句柄返回值一变，下一次调用就走新路由
+	cur.provider = 'openai'
+	cur.model = 'gpt-5'
+	const 再次 = await tool.execute({ path: imagePath }, exec)
+	assert.equal(再次.provider, 'openai', '改了设置后下一张图走新路由（落快照的话这里还是旧值）')
+	assert.equal(再次.model, 'gpt-5')
+	assert.equal(streamed[1].provider, 'openai')
 })
 
 test('模板坏了不连坐台账工具：注册期只读配对表/形态表/阶段表，status 照常可用', () => {
