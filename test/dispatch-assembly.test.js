@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { transcribe } from '../lib/see-image/vision.js'
 import { objectShape, stringList } from '../lib/tool-schema.js'
-import { mainBatchTypes, stageVocabulary } from '../lib/dispatch/core.js'
+import { ASSEMBLER_CONTRACTS, PLAN_STAGE, mainBatchTypes, stageVocabulary } from '../lib/dispatch/core.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
 import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
 
@@ -40,7 +40,7 @@ registerHooks({
 
 const {
 	registerDispatchPlan, registerDispatchReview, registerDispatchBuild, registerDispatchVerify,
-	registerDispatchBatch, registerDispatchLessons, configShape,
+	registerDispatchBatch, registerDispatchLessons, configShape, DISPATCH_HINT_BY_STAGE,
 } = await import('../lib/dispatch/index.js')
 const { registerMemory } = await import('../lib/memory/index.js')
 const { registerSeeImage } = await import('../lib/see-image/index.js')
@@ -221,6 +221,56 @@ test('装配层冒烟：六件工具注册得出来，且 execute 真被调过�
 		'复盘的返回值深拷贝后照样渲染（渲染输入在值自己身上）',
 	)
 	assert.equal(lines().length, beforeCount, '复盘这一趟不写台账：出建议，不落盘')
+})
+
+test('派发段随阶段内嵌 render：复核趟带 workflow 骨架、施工趟带独立 subagent 口径、方案趟无此段', async () => {
+	// 派发规则本体写在工具输出里（调工具即得怎么派），render 是它唯一的到达面：段落的**位置**
+	// 与**分岔**都要钉——派发段在 brief 之后（照 brief 派发时要先看到任务书）、方案趟不带
+	// （方案阶段勘察形态不固定，没有固定载体可写）；只断言字符串在不在，规则悄悄挪到末尾或
+	// 四件全带都会绿。
+	const cases = Object.fromEntries(['plan', 'review', 'build', 'verify'].map((kind) => [kind, ctxOf()]))
+	registerDispatchPlan(cases.plan.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchReview(cases.review.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchBuild(cases.build.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	registerDispatchVerify(cases.verify.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
+	const exec = { signal: undefined, agent: { session: 'render-stage' } }
+	const renderOf = async (kind, value) => (await cases[kind].registered[0].output.render({}, value))[0].text
+	const planText = await renderOf('plan', await cases.plan.registered[0].execute({ subject: 'README', intent: '冒烟' }, exec))
+	const reviewText = await renderOf('review', await cases.review.registered[0].execute({ batchType: '纯后端管线批', subject: 'README', intent: '冒烟' }, exec))
+	const buildText = await renderOf('build', await cases.build.registered[0].execute({ batchType: '纯后端管线批', subject: 'README', intent: '冒烟', anchors: ['renderDispatchResult'] }, exec))
+	const verifyText = await renderOf('verify', await cases.verify.registered[0].execute({ batchType: '纯后端管线批', subject: 'git diff HEAD~1..HEAD', intent: '冒烟' }, exec))
+
+	// 复核趟的组合段不再自带载体口径，改为指向派发段：旧句留着＝读者照它派完才发现载体在下面，
+	// 而旧句与新句同时在场时两句都像规则（施工趟本批的批型没有形态列，组合段整段不出，不在此列）
+	for (const [label, text] of [['门一', reviewText], ['门二', verifyText]]) {
+		assert.ok(text.includes('每路一个子代理、禁合并——合并＝注意力稀释；载体见下方「派发」段。'), `${label} 趟的组合段指向派发段`)
+		assert.ok(!text.includes('每路派一个 subagent'), `${label} 趟的旧载体句已替换（两句同时在场＝两个规则）`)
+	}
+	assert.ok(reviewText.includes('派发（固定口径') && reviewText.includes('parallel(briefs.map'), '门一＝复核趟：带可抄的 workflow 骨架')
+	assert.ok(verifyText.includes('派发（固定口径') && verifyText.includes('parallel(briefs.map'), '门二＝复核趟：带可抄的 workflow 骨架')
+	// 骨架里 agent() 的失败语义与支持集按引擎实测写：失败是返回 null 不抛错（照 try/catch 写会把
+	// 失败记成 {ok:true,out:null} 静默丢路），reasoning_effort 不在 agent() 支持集（传了即抛）
+	assert.ok(reviewText.includes('return out === null ?') && reviewText.includes('判活看 out 是否为 null'), '复核趟骨架内联 null 判活（引擎失败不抛错）')
+	for (const [label, text] of [['方案', planText], ['门一', reviewText], ['施工', buildText], ['门二', verifyText]]) {
+		assert.ok(!text.includes('reasoning_effort'), `${label} 趟 render 不得出现 reasoning_effort：agent() 不认这个键，照抄即抛`)
+	}
+	assert.ok(buildText.includes('派发（固定口径') && buildText.includes('施工走独立 subagent'), '施工趟＝独立 subagent 口径')
+	assert.ok(!buildText.includes('parallel(briefs.map'), '施工趟不给 workflow 骨架：单批单 agent 走独立 subagent')
+	assert.ok(!planText.includes('派发（固定口径'), '方案趟不出派发段：方案阶段勘察形态不固定，没有固定载体')
+	// 段序：派发段在最后一路 brief 之后（先看任务书、再看怎么派）
+	assert.ok(reviewText.indexOf('派发（固定口径') > reviewText.lastIndexOf('【brief：'), '派发段在 brief 之后：读者先拿到任务书再看到载体')
+})
+
+test('派发段分岔表与装配契约互为充要：新加一件装配工具必须先定性它带哪段', () => {
+	// 表是「哪件工具带哪段」的单源：新加一件装配工具（新 stage）却忘了在这里定性，那件工具会
+	// 静默不带「怎么派」——症状要等读者拿到没有这一段的 render 才显形，故键集与契约表的阶段值
+	// 集合两者相等在这里机判。方案趟登记 null 是「明确没有这一段」，与漏登记在场面上分得开。
+	assert.deepEqual(
+		Object.keys(DISPATCH_HINT_BY_STAGE).sort(),
+		ASSEMBLER_CONTRACTS.map((contract) => contract.stage).sort(),
+		'派发段分岔表的键集＝契约表的阶段值集合（少一行＝那件工具静默缺席，多一键＝没人调得到的死规则）',
+	)
+	assert.equal(DISPATCH_HINT_BY_STAGE[PLAN_STAGE], null, '方案趟显式登记 null：方案阶段勘察形态不固定，明确无派发段')
 })
 
 test('复盘那一趟拿到的是只读门面：宿主 fs 的 writeText 就算会写也摸不到（边界是结构性的，不是纪律）', async () => {

@@ -174,7 +174,7 @@ test('门一 brief：固定段一条不缺（角色句／必读链／横切判�
 		'先读用户级 ~/.dsh/AGENTS.md 全文，再读批次所在仓的 AGENTS.md（无则跳过）；只读禁写',
 		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试删减须显式申报（改写优先））——违反＝返工。',
 		'上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}',
-		'派发时 provider/model 必须显式指派',
+		'派发时 provider/model 显式指派（按你的派发纪律；model 用真 id，带 provider 查 list_subagent_models 可得）',
 	]) {
 		assert.ok(brief.text.includes(fragment), `门一 brief 缺固定段「${fragment}」`)
 	}

@@ -256,23 +256,22 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 
 ## 装配四件的 workflow 消费（批量派发）
 
-委派形态的固定口径（用户拍板，本节即单一真相源，规则不外置到 memory 或批清单）：**同道多路复核固定走 workflow**——briefs 喂 `parallel` 攒齐一次返回，替代逐路 subagent 手工派发与断续完工通知；**施工单与修正轮走独立 subagent**——单批单 agent，回报可针对性追问。
+委派形态的固定口径（用户拍板，规则不外置到 memory 或批清单）：**同道多路复核固定走 workflow**——briefs 喂 `parallel` 攒齐一次返回，替代逐路 subagent 手工派发与断续完工通知；**施工单与修正轮走独立 subagent**——单批单 agent，回报可针对性追问。dispatch_review/dispatch_verify/dispatch_build 的输出 render 自带派发指示（复核趟带本节骨架，施工趟带独立 subagent 口径；单一真相源在工具输出；本节留完整版与实测坑）。
 
-`dispatch_verify`（门二）输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核。脚本骨架：
+`dispatch_review`/`dispatch_verify`（门一/门二）输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核。工具输出里自带的可抄骨架（与下面这份逐字同源）：
 
 ```js
-const briefs = args.briefs;                    // 从 dispatch_verify 输出值转抄 briefs 数组
-const results = await parallel(briefs.map(b => async () => {
-  try {
-    return { form: b.form, ok: true, out: await agent(b.text, {
-      label: b.form, provider: '…', model: '…',   // 显式指派，走授权路线
-      schema: { /* findings 结构化校验 */ }
-    }) };
-  } catch (e) { return { form: b.form, ok: false, error: String(e) }; }
-}));
+  const briefs = args.briefs; // 从本工具结构化值把 briefs 数组转抄进 workflow 调用的 args
+  const results = await parallel(briefs.map(b => async () => {
+    const out = await agent(b.text, { label: b.form /* provider/model 显式指派，按你的派发纪律；可加 schema 收结构化 findings */ });
+    return out === null ? { form: b.form, ok: false, error: "agent 返回 null（子代理未正常收尾）" } : { form: b.form, ok: true, out };
+  }));
 ```
 
-三个坑（实测踩过）：①workflow 返回值严格 JSON 校验——成功分支不要带 `error: undefined` 这类字段，整趟直接拒；②`parallel` 里 throwing thunk 解析为 `null`——先 filter 再取字段，失败路单独收进「failed_routes」保住「各路成功失败分开可查」；③`briefs` 在输出值（value）里不在 render 文本里，转抄进脚本 `args` 是手工步骤。首单实测（2026-10，批 G）：双路并行 270s、零失败、结构化 findings 20 条（含对已过双路门二对象的第三轮增量 8 处）——报告见当批实施方案目录。
+判活看 out 是否为 null——agent 失败是返回 null 不是抛错；聚合后按 ok 分流，失败路收进 failed_routes 别静默丢。
+施工单与修正轮不走此路：独立 subagent 后台派发（run_in_background），派完结束回合等完工通知；修正轮优先 send_message 回原施工者续聊。
+
+三个坑（实测踩过）：①workflow 返回值严格 JSON 校验——成功分支不要带 `error: undefined` 这类字段，整趟直接拒；②`agent()` 失败返回 `null` 不抛——判活看 `out`，骨架已内联处理（照 `try/catch` 写会把返回 `null` 记成 `{ok:true, out:null}`，失败路静默丢）；聚合后按 `ok` 分流，失败路单独收进「failed_routes」保住「各路成功失败分开可查」；③`briefs` 在输出值（value）里不在 render 文本里，转抄进脚本 `args` 是手工步骤。首单实测（2026-10，批 G）：双路并行 270s、零失败、结构化 findings 20 条（含对已过双路门二对象的第三轮增量 8 处）——报告见当批实施方案目录。
 
 ## 装配四件的 enum 参数面：注册期快照与运行期现读是两速
 
