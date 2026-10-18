@@ -15,7 +15,7 @@
  * 换成一段编的文本，而 description 的失效没有任何症状。title 缺失时才从正文派生。
  *
  * 判据不重写：段清点问 segments.js，条目命名与保留名（含「哪个是已退役的索引」）问
- * frontmatter.js，行归一与围栏定位也问它，转换结果是否合规问 assertEntryFrontmatter，
+ * naming.js，行归一与围栏定位问 frontmatter.js，转换结果是否合规问 assertEntryFrontmatter，
  * 转换结果按段是否撞名问那份共享的重名判定。本脚本只做「删死字段 + 补缺失的 title」
  * 这一层行级机械替换，不自扫目录、不自写一套 frontmatter 解析——那两样一旦分家，
  * 迁移就会按另一套契约判「迁好了」。
@@ -42,10 +42,8 @@ import {
 	findFenceEnd,
 	frontmatterLines,
 	groupTitlesByTitle,
-	isEntryName,
-	isRetiredIndexFile,
-	stemOf,
 } from '../lib/memory/frontmatter.js'
+import { isEntryName, isRetiredIndexFile, stemOf } from '../lib/memory/naming.js'
 import { listSegmentDirs } from '../lib/memory/segments.js'
 
 const args = process.argv.slice(2)

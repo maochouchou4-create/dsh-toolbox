@@ -214,9 +214,9 @@ test('段内 title 重名：只由那一项判红，且跨段同名不算（撞�
 	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '同题条目', description: '共享段触发词', file: 'h.md' })])
 	const { code, stdout } = runScript([root, 'home'])
 	assert.equal(code, 1, `段内重名须以 1 退出：\n${stdout}`)
-	// 按去重后的 id 断言：证明的是「只有这一项判红」，不是「这一项只列一行」——同一语料
-	// 在逐段清点与注入块装配两次扫描里各报一次（两种 kind 前缀），是本脚本的既有形态
-	assert.deepEqual([...new Set(violationIds(stdout))], ['segment-title-dup'], `只该由这一项判红：\n${stdout}`)
+	// 按 id 断言：证明的是「只有这一项判红」——采集是单路（逐段清点那一遍），同一语料
+	// 只报一次，故这里直接比数组
+	assert.deepEqual(violationIds(stdout), ['segment-title-dup'], `只该由这一项判红：\n${stdout}`)
 	assert.ok(stdout.includes('同题条目') && stdout.includes('topic-0.md') && stdout.includes('topic-1.md'), stdout)
 	// 处置指向 edit 而不是 delete：报出来的两条是各自带正文的现存条目，照着删丢的是内容
 	assert.ok(stdout.includes('不要 delete'), stdout)
@@ -255,7 +255,7 @@ test('条目内 ## 节重名：只由那一项判红（edit 按节锚定以标�
 	seedRaw(root, 'home', 'flat.md', '---\ntitle: 无节条目\ndescription: 触发词\n---\n\n没有节结构的正文\n')
 	const { code, stdout } = runScript([root, 'home'])
 	assert.equal(code, 1, `节重名须以 1 退出：\n${stdout}`)
-	assert.deepEqual([...new Set(violationIds(stdout))], ['entry-section-dup'], `只该由这一项判红：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-section-dup'], `只该由这一项判红：\n${stdout}`)
 	assert.ok(stdout.includes('dup.md') && stdout.includes('状态'), `病灶须点名条目与重名的节：\n${stdout}`)
 	assert.ok(!stdout.includes('flat.md'), `无节条目不报（存量常态，全量有节是语料迁移趟的判据）：\n${stdout}`)
 	assert.ok(!stdout.includes('multi.md'), `不同名的多节条目不报：\n${stdout}`)

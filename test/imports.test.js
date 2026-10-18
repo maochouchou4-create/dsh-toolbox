@@ -236,6 +236,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 const NODE_FS_DIRECT = new Map([
 	['memory/write.js', false],
 	['memory/frontmatter.js', false],
+	['memory/naming.js', false],
 	['memory/core.js', false],
 	['memory/patterns.js', false],
 	['memory/params.js', false],

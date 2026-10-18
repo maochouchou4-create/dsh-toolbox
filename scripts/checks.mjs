@@ -24,7 +24,8 @@ import {
 	resolveScopeDir,
 } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory-root.js'
-import { FRONTMATTER_KEYS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/frontmatter.js'
+import { FRONTMATTER_KEYS } from '../lib/memory/frontmatter.js'
+import { RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/naming.js'
 import { listSegmentDirs } from '../lib/memory/segments.js'
 import { duplicateSectionHeadings, sectionDupNotice } from '../lib/memory/patterns.js'
 import { isNonBlankString } from '../lib/value.js'
@@ -140,9 +141,10 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 			record('机器身份')('bad-machine', machine, describeError(error))
 		}
 	}
-	// 装配侧的 issue 与段扫描走同一个收集器：少了它，WRITING.md 与段目录的读失败一条都进不了
-	// 现场，而块却照样算出来、照样被判达标
-	const block = composeMemory({ memoryRoot, machine: machineValid ? machine : '', onIssue: record('注入块') })
+	// 注入块只取块体：装配侧的诊断回调刻意不接——装配侧那一路是自扫的子集——自扫经
+	// listSegmentDirs 覆盖各机器段，装配侧只扫 store 顶层与本机段；接上只会一事两行；
+	// 块却照样算出来、照样被判达标
+	const block = composeMemory({ memoryRoot, machine: machineValid ? machine : '' })
 	return {
 		root,
 		memoryRoot,
@@ -222,7 +224,7 @@ export const CHECKS = [
 	{
 		id: 'entry-readable',
 		label: `条目、段目录与写侧纪律 ${WRITING_FILE} 读得动（读失败即失去判定覆盖面，不许静默）`,
-		guard: `扫描期 read-error issue（段目录、${WRITING_FILE} 与注入块装配三路都收）`,
+		guard: `扫描期 read-error issue（段扫描与 ${WRITING_FILE} 两路都收）`,
 		claims: ['read-error'],
 		run: (site) => site.issues.filter((item) => item.issue === 'read-error').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
