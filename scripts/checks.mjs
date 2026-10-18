@@ -12,7 +12,7 @@
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { composeMemory, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
+import { composeMemory, ignoredEntryFiles, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
 	INDEX_CHAR_BUDGET,
@@ -86,6 +86,9 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 			entryFiles: names.filter(isEntryName).length,
 			overLine: lines.filter((line) => line.length > INDEX_LINE_CHAR_BUDGET),
 			retired: names.filter(isRetiredIndexFile),
+			// 非 kebab 名的 .md 按同一份判据不算条目，于是既不进 entryFiles 也不进派生行——
+			// 报告要能说出这块钱去哪了，否则读者只看到数字比盘上文件数少
+			ignored: ignoredEntryFiles(dir, names),
 		}
 	})
 	// 节重名查的是正文，头读那份窗口看不到——这一项自己整篇读（与体检同一读法；读法是
@@ -172,15 +175,23 @@ export const CHECKS = [
 	{
 		id: 'memory-root-wired',
 		label: '记忆根接上了线且扫得到条目（扫到 0 条不是「没有问题」，是「什么都没检」）',
-		guard: 'store 顶层或 machines/ 下某个机器段扫到 ≥1 条 .md（段按条目数算，空目录不算）',
+		guard: 'store 顶层或 machines/ 下某个机器段扫到 ≥1 条条目（kebab 名的 .md；段按条目数算，空目录与非条目名不算）',
 		run: (site) => {
 			// 判「段在场」按有条目的段算而不是按目录数：空 machines/<id>/ 是首跑常态，拿它当
 			// 「扫到了东西」会让「共享段 0 条＋本机段空」报成「N 项检查全过」——正是这一项
 			// label 说的那种空跑假绿
 			const filled = site.segments.filter((segment) => (segment.entryFiles ?? 0) > 0)
 			if (filled.length > 0) return []
+			// 一条条目都没扫到、段里却躺着 .md：那不是「根没接上线」，是它们全被命名判据挡在门外。
+			// 指路接线只会让人去翻 README 找一条本来就接好的线，而该做的是改名
+			const ignored = site.segments.reduce((count, segment) => count + (segment.ignored?.length ?? 0), 0)
+			if (ignored > 0) {
+				return [
+					`记忆根下扫到 0 条条目，但有 ${ignored} 个非 kebab 名的 .md 未计入——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。改成小写 kebab 名即回到索引（memory lint 有逐个提醒）`,
+				]
+			}
 			return [
-				`记忆根下扫到 0 条条目：${site.root.store} 顶层与 machines/ 下各段都没有 .md——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见 README），或把第一个实参指向真正在用的记忆根`,
+				`记忆根下扫到 0 条条目：${site.root.store} 顶层与 machines/ 下各段都没有 kebab 名的 .md——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见 README），或把第一个实参指向真正在用的记忆根`,
 			]
 		},
 	},
@@ -332,6 +343,9 @@ export function renderReport(site) {
 	for (const segment of site.segments) {
 		const longest = segment.lines.length === 0 ? 0 : Math.max(...segment.lines.map((line) => line.length))
 		push(`${segment.kind}\t${segment.entryFiles}\t${segment.lines.length}\t${segment.chars}\t${longest}\t${segment.overLine.length}`)
+		// 表里的「条目文件」一列只数 kebab 名的条目，被命名判据挡在门外的那些得另起一行说出去向：
+		// 这一句是报告文本，不进 CHECKS——「不算条目」不是「待修错误」，判红就是给读者一个不存在的待办
+		if (segment.ignored.length > 0) push(`${segment.kind}：${segment.ignored.length} 个文件因非 kebab 名未进索引——${segment.ignored.join('、')}`)
 	}
 	// 未给机器 id 时这一栏只数到共享段：说清是「本次装配本就如此」还是「机器名给错了」，
 	// 否则报告里的字符数会被当成全量而误判

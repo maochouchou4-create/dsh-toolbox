@@ -45,6 +45,7 @@ import {
 } from '../lib/memory/frontmatter.js'
 import { isEntryName, isRetiredIndexFile, stemOf } from '../lib/memory/naming.js'
 import { listSegmentDirs } from '../lib/memory/segments.js'
+import { ignoredEntryFiles } from '../lib/memory/assemble.js'
 
 const args = process.argv.slice(2)
 const apply = args.includes('--apply')
@@ -114,12 +115,19 @@ function plan(root) {
 	const skipped = []
 	let compliantEntries = 0
 	let crlfFiles = 0
+	let ignoredFiles = 0
 	for (const { kind, dir } of listSegmentDirs(root)) {
 		// 先按段攒齐再比对：撞名是「这一段」的性质，攒齐前判只能看见已走过的那几条，
 		// 报出来的组会随遍历顺序变化
 		const segmentChanges = []
 		const titled = []
-		for (const name of readdirSync(dir).sort()) {
+		// 名录一次列出、排序一次：下面既要遍历它、又要数那些不在迁移面的名字，两次列目录
+		// 在中途增删时互相对不上
+		const dirNames = readdirSync(dir).sort()
+		// 非 kebab 名的 .md 不是迁移面的一份子（判据与写侧同源），但静默略过会被读成「这一段
+		// 已经迁干净」——数出来交给调用方挂到总数行上，与离线自检报告里那行是同一件事
+		ignoredFiles += ignoredEntryFiles(dir, dirNames).length
+		for (const name of dirNames) {
 			const path = join(dir, name)
 			const rel = relative(root.root, path)
 			if (isRetiredIndexFile(name)) {
@@ -178,7 +186,7 @@ function plan(root) {
 		}
 		changes.push(...segmentChanges)
 	}
-	return { changes, skipped, compliantEntries, crlfFiles }
+	return { changes, skipped, compliantEntries, crlfFiles, ignoredFiles }
 }
 
 /**
@@ -202,6 +210,12 @@ async function applyChanges(changes) {
 	return done
 }
 
+/**
+ * 非 kebab 名的 .md 不在迁移面（判据与写侧同源），但静默略过会被读成「这一段已迁干净」——
+ * 挂在总数行尾显式报一句。刻意不进 skipped：那不是「转换失败待人工」，也不该把退出码带成 1。
+ */
+const 非迁移面尾注 = (count) => (count > 0 ? `；另有 ${count} 个文件因非 kebab 名不在迁移面` : '')
+
 async function main() {
 	const root = resolveRoot(rawMemoryRoot)
 	// 记忆根没接线与「段里没有要迁的东西」是两件事：前者印「无可迁移」并以 0 退出，
@@ -212,17 +226,17 @@ async function main() {
 		process.exitCode = 1
 		return
 	}
-	const { changes, skipped, compliantEntries, crlfFiles } = plan(root)
+	const { changes, skipped, compliantEntries, crlfFiles, ignoredFiles } = plan(root)
 	console.log(`记忆根：${root.root}（store：${root.store}）`)
 	console.log(`模式：${apply ? '--apply（落盘）' : 'dry-run（只报不做，加 --apply 才落盘）'}`)
 	console.log(`已合规条目 ${compliantEntries} 条（不动、不报）`)
 	if (changes.length === 0) {
 		if (skipped.length === 0) {
-			console.log('待迁条目：0（无需迁移）')
+			console.log(`待迁条目：0（无需迁移）${非迁移面尾注(ignoredFiles)}`)
 			return
 		}
 		for (const item of skipped) console.log(`跳过 ${item.rel}：${item.reason}`)
-		console.log(`\n待迁 0 条、跳过 ${skipped.length} 条（转换后仍不合规，须人工处理）`)
+		console.log(`\n待迁 0 条、跳过 ${skipped.length} 条（转换后仍不合规，须人工处理）${非迁移面尾注(ignoredFiles)}`)
 		process.exitCode = 1
 		return
 	}
@@ -233,7 +247,7 @@ async function main() {
 	for (const item of skipped) console.log(`跳过 ${item.rel}：${item.reason}`)
 	if (crlfFiles > 0) console.log(`其中 ${crlfFiles} 个文件是 CRLF 行尾，改写会把它整篇归一为 LF（与写侧 edit 同口径）`)
 	if (!apply) {
-		console.log(`\n待迁 ${changes.length} 条、跳过 ${skipped.length} 条（未落盘）`)
+		console.log(`\n待迁 ${changes.length} 条、跳过 ${skipped.length} 条（未落盘）${非迁移面尾注(ignoredFiles)}`)
 		process.exitCode = 1
 		return
 	}
@@ -241,11 +255,11 @@ async function main() {
 	try {
 		done = await applyChanges(changes)
 	} catch (error) {
-		console.log(`\n已改 ${done} 条后中断：${describeError(error)}。重跑本脚本即可幂等收敛（已合规的条目不再动）`)
+		console.log(`\n已改 ${done} 条后中断：${describeError(error)}。重跑本脚本即可幂等收敛（已合规的条目不再动）${非迁移面尾注(ignoredFiles)}`)
 		process.exitCode = 1
 		return
 	}
-	console.log(`\n已改 ${done} 条、跳过 ${skipped.length} 条`)
+	console.log(`\n已改 ${done} 条、跳过 ${skipped.length} 条${非迁移面尾注(ignoredFiles)}`)
 	if (skipped.length > 0) process.exitCode = 1
 }
 

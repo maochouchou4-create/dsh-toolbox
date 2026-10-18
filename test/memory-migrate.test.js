@@ -57,6 +57,7 @@ test('dry-run：逐条报将要做什么，且不落盘（迁移是批量原地�
 	assert.match(stdout, /批次执行与子代理复核/, stdout)
 	assert.equal(readFileSync(join(store, 'batch-subagent-process.md'), 'utf8'), LEGACY, 'dry-run 不得改文件')
 	assert.ok(existsSync(join(store, 'MEMORY.md')), 'dry-run 不得删文件')
+	assert.ok(!stdout.includes('不在迁移面'), '这一份语料没有非 kebab 名的 .md：N=0 时那一句整个不印')
 	assert.notEqual(code, 0, '有待迁条目时退出码须非 0，否则 CI 里没人看得见')
 })
 
@@ -320,6 +321,30 @@ test('退役索引文件按保留名判定，大小写不敏感（大小写不�
 			assert.ok(stdout.includes(`删除 ${rel('memory', 'memory.md')}`), stdout)
 			assert.equal(existsSync(join(storeOf(root), 'memory.md')), false)
 			assert.equal(existsSync(join(storeOf(root), 'WRITING.md')), true, 'WRITING.md 是保留名但不是退役索引，不许删')
+		},
+	)
+})
+
+test('非 kebab 名的 .md 不在迁移面：总数行显式报出数量与内容不动（静默略过会被读成「这一段已迁干净」）', (t) => {
+	withCorpus(t,
+		(root) => {
+			writeEntry(root, 'ok.md', '---\nname: ok\ndescription: 触发词\n---\n\n# 条目\n\n正文。\n')
+			// 非 kebab 名按同一份判据不是条目，迁移不碰它（写侧也不认这个名），可它是盘上看得
+			// 见的 .md——不说一句，这份报告与「这一段的 .md 都迁完了」同形
+			writeEntry(root, 'Foo.md', '---\ntitle: 大写名条目\ndescription: 触发词\n---\n\n正文。\n')
+		},
+		(root) => {
+			const dry = runOn(root, [])
+			assert.ok(dry.stdout.includes('另有 1 个文件因非 kebab 名不在迁移面'), `总数行须报出不在迁移面的那些：\n${dry.stdout}`)
+			const applied = runOn(root, ['--apply'])
+			assert.ok(applied.stdout.includes('另有 1 个文件因非 kebab 名不在迁移面'), applied.stdout)
+			assert.equal(readKeys(root, 'ok.md').title, '条目', '条目名合规的那条照常迁')
+			// 它真的没被动过：迁移面外的文件连 title 都不补——碰了就是把「不算条目」改写成另一种形态
+			assert.equal(
+				readFileSync(join(storeOf(root), 'Foo.md'), 'utf8'),
+				'---\ntitle: 大写名条目\ndescription: 触发词\n---\n\n正文。\n',
+				'非 kebab 名的文件不在迁移面，内容原样不动',
+			)
 		},
 	)
 })

@@ -6,7 +6,7 @@
  */
 import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING } from '../lib/memory/core.js'
 import { lintMemory } from '../lib/memory/lint.js'
@@ -40,6 +40,7 @@ test('lintMemory：frontmatter 契约/超长/日期戳/死链/超预算全覆盖
 	const clean = lintMemory({ memoryRoot: cleanRoot, machine: 'home' })
 	assert.equal(clean.ok, true)
 	assert.deepEqual(clean.warnings, [])
+	assert.deepEqual(clean.notices, [], '干净语料 notices 也为空：信息档与待修档同在一次体检的返回值里，空就是空')
 })
 
 test('lintMemory：机器身份未配置判红且身份字段缺席（不是 null——宿主验返回值 null 会报错）', () => {
@@ -234,4 +235,63 @@ test('lintMemory：病态输入逐处降级报 warning，体检自身不崩（�
 		'detail 说的是「名字被非普通文件占用」：同名目录与读不动是两回事，笼统一句「读取失败」会让后来人照着读失败那条线去查',
 	)
 	assert.ok(!report.warnings.some((w) => w.includes('frontmatter 不合规') && w.includes('good.md')), '好条目不受邻近病态牵连')
+})
+
+test('lintMemory：非 kebab 名 .md 文件报信息性提醒但不判红（「不算条目」不是「待修错误」）', () => {
+	// 非 kebab 名与 kebab 名分住两个段：大小写不敏感的文件系统上同一目录里的 Foo.md 与
+	// foo.md 是同一个文件，同目录造＝后者覆盖前者，提醒与被枚举两侧就都验不到了
+	const { root, store, machineDir } = memoryTree(base, 'lint-ignored-file', 'home')
+	writeFileSync(join(store, 'ok.md'), entry('规范条目', '触发词'), 'utf8')
+	writeFileSync(join(store, 'Foo.md'), entry('大写名条目', '触发词'), 'utf8')
+	// 退役索引名过得了 kebab 正则：它靠保留名那一半条件才算不得条目，也不该被数进「因非 kebab 名
+	// 被漏掉」——那是两类不同的事实（被漏掉的条目 vs 索引文件），混成一条就指错了处置。内容按真实
+	// 残留形态给（老格式索引正文，不是条目 frontmatter）：它一旦被枚举，下面的 ok/warnings 断言
+	// 就会因「frontmatter 不合规」翻红——这正是这一格要钉的「保留名不漏」
+	writeFileSync(join(store, 'memory.md'), '# 老索引\n- [手写](x.md) — 旧行\n', 'utf8')
+	writeFileSync(join(machineDir, 'foo.md'), entry('本机规范条目', '触发词'), 'utf8')
+	writeFileSync(join(machineDir, 'Bar.md'), entry('本机大写条目', '触发词'), 'utf8')
+	// 名为 .md 的目录也占着这个名录：它不是「未进索引的文件」——提醒把它数进去，就是让读的人
+	// 去找一个并不存在的条目
+	mkdirSync(join(store, 'Notes.md'))
+
+	const report = lintMemory({ memoryRoot: root, machine: 'home' })
+	assert.equal(report.ok, true, 'ok 只看待修项：非 kebab 名判红就把「不算条目」说成了「报错待修」')
+	assert.deepEqual(report.warnings, [], 'warnings 里一条都不进——severity 不升')
+	assert.deepEqual(report.notices, [
+		'shared：1 个文件因非 kebab 名未进索引——Foo.md（改成 kebab 名即回到索引）',
+		'machine:home：1 个文件因非 kebab 名未进索引——Bar.md（改成 kebab 名即回到索引）',
+	], '按段各报一条并点名被漏掉的文件：foo.md 被枚举（不在提醒里）、memory.md 是保留名不算被漏掉的条目')
+	assert.ok(!report.notices.some((notice) => notice.includes('Notes.md')), '同名目录不是文件，不进提醒')
+
+	// 改名即回到索引：同一个目录里把大写名换成 kebab 形，那条提醒随之消失（提醒量的是现状，不是账）
+	renameSync(join(store, 'Foo.md'), join(store, 'bar.md'))
+	const after = lintMemory({ memoryRoot: root, machine: 'home' })
+	assert.deepEqual(after.notices.map((notice) => notice.split('：')[0]), ['machine:home'], '共享段那条随改名消失，本机段那条还在')
+})
+
+test('lintMemory：`.MD` 大写后缀照样进提醒，保留名折大小写仍拦住（MEMORY.MD 不误报）', () => {
+	// 后缀折大小写：大小写不敏感的文件系统上 Foo.MD 与 Foo.md 是同一个文件，直比 `.md` 会让
+	// 这一类整批从提醒面消失，而提醒正是「东西少了一条」唯一的可发现路径
+	const { root, store } = memoryTree(base, 'lint-md-case', 'home')
+	writeFileSync(join(store, 'ok.md'), entry('规范条目', '触发词'), 'utf8')
+	writeFileSync(join(store, 'Foo.MD'), entry('大写后缀条目', '触发词'), 'utf8')
+	// MEMORY.MD 折大小写后是保留名：它不是被漏掉的条目，是索引文件，不许混进提醒那一批
+	writeFileSync(join(store, 'MEMORY.MD'), '# 老索引\n', 'utf8')
+	const report = lintMemory({ memoryRoot: root, machine: 'home' })
+	assert.equal(report.ok, true, '提醒档不判红')
+	assert.deepEqual(report.notices, [
+		'shared：1 个文件因非 kebab 名未进索引——Foo.MD（改成 kebab 名即回到索引）',
+	], 'MEMORY.MD 走保留名判定被摘出去：给两类不同的事实同一条说法就指错了处置')
+})
+
+test('lintMemory：非 kebab 名的 .md 不在已知 stem 集 → [[Foo]] 报死链、[[foo]] 不报（条目不进索引就无处可读）', () => {
+	// Foo.md 与 foo.md 分住两个段：大小写不敏感的文件系统上同一目录里二者是同一个文件，
+	// 同目录造＝后者覆盖前者，这条用例就验不到「非 kebab 那一半不进 stem 集」
+	const { root, store, machineDir } = memoryTree(base, 'lint-dead-link-case', 'home')
+	writeFileSync(join(store, 'foo.md'), entry('小写条目', '触发词'), 'utf8')
+	writeFileSync(join(store, 'referrer.md'), entry('引用条目', '触发词', '见 [[Foo]] 与 [[foo]] 两处'), 'utf8')
+	writeFileSync(join(machineDir, 'Foo.md'), entry('大写条目', '触发词'), 'utf8')
+	const report = lintMemory({ memoryRoot: root, machine: 'home' })
+	const dead = report.warnings.filter((w) => w.includes('死 wikilink'))
+	assert.deepEqual(dead, ['shared：死 wikilink [[Foo]]——referrer.md'], '非 kebab 名不是条目、不进 stem 集，指向它的 wikilink 就是死链；kebab 名在场时那一处不报')
 })

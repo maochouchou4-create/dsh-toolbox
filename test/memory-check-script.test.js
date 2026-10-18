@@ -369,6 +369,23 @@ test('共享段 0 条且机器段是空目录：退出 1（空目录不是「扫
 	assert.ok(!stdout.includes('全部达标'), stdout)
 })
 
+test('段里只有非 kebab 名的 .md：判红指向改名而不是指路接线（线本来就接上了）', () => {
+	const root = join(base, 'non-kebab-only')
+	const dir = segmentDir(root, SHARED_SEGMENT)
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(join(dir, 'WRITING.md'), '# 写侧纪律\n\n测试语料占位。\n', 'utf8')
+	// 段里躺着 .md、一条条目都没扫到：这不是「记忆根没接线」，是命名判据把它们全挡在门外。
+	// 指路「先接线」会把读报告的人送去修一条本来就好的线
+	writeFileSync(join(dir, 'Foo.md'), '---\ntitle: 大写条目\ndescription: 触发词\n---\n\n正文。\n')
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `一条条目都没扫到不得假绿：\n${stdout}`)
+	assert.ok(violationIds(stdout).includes('memory-root-wired'), `须由接线那项判红：\n${stdout}`)
+	assert.ok(stdout.includes('1 个非 kebab 名的 .md 未计入'), `判红要指向改名：\n${stdout}`)
+	assert.ok(!stdout.includes('先接线（见 README）'), `线是接上的，再指路接线等于让人去修一条没坏的线：\n${stdout}`)
+	// 段表那一行把「条目文件」列少掉的那块钱说出去向，读者才对得上盘上的文件数
+	assert.ok(stdout.includes('1 个文件因非 kebab 名未进索引'), `段表须报出被命名判据挡掉的那些：\n${stdout}`)
+})
+
 test('软链调用：照样出报告（薄壳没有「被直接运行才执行」那道守卫可关）', () => {
 	const root = join(base, 'symlinked')
 	mkdirSync(root, { recursive: true })

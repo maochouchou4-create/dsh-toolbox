@@ -169,6 +169,38 @@ test('scanSegment：names 是 readdir 全量、entries 逐条过命名判据（�
 	assert.deepEqual(scan.entries.map((one) => one.name), ['ok.md'], '四条非条目名各不进 entries')
 })
 
+test('scanSegment：kebab 名进 entries，非 kebab 名与「合 kebab 的保留名」都不进（读侧判据与写侧同一份）', () => {
+	// Foo.md 与 foo.md 分住两个段：大小写不敏感的文件系统上同一目录里的这两条是同一个文件
+	// （同目录造＝后者覆盖前者，用例会验到一条根本不存在的非 kebab 文件而绿）
+	const { store, machineDir } = fixture('scan-entry-name')
+	writeFileSync(join(store, 'ok.md'), entry('规范条目', '触发词'), 'utf8')
+	writeFileSync(join(store, 'Foo.md'), entry('大写名条目', '触发词'), 'utf8')
+	writeFileSync(join(store, 'memory.md'), entry('退役索引名条目', '触发词'), 'utf8')
+	writeFileSync(join(machineDir, 'foo.md'), entry('小写条目', '触发词'), 'utf8')
+	const read = (path) => readFileSync(path, 'utf8')
+	assert.deepEqual(scanSegment(store, { read }).entries.map((one) => one.name), ['ok.md'], 'Foo.md 非 kebab 名不枚举；memory.md 能过 kebab 正则，靠保留名那一半拦住')
+	assert.deepEqual(scanSegment(machineDir, { read }).entries.map((one) => one.name), ['foo.md'], '小写 kebab 名枚举：双条件合起来才是读侧判据')
+})
+
+test('isEntryName：规范形＝小写 kebab 且非保留名，两侧条件缺一都算不得条目', () => {
+	assert.equal(isEntryName('foo.md'), true)
+	assert.equal(isEntryName('topic-0.md'), true, '数字与中划线是规范形的一部分')
+	assert.equal(isEntryName('Foo.md'), false, '大写名不合 kebab 形')
+	assert.equal(isEntryName('Bad_Name.md'), false, '下划线不合 kebab 形')
+	assert.equal(isEntryName('note.txt'), false, '不是 Markdown 文件')
+	assert.equal(isEntryName(undefined), false, '非字符串一律不算')
+	// 现判据放行的三格：正则只管「首字符是字母数字、其后是字母数字与中划线」，尾中划线、连续
+	// 中划线、纯数字都过。要紧的是别把「收紧到更严的 kebab 定义」当成顺手改——这三格是红点
+	assert.equal(isEntryName('foo-.md'), true, '尾中划线：现判据放行')
+	assert.equal(isEntryName('foo--bar.md'), true, '连续中划线：现判据放行')
+	assert.equal(isEntryName('123.md'), true, '纯数字：现判据放行')
+	// 这一格是本判据的第二半条件：memory.md／writing.md 能过 kebab 正则，只有保留名排除拦得住；
+	// 少了那半，退役的索引文件与写侧纪律会以条目身份进索引
+	assert.equal(isEntryName('memory.md'), false, '扣掉保留名条件即复活退役索引名')
+	assert.equal(isEntryName('MEMORY.md'), false)
+	assert.equal(isEntryName('WRITING.md'), false)
+})
+
 test('composeMemory：空树返回空串（不注入）', () => {
 	assert.equal(composeMemory({ memoryRoot: join(base, 'empty-tree'), machine: 'home' }), '')
 })
@@ -629,6 +661,17 @@ test('composeMemory：残留的 MEMORY.md 不进索引（它不是条目，也�
 	const text = composeMemory({ memoryRoot: root })
 	assert.ok(text.includes('- [真条目](real.md) — 触发词'))
 	assert.ok(!text.includes('手写'), 'MEMORY.md 的内容一律不读')
+})
+
+test('composeMemory：非 kebab 名的 .md 文件零注入（Foo.md 不进索引，foo.md 照常）', () => {
+	// 两条名字分住两个段：大小写不敏感的文件系统上同一目录里的 Foo.md 与 foo.md 是同一个
+	// 文件，同目录造＝互相覆盖，这条用例就验不到非 kebab 那一半
+	const { root, store, machineDir } = memoryTree(base, 'compose-non-kebab', 'home')
+	writeFileSync(join(store, 'Foo.md'), entry('大写条目', '触发词'), 'utf8')
+	writeFileSync(join(machineDir, 'foo.md'), entry('小写条目', '触发词'), 'utf8')
+	const text = composeMemory({ memoryRoot: root, machine: 'home' })
+	assert.ok(text.includes('- [小写条目](foo.md) — 触发词'), '规范形的条目照常进索引：收紧读侧判据不是把整段扫没了')
+	assert.ok(!text.includes('大写条目') && !text.includes('Foo.md'), '非 kebab 名零注入：读侧与写侧同一份判据，不再有「读侧进得了索引、写侧拒写」的两套说法')
 })
 
 test('composeMemory：段内只有保留文件时该段安静省略（不注入 header-only 噪声块）', () => {
