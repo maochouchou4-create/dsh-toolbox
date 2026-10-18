@@ -171,7 +171,7 @@ test('门一 brief：固定段一条不缺（角色句／必读链／横切判�
 		'对象：方案.md 批 1。',
 		'横切判据：- 阈值标定',
 		'变异翻红',
-		'先读用户级 ~/.dsh/AGENTS.md 全文，再读批次所在仓的 AGENTS.md（无则跳过）；只读禁写',
+		'AGENTS 注入：用户级与批次所在仓的 AGENTS.md 均由宿主自动注入你的系统提示（仓级在你读仓内文件后生效）——系统提示未见对应块才自读：用户级 ~/.dsh/AGENTS.md、仓级＝批次所在仓根的 AGENTS.md（无则跳过）；只读禁写',
 		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试删减须显式申报（改写优先））——违反＝返工。',
 		'上报格式＝{维度键, 严重度(阻断/建议/Nit), file:line, 现象与证据}',
 		'派发时 provider/model 显式指派（按你的派发纪律；model 用真 id，带 provider 查 list_subagent_models 可得）',
@@ -196,7 +196,7 @@ test('门二的模板键落在门一那份（两门正文合一，模板表里�
 	const gate2 = assembleBrief(data, { stage: '门二', batchType: '用户可见功能批', subject: 'git diff HEAD~1', intent: '终审实现' })
 	assert.ok(gate2.find((brief) => brief.form === 'GUI 目检').text.includes('GUI 目检五组清单'))
 	assert.ok(!gate2.find((brief) => brief.form === '连带面').text.includes('GUI 目检五组清单'))
-	assert.ok(gate2.every((brief) => brief.text.includes('先读用户级 ~/.dsh/AGENTS.md 全文')))
+	assert.ok(gate2.every((brief) => brief.text.includes('AGENTS 注入：用户级与批次所在仓的 AGENTS.md 均由宿主自动注入你的系统提示')))
 	const walk = assembleBrief(data, { stage: '门一', batchType: '用户可见功能批', subject: '方案.md', intent: '场景走查' })
 	assert.ok(walk.find((brief) => brief.form === '场景走查·升级版').text.includes('出路质量判定'), '场景走查三件套逐字带进那路 brief')
 })
@@ -205,11 +205,12 @@ test('必读链·复核版守门：门一模板指向复核那张辅助页，页
 	assert.ok(data.templates['门一'].includes('〔AGENTS 必读链·复核〕'), '门一模板引的是复核版占位')
 	assert.ok(!data.templates['门一'].includes('〔AGENTS 必读链·施工〕'), '门一模板不引施工版：两张混着用等于随机给一份错分工的纪律')
 	const page = data.templates['AGENTS 必读链·复核']
-	assert.ok(page.includes('（无则跳过）；只读禁写。'), '复核版那句带只读禁写')
+	assert.ok(page.includes('（无则跳过）；只读禁写。'), '复核版那句带只读禁写（仓无 AGENTS.md 时跳过读那条不存在的路径）')
 	for (const stage of ['门一', '门二']) {
 		for (const brief of assembleBrief(data, { stage, batchType: '纯后端管线批', subject: 'x', intent: 'y' })) {
+			// 「带只读禁写」不另设一条断言：整页逐字包含已把它整个蕴含进去，再断一次只是同一件事
+			// 的第二处表述（改文案时两处一起红，报错却指向同一条）
 			assert.ok(brief.text.includes(page), `${stage}/${brief.form} 的必读链逐字取自复核版辅助页`)
-			assert.ok(brief.text.includes('（无则跳过）；只读禁写。'), `${stage}/${brief.form} 带只读禁写`)
 		}
 	}
 })
@@ -218,7 +219,7 @@ test('必读链·施工版守门：施工模板指向施工那张辅助页，页
 	assert.ok(data.templates['施工'].includes('〔AGENTS 必读链·施工〕'), '施工模板引的是施工版占位')
 	assert.ok(!data.templates['施工'].includes('〔AGENTS 必读链·复核〕'), '施工模板不引复核版')
 	const page = data.templates['AGENTS 必读链·施工']
-	assert.ok(page.includes('（无则跳过）。'), '施工版那句到「（无则跳过）。」为止')
+	assert.ok(page.includes('AGENTS.md（无则跳过）。'), '施工版那句到「AGENTS.md（无则跳过）。」为止')
 	assert.ok(!page.includes('只读禁写'), '复核者才只读——施工者拿到这句等于一条做不到的约束')
 	const [brief] = assembleBrief(data, construction())
 	assert.ok(brief.text.includes(page), '施工 brief 的必读链逐字取自施工版辅助页')
@@ -247,7 +248,7 @@ test('施工 brief：执行纪律内联在首段、对象行在位，自证与�
 		'锚点（符号名，禁行号）：computeCombo、assembleBrief。',
 		'自证：上报必须附自验证据',
 		'提交归主会话：施工完工＝自证＋汇报即止，git commit/push 一律不做',
-		'先读用户级 ~/.dsh/AGENTS.md 全文，再读批次所在仓的 AGENTS.md（无则跳过）。',
+		'AGENTS 注入：用户级与批次所在仓的 AGENTS.md 均由宿主自动注入你的系统提示（仓级在你读仓内文件后生效）——系统提示未见对应块才自读：用户级 ~/.dsh/AGENTS.md、仓级＝批次所在仓根的 AGENTS.md（无则跳过）。',
 		'上述两份 AGENTS.md 的工程与注释规范是硬约束（注释只写 why、无日期/批次号叙事；测试删减须显式申报（改写优先））——违反＝返工。',
 		'上报格式＝只报现象＋证据＋影响面事实',
 		'裁决类上报必须等裁决再动工',
