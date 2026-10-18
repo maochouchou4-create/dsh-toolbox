@@ -479,21 +479,24 @@ test('composeMemory：键未变的那次直接复用上一次的结果（原地�
 	assert.ok(composeMemory({ memoryRoot: root, machine: 'home' }).includes('- [触发改动](trigger.md) — 触发词'))
 })
 
-test('composeMemory：缓存容量封顶 8 —— 第 9 个键把最老的挤掉；挤掉后那一路再问即重可报（命中期不重报 issue）', () => {
-	// 每条路由备一个「frontmatter 不合规的条目」：issue 是「这一趟真的重算过」的旁证——命中
-	// 那条路明确不复报 issue（口径见 assemble.js 的 why），故计数从 0 跳回 1 即证明重算了。
-	// 盯内容盯不出来：被挤掉再问，内容与盘上一致，两种实现给出同一个块
-	const 造一路 = (序号) => {
-		const { root, store } = fixture(`compose-cache-cap-${序号}`)
-		writeFileSync(join(store, 'bad.md'), '---\ntitle: 缺第二键\n---\n正文\n', 'utf8')
-		const box = { root, issues: [] }
-		box.跑一趟 = () => {
-			box.issues.length = 0
-			return composeMemory({ memoryRoot: root, machine: 'home', onIssue: (issue) => box.issues.push(issue) })
-		}
-		return box
+/**
+ * 缓存用例的「一路」夹具：一条 frontmatter 不合规的条目当「这趟真的满算过」的旁证——命中那条路
+ * 明确不复报 issue（口径见 assemble.js 的 why），故 issue 从 0 跳回 1 即证明重算了。盯内容盯不
+ * 出来：被挤掉再问，内容与盘上一致，两种实现给出同一个块。
+ */
+const 造缓存路 = (前缀, 序号) => {
+	const { root, store } = fixture(`${前缀}-${序号}`)
+	writeFileSync(join(store, 'bad.md'), '---\ntitle: 缺第二键\n---\n正文\n', 'utf8')
+	const box = { issues: [] }
+	box.跑一趟 = () => {
+		box.issues.length = 0
+		return composeMemory({ memoryRoot: root, machine: 'home', onIssue: (issue) => box.issues.push(issue) })
 	}
-	const 八路 = Array.from({ length: 8 }, (_, i) => 造一路(i))
+	return box
+}
+
+test('composeMemory：缓存容量封顶 8 —— 第 9 个键把最老的挤掉；挤掉后那一路再问即重可报（命中期不重报 issue）', () => {
+	const 八路 = Array.from({ length: 8 }, (_, i) => 造缓存路('compose-cache-cap', i))
 	八路.forEach((one, i) => {
 		assert.equal(one.跑一趟().includes('缺第二键'), false, `第 ${i} 路：不合规条目不进索引——一条红了看不出是哪一路`)
 		assert.ok(one.issues.includes('entry-frontmatter'), `第 ${i} 路：首趟是满算，不合规条目报 entry-frontmatter`)
@@ -502,11 +505,33 @@ test('composeMemory：缓存容量封顶 8 —— 第 9 个键把最老的挤掉
 		one.跑一趟()
 		assert.deepEqual(one.issues, [], '8 键都在容量内，再问即命中；命中期不复报 issue（这也正是「真命中了」的证据）')
 	}
-	const 第九路 = 造一路(8)
+	const 第九路 = 造缓存路('compose-cache-cap', 8)
 	第九路.跑一趟()
 	assert.ok(第九路.issues.includes('entry-frontmatter'), '新键那一趟是满算')
 	八路[0].跑一趟()
 	assert.ok(八路[0].issues.includes('entry-frontmatter'), '第 9 个键把最老的挤掉了：再问即重算并重新报 issue——否则拿到的是一份永不过期的块')
+})
+
+test('composeMemory：逐出按最近使用——满容量循环里热键不被挤出，出局的是最久没用过的那个', () => {
+	// 上面那条容量用例在「插入序与使用序同序」的走法下对 FIFO 与 LRU 都给同一个答案，分不开两者；
+	// 这条插一个「先进来再被重问」的热键，两种实现才分岔：FIFO 挤插入最早的第 0 路，
+	// LRU 挤最久未用的第 1 路
+	const 九路 = Array.from({ length: 9 }, (_, i) => 造缓存路('compose-cache-lru', i))
+	九路.slice(0, 8).forEach((one, i) => {
+		one.跑一趟()
+		assert.ok(one.issues.includes('entry-frontmatter'), `第 ${i} 路：首趟满算是这个用例的前提`)
+	})
+	// 重问第 0 路：容量内即命中（不复报 issue），同时把它刷成最近使用的那一个
+	九路[0].跑一趟()
+	assert.deepEqual(九路[0].issues, [], '第 0 路这一问是命中——热键的起点')
+
+	九路[8].跑一趟()
+	assert.ok(九路[8].issues.includes('entry-frontmatter'), '第 9 路是新键，这趟满算')
+
+	九路[0].跑一趟()
+	assert.deepEqual(九路[0].issues, [], '热键没被挤出：再问仍命中（FIFO 下这里会重算并报 issue）')
+	九路[1].跑一趟()
+	assert.ok(九路[1].issues.includes('entry-frontmatter'), '出局的是最久没用过的第 1 路：再问即重算')
 })
 
 test('composeMemory：机器身份传保留字 shared 或大写即抛（机器 id 不是段值，没有 shared 这一档）', () => {
