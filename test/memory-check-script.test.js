@@ -23,7 +23,8 @@ import { spawnSync } from 'node:child_process'
 import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, SHARED_SEGMENT, resolveScopeDir } from '../lib/memory/core.js'
 import { resolveRoot } from '../lib/memory-root.js'
 import { deriveIndexLine } from '../lib/memory/frontmatter.js'
-import { CHECKS } from '../scripts/checks.mjs'
+import { CHECKS, collectSite, readOptions, renderReport } from '../scripts/checks.mjs'
+import { WORKFLOW_LINE, withWorkflowLine } from '../lib/memory/assemble.js'
 import { SCRIPTS_DIR, tempRoot } from './helpers.js'
 
 const scriptPath = join(SCRIPTS_DIR, 'check-memory-index.mjs')
@@ -384,6 +385,26 @@ test('段里只有非 kebab 名的 .md：判红指向改名而不是指路接线
 	assert.ok(!stdout.includes('先接线（见 README）'), `线是接上的，再指路接线等于让人去修一条没坏的线：\n${stdout}`)
 	// 段表那一行把「条目文件」列少掉的那块钱说出去向，读者才对得上盘上的文件数
 	assert.ok(stdout.includes('1 个文件因非 kebab 名未进索引'), `段表须报出被命名判据挡掉的那些：\n${stdout}`)
+})
+
+test('真实注入块的拼装与注册层同源：块首是引导行、块体＝withWorkflowLine(记忆块)；空树行数按内容行计', () => {
+	// 自检报告里那个「真实注入块 N 字符」是整块预算的唯一实测值：拼装只量 composeMemory 时
+	// 引导行从预算里凭空消失，而报告只印一个数字、没有断言看得见（判绿照旧）。故对拍采集侧
+	// 用的是共享拼装函数，而不是各写一份模板串——改回只量块体，这里就红
+	const withEntry = join(base, 'block-assembly')
+	mkdirSync(withEntry, { recursive: true })
+	seedSegment(withEntry, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'shared-topic.md' })])
+	const site = collectSite(readOptions(['node', 'check-memory-index.mjs', withEntry, 'home']))
+	assert.ok(site.block.startsWith(`${WORKFLOW_LINE}\n`), `真实注入块须以引导行开头（实得 ${JSON.stringify(site.block.slice(0, 40))}…）`)
+	assert.equal(site.block, withWorkflowLine(site.memoryBlock), '离线自检的块体必须与注册层同址拼装：两处各手抄一份时改一行就有一处静默量错')
+
+	// 空树时块体＝引导行＋一个尾换行：直接 split 会把尾换行数成第二行，「只剩引导行」被报成两行
+	const empty = join(base, 'block-assembly-empty')
+	mkdirSync(empty, { recursive: true })
+	const emptySite = collectSite(readOptions(['node', 'check-memory-index.mjs', empty, 'home']))
+	assert.equal(emptySite.memoryBlock, '', '空根的记忆块是空串（本用例的前提）')
+	const blockLine = renderReport(emptySite).report.split('\n').find((one) => one.startsWith('真实注入块'))
+	assert.ok(blockLine.includes('字符／1 行'), `空树时真实注入块只有引导行＝1 行（实得：${blockLine}）`)
 })
 
 test('软链调用：照样出报告（薄壳没有「被直接运行才执行」那道守卫可关）', () => {

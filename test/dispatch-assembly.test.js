@@ -18,11 +18,12 @@ import { registerHooks } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { WORKFLOW_LINE } from '../lib/memory/assemble.js'
 import { transcribe } from '../lib/see-image/vision.js'
 import { objectShape, stringList } from '../lib/tool-schema.js'
 import { ASSEMBLER_CONTRACTS, PLAN_STAGE, mainBatchTypes, stageVocabulary } from '../lib/dispatch/core.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
-import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, TOOL_NAMES, tempRoot } from './helpers.js'
+import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, TOOL_NAMES, entry, memoryTree, tempRoot } from './helpers.js'
 
 const STUBBED = new Map([
 	['@deepseek-ai/dsh-tools', join(FIXTURES_DIR, 'host-dsh-tools-stub.mjs')],
@@ -70,8 +71,9 @@ const hostFsOf = () => {
 
 /**
  * 宿主上下文的替身：tools.register 收下定义（五个注册入口都要它），fs 走本仓 node 端口，
- * logger 与 systemPrompt 在此只为让 memory 的注册入口跑完——它注册期要挂一段注入块文本，
- * 那段文本本文件的用例都不执行，故给空实现即可。get 返回 undefined 是「按需服务取不到」的
+ * logger 与 systemPrompt 在此只为让 memory 的注册入口跑完——它注册期要挂一段注入块文本；
+ * 默认空实现（本文件大多数用例不执行那段文本），要验注入块的用例另建 ctx 再真调 text()
+ * （见「记忆注入块首行…」与「空树…」两条）。get 返回 undefined 是「按需服务取不到」的
  * 正常态（沙箱策略缺失时生产也走这条），不是替身偷懒。inject 是 cordis 的 scoped 注入
  * （see_image 注册期用它挂「关掉宿主自动配置页」的策略）：回调要 settings 服务在场才跑，
  * 替身不建服务容器，故只收下不调用。
@@ -222,6 +224,67 @@ test('装配层冒烟：六件工具注册得出来，且 execute 真被调过�
 		'复盘的返回值深拷贝后照样渲染（渲染输入在值自己身上）',
 	)
 	assert.equal(lines().length, beforeCount, '复盘这一趟不写台账：出建议，不落盘')
+})
+
+/**
+ * 工作流引导行的**测试侧逐字副本**：不引生产常量——常量引用在文案被改时两边一起变，断言恒真，
+ * 等于没有守卫（下面这两条用例防的正是「引导被静默改掉」）。
+ */
+const WORKFLOW_LINE_TEXT = '跑批工作流：方案→门一→施工→门二→提交→复盘——每步先调 dsh-toolbox 对应装配工具，台账每步 advance。'
+
+test('记忆注入块首行＝工作流引导行原文，其后接 composeMemory 的 [记忆索引] 头（注册层拼装此前零测试钉）', () => {
+	// 注册层把工作流行拼在 composeMemory 之前（lib/memory/index.js），这段拼装此前没有任何用例
+	// 执行过：文案漂移或块序换了，注入块照样有内容、composeMemory 的纯函数用例照样全绿——只有
+	// 真跑一次注册、真取一次 text 回调才看得见。首行断言用**逐字原文**而不是引常量：常量引用在
+	// 文案被改时两边一起变，这条恒真，等于没有守卫（本条防的就是「引导被静默改掉」）
+	const injected = []
+	const ctx = {
+		logger: { warn: () => {} },
+		systemPrompt: { context: (block) => injected.push(block) },
+		tools: { register: () => {} },
+	}
+	const memory = memoryTree(root, 'workflow-line', 'home')
+	writeFileSync(join(memory.store, 'a-topic.md'), entry('共享条目', '触发词／召回词'), 'utf8')
+	registerMemory(ctx, { memoryRoot: memory.root, machine: 'home' })
+	assert.equal(injected.length, 1, '注册期挂且只挂一段注入块')
+	assert.equal(injected[0].name, 'memory:index', '注入块的身份名：宿主按它对位，改名即换槽')
+	const lines = injected[0].text().split('\n')
+	assert.equal(
+		lines[0],
+		WORKFLOW_LINE_TEXT,
+		'首行逐字＝工作流引导行原文：引导被删改时注入块仍有内容，不在这里红就永远不红',
+	)
+	assert.ok(lines[1].startsWith('[记忆索引]'), `第二行起是 composeMemory 的块头（实得「${lines[1]}」）——顺序反了或换了分隔符都在这里红`)
+})
+
+test('工作流引导行的阶段序列＝lifecycle.json 现读（阶段增删/重排即红）', () => {
+	// 引导行是 lifecycle 的手写投影：阶段表加一行/删一行/重排 order 时，引导行照旧指着一份
+	// 不存在的流程，而注入块仍有内容、上面那条逐字断言照样绿（它钉的是文案本身）。这里按 order
+	// 现读串出阶段序列，只在引导行里找它——序列单源＝lifecycle.json，引导行只能跟着它走
+	const stages = [...loadDispatchData().lifecycle.stages]
+		.sort((left, right) => left.order - right.order)
+		.map((row) => row.id)
+	assert.ok(
+		WORKFLOW_LINE.includes(stages.join('→')),
+		`工作流引导行须按 order 串起 lifecycle 各阶段（期望含「${stages.join('→')}」，实得「${WORKFLOW_LINE}」）——阶段表改了这一行没跟上，注入块里的流程就是过期的`,
+	)
+})
+
+test('空树（无任何条目）时注入块仍带引导行：首行＝引导行原文、无 [记忆索引] 头（此前零覆盖）', () => {
+	// 空树时 composeMemory 返回 ''，注册层照样拼引导行——这条保证此前没有任何用例执行过：有
+	// 至少一条条目时「块非空」看起来永远成立，把拼装改成「空块就不拼」或让空串挨了滤空，症状
+	// 是首跑（记忆仓还没接线）时流程引导整段消失，而所有带条目的用例照样全绿
+	const injected = []
+	const ctx = {
+		logger: { warn: () => {} },
+		systemPrompt: { context: (block) => injected.push(block) },
+		tools: { register: () => {} },
+	}
+	const memory = memoryTree(root, 'empty-tree', 'home')
+	registerMemory(ctx, { memoryRoot: memory.root, machine: 'home' })
+	const text = injected[0].text()
+	assert.equal(text.split('\n')[0], WORKFLOW_LINE_TEXT, '空树时首行仍是引导行原文：它不随记忆根有没有条目消失')
+	assert.ok(!text.includes('[记忆索引]'), `空树时不得凭空长出一个索引头（实得：${JSON.stringify(text)}）`)
 })
 
 test('派发段随阶段内嵌 render：复核趟带 workflow 骨架、施工趟带独立 subagent 口径、方案趟无此段', async () => {
