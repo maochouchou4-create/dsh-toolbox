@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finishError, parseAttachmentId, resolveAttachmentObject, resolveAttachmentRoot, resolveTarget, sniffImageMediaType, transcribe } from '../lib/see-image/vision.js'
@@ -98,6 +98,49 @@ test('resolveAttachmentObject：零命中／歧义／缺桶均显式报错', (t)
 	assert.throws(() => resolveAttachmentObject(root, '053eb17e'), /命中 2 个对象.*加长前缀/)
 
 	assert.throws(() => resolveAttachmentObject(root, 'ffffffff'), /没有桶/, '桶不存在时报可诊断路径')
+})
+
+test('resolveAttachmentObject：桶扫描被拒（EACCES／EPERM）指去查权限，不再指去核对桶与存区根', (t) => {
+	const root = tempRoot(t, 'objects')
+	const bucket = join(root, HEX64.slice(0, 2))
+	// 造一个真读不了的桶。这条分支按 errno 分岔，只有真错误才验得到，而临时目录里只有 POSIX 造得出来：
+	// Windows 的 chmod 只拨只读属性、目录照样列得出来，改 ACL 又没有 Node API，故那侧把桶挂成指向
+	// 系统上对普通用户恒拒的目录的联接（junction，建它不需要提权）——挂出来的桶是真桶，只是打不开。
+	if (process.platform === 'win32') symlinkSync('C:\\System Volume Information', bucket, 'junction')
+	else {
+		mkdirSync(bucket)
+		chmodSync(bucket, 0o000)
+	}
+	try {
+		// 试探一次：读得动＝当前身份造不出拒态（root、提权 shell），此时硬断言只会红在夹具上
+		let readable = true
+		try {
+			readdirSync(bucket)
+		} catch {
+			readable = false
+		}
+		if (readable) {
+			t.skip('当前身份下造不出权限拒态')
+			return
+		}
+		assert.throws(() => resolveAttachmentObject(root, '053eb17e'), (thrown) => {
+			assert.match(thrown.message, /先查权限/, '权限被拒时报权限那句——按「桶/根路径不对」去找只会白跑（那个目录连列都列不出来）')
+			assert.doesNotMatch(thrown.message, /没有桶/, '桶在、只是读不了：报成缺桶会把人引向核路径，正是这句话要挡的反面')
+			return true
+		})
+	} finally {
+		// 清过权限位的目录递归清理 readdir 进不去，故收尾前把权限位拨回来，删除交给 removeTempRoot
+		if (process.platform !== 'win32') chmodSync(bucket, 0o700)
+	}
+})
+
+test('resolveAttachmentObject：桶不存在（ENOENT）报的是路径那句，不含「权限」', (t) => {
+	const root = tempRoot(t, 'objects')
+	assert.throws(() => resolveAttachmentObject(root, 'ffffffff'), (thrown) => {
+		assert.match(thrown.message, /检查 DSH home/, '路径错仍指回 DSH home 那条线')
+		assert.doesNotMatch(thrown.message, /权限/, '路径问题不许被引去查权限——那两句各指一个方向')
+		return true
+	})
 })
 
 /** 存区根取用函数：只有占位符分支会问它（求根失败不许拖垮磁盘路径入口）。 */
