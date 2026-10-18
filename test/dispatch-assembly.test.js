@@ -387,9 +387,10 @@ test('宿主 schema 编译的静态自查：全仓九件工具的每个 object �
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const lessonsCtx = ctxOf()
 	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	// 手记工具注册期不碰 config、也不求根（求根在 execute）：这条用例只跑注册面的 schema 自查
+	// 手记工具注册期不碰磁盘（求根在 execute）：这条用例只跑注册面的 schema 自查。记忆根与机器名
+	// 照真实装配形状传，免得「注册期真读了 config」这层脱钩被替身吃掉
 	const usageNoteCtx = ctxOf()
-	registerUsageNote(usageNoteCtx.ctx)
+	registerUsageNote(usageNoteCtx.ctx, { memoryRoot: join(root, 'memory-registration'), machine: 'home' })
 	const definitions = [memoryCtx, seeImageCtx, ...Object.values(asmCtxs), batchCtx, lessonsCtx, usageNoteCtx].flatMap((one) => one.registered)
 	assert.deepEqual(
 		definitions.map((definition) => definition.name).sort(),

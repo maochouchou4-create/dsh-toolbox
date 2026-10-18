@@ -190,7 +190,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
-		// 使用日志两侧：recorder 经 ctx.get('profileContext') 求根、note 经 ctx.tools 注册自身
+		// 使用日志两侧：recorder 经 ctx.get('profileContext') 取 profile 归因名、note 经 ctx.tools 注册自身
 		...consumedServices(readLib('usage-log/recorder.js')),
 		...consumedServices(readLib('usage-log/note.js')),
 		...consumedServices(readLib('working-dir.js')),
@@ -215,13 +215,35 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 三件工具写进一行就是「一件起不来，另两件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
 	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配四件与台账、复盘、记忆、识图、手记各占一行，彼此失败原因互不相干——四件并一行＝逐工具隔离没了）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
-	// 使用日志白名单的单源哨兵：apply 必须从 FEATURES 表现读 label 列。手抄回一份数组（哪怕当时
-	// 内容正确）就是第二份真相源——加一件工具时它静默漏记，而症状是「日志里少一件工具的调用」，
-	// 与「白名单没生效」长得一样却是另一处改漏
+	// 使用日志白名单与落点参数的单源哨兵：apply 必须从 FEATURES 表现读 label 列。手抄回一份数组（哪怕
+	// 当时内容正确）就是第二份真相源——加一件工具时它静默漏记，而症状是「日志里少一件工具的调用」，
+	// 与「白名单没生效」长得一样却是另一处改漏。
 	assert.ok(glue.includes('subscribeUsageLog(ctx, FEATURES.map'), '使用日志的白名单须从 FEATURES 的 label 列现读，不得手抄工具名数组')
+	// 落点两键按**去注释后的整段逐字**核：只看前缀的话，把两键注释掉、或给 machine 加 `?? 'unbound'`
+	// 兜底、或换序都照样绿，而这三件事恰好都是本设计明令禁止的（注释掉＝整场不记、兜底＝造第三种
+	// 机器段值）。整段逐字匹配让任一处变形都翻红
+	const glueCode = stripComments(glue)
+	assert.ok(
+		glueCode.includes('subscribeUsageLog(ctx, FEATURES.map(([label]) => label), { memoryRoot: config.memoryRoot, machine: config.machine })'),
+		'胶水调用 subscribeUsageLog 时须原样传 { memoryRoot: config.memoryRoot, machine: config.machine }（注释掉的、加兜底的、换序的都不认）',
+	)
 	const glueImports = [...parseLocalImports(glue).values()].flat()
 	for (const [label, register] of features) {
 		assert.ok(glueImports.includes(register), `FEATURES 的 ${label} 指向 ${register}，而胶水没 import 它——apply 时撞 undefined，try/catch 接不住`)
+	}
+})
+
+test('store 数据域前缀单源：data 段名只许出现在 memory-root.js 的 storeDataDir 里', () => {
+	// 「台账与日志同父目录」是复盘一处读齐两族的前提，而它成立只靠一件事：两个消费方拼同一段前缀。
+	// 各拼一次的话，某天有人把日志挪到 data/usage 或 data/logs，台账却还在 data/，症状是复盘
+	// 读到的日志永远缺一台机器——路径没报错、文件也在，只是不在一处。这条哨兵把「各拼一次」判红
+	const single = 'memory-root.js'
+	assert.ok(stripComments(readLib(single)).includes('join(resolveRoot(memoryRoot).store, \'data\')'), `${single} 的 storeDataDir 须是 data 段名的唯一出处`)
+	for (const file of ['dispatch/batch.js', 'usage-log/recorder.js', 'usage-log/note.js']) {
+		assert.ok(
+			!stripComments(readLib(file)).includes('\'data\''),
+			`${file} 自拼了 store 下的 data 段——那一段前缀的单一出处是 ${single} 的 storeDataDir`,
+		)
 	}
 })
 
