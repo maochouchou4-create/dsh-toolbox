@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { LIB_DIR } from './helpers.js'
+import { LIB_DIR, TOOL_NAMES } from './helpers.js'
 
 const libDir = LIB_DIR
 const loadModule = (file) => import(pathToFileURL(join(libDir, file)).href)
@@ -78,6 +78,9 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 			'registerDispatchPlan', 'registerDispatchReview', 'registerDispatchBuild', 'registerDispatchVerify',
 			'registerDispatchBatch', 'registerDispatchLessons', 'configShape',
 		]],
+		// 使用日志的手记工具：注册面在 note.js（要 defineTool，故这里只核它对 recorder.js 的四个
+		// 导入名在不在导出面——记事件、求当日文件、求日志根、求根全都经那一处）
+		['usage-log/note.js', ['registerUsageNote']],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -187,6 +190,9 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
+		// 使用日志两侧：recorder 经 ctx.get('profileContext') 求根、note 经 ctx.tools 注册自身
+		...consumedServices(readLib('usage-log/recorder.js')),
+		...consumedServices(readLib('usage-log/note.js')),
 		...consumedServices(readLib('working-dir.js')),
 	])
 	for (const service of used) {
@@ -202,13 +208,17 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 「没问题」，而这正是本用例的立身之本（少声明＝DOA）
 	assert.ok(used.has('sandboxPolicy'), "memory/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
 
-	for (const file of ['memory/index.js', 'see-image/index.js', 'dispatch/index.js']) {
+	for (const file of ['memory/index.js', 'see-image/index.js', 'dispatch/index.js', 'usage-log/note.js']) {
 		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
 	}
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 三件工具写进一行就是「一件起不来，另两件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), ['dispatch_plan', 'dispatch_review', 'dispatch_build', 'dispatch_verify', 'dispatch_batch', 'dispatch_lessons', 'memory', 'see_image'], 'FEATURES 的标签集＝本包登记的工具面：装配四件、台账、复盘各占一行（彼此失败原因互不相干）——四件并一行＝逐工具隔离没了')
+	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配四件与台账、复盘、记忆、识图、手记各占一行，彼此失败原因互不相干——四件并一行＝逐工具隔离没了）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	// 使用日志白名单的单源哨兵：apply 必须从 FEATURES 表现读 label 列。手抄回一份数组（哪怕当时
+	// 内容正确）就是第二份真相源——加一件工具时它静默漏记，而症状是「日志里少一件工具的调用」，
+	// 与「白名单没生效」长得一样却是另一处改漏
+	assert.ok(glue.includes('subscribeUsageLog(ctx, FEATURES.map'), '使用日志的白名单须从 FEATURES 的 label 列现读，不得手抄工具名数组')
 	const glueImports = [...parseLocalImports(glue).values()].flat()
 	for (const [label, register] of features) {
 		assert.ok(glueImports.includes(register), `FEATURES 的 ${label} 指向 ${register}，而胶水没 import 它——apply 时撞 undefined，try/catch 接不住`)
@@ -300,6 +310,10 @@ const NODE_FS_DIRECT = new Map([
 	['see-image/index.js', false],
 	// 识图路由内缝：与 vision.js 同款零宿主依赖的纯模块，值判据走 value.js
 	['see-image/route.js', false],
+	// 使用日志：recorder 是这条旁路唯一的写盘处（mkdir＋appendFileSync 同步追加），
+	// note 只把事件交给它——两处各写一遍建目录与追加就是同一件事有两个源头
+	['usage-log/recorder.js', true],
+	['usage-log/note.js', false],
 	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
 	['client.js', false],
 	['dispatch/core.js', false],
@@ -324,11 +338,11 @@ const NODE_FS_DIRECT = new Map([
 ])
 
 /**
- * 定性表必须覆盖到的模块域：lib/ 根与三个子目录。每个域下的 .js 都要在表上定性过——
+ * 定性表必须覆盖到的模块域：lib/ 根与四个子目录。每个域下的 .js 都要在表上定性过——
  * 覆盖只到一部分时，「新增文件漏定性」就只在那部分成立，文档承诺比机器口径宽，
  * 读到的人会以为全仓都有牙。
  */
-const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch']
+const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch', 'usage-log']
 
 /**
  * node:fs 的同步调用面：全量符号集（fs 同步 API，含 openSync/readSync/closeSync 这类

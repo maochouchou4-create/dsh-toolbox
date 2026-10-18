@@ -43,6 +43,28 @@ export const DISPATCH_DATA_DIR = join(DISPATCH_DIR, 'data')
 export const SCRIPTS_DIR = join(ROOT_DIR, 'scripts')
 export const FIXTURES_DIR = join(ROOT_DIR, 'test', 'fixtures')
 
+/* ---------- 本包登记的工具名（装配面与使用日志白名单共用的那份名单） ---------- */
+
+/**
+ * 本包登记的工具名，逐字同 lib/index.js 的 FEATURES 表 label 列（顺序也同）。
+ *
+ * 两个消费方都读它、不许各自手抄：使用日志的白名单＝FEATURES 的 label 列现读（label≡工具名是
+ * 白名单生效的前提），接线与装配两条自查按注册结果核名单。两处各写一份时，加一件工具只会红一
+ * 处，另一处静默放行——症状是日志里少一件工具的调用，而 schema 自查照样全绿。名单本身仍是
+ * FEATURES 表的投影（imports.test 对着源码钉 label 列），这里只是让两处断言指向同一份投影。
+ */
+export const TOOL_NAMES = [
+	'dispatch_plan',
+	'dispatch_review',
+	'dispatch_build',
+	'dispatch_verify',
+	'dispatch_batch',
+	'dispatch_lessons',
+	'memory',
+	'see_image',
+	'usage_note',
+]
+
 /**
  * 现读面的五份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
  * 表述，数据面增一份文件时它就少拷一份，而症状不是「少了一个文件」，是某条用例在无关的原因上红

@@ -22,7 +22,7 @@ import { transcribe } from '../lib/see-image/vision.js'
 import { objectShape, stringList } from '../lib/tool-schema.js'
 import { ASSEMBLER_CONTRACTS, PLAN_STAGE, mainBatchTypes, stageVocabulary } from '../lib/dispatch/core.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
-import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
+import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, TOOL_NAMES, tempRoot } from './helpers.js'
 
 const STUBBED = new Map([
 	['@deepseek-ai/dsh-tools', join(FIXTURES_DIR, 'host-dsh-tools-stub.mjs')],
@@ -44,6 +44,7 @@ const {
 } = await import('../lib/dispatch/index.js')
 const { registerMemory } = await import('../lib/memory/index.js')
 const { registerSeeImage } = await import('../lib/see-image/index.js')
+const { registerUsageNote } = await import('../lib/usage-log/note.js')
 
 let root
 let tools
@@ -302,12 +303,12 @@ test('复盘那一趟拿到的是只读门面：宿主 fs 的 writeText 就算�
 	)
 })
 
-test('宿主 schema 编译的静态自查：全仓八件工具的每个 object 节点都显式声明 additionalProperties，工厂产物同样过这道', () => {
+test('宿主 schema 编译的静态自查：全仓九件工具的每个 object 节点都显式声明 additionalProperties，工厂产物同样过这道', () => {
 	// 这一条是替身够不到的那层：夹具的 defineTool 原样交回定义，把宿主的 schema 编译替身吃掉了，
 	// 而真宿主在 object 节点没显式声明 additionalProperties 时整件工具注册失败（「unsupported JSON
 	// schema」）——不在这里静态钉住，就只能等下次宿主启动才发现那一件整件缺席（缺席的是整件工具，
 	// 不是某个字段被拒，从症状上看不出是 schema 的问题）。
-	// 覆盖面＝本包登记的全部工具（胶水 FEATURES 那八件）：漏注册一件，下面那次遍历对它空转而本
+	// 覆盖面＝本包登记的全部工具（胶水 FEATURES 那九件）：漏注册一件，下面那次遍历对它空转而本
 	// 条照样全绿，故工具名单照写不抄、并且断言它与胶水的 FEATURES 一致（imports.test.js 那条核 FEATURES）
 	const memoryCtx = ctxOf()
 	registerMemory(memoryCtx.ctx, { memoryRoot: join(root, 'memory-registration') })
@@ -323,11 +324,14 @@ test('宿主 schema 编译的静态自查：全仓八件工具的每个 object �
 	registerDispatchBatch(batchCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
 	const lessonsCtx = ctxOf()
 	registerDispatchLessons(lessonsCtx.ctx, { dispatchDataDir: '', dispatchLedgerPath: ledger })
-	const definitions = [memoryCtx, seeImageCtx, ...Object.values(asmCtxs), batchCtx, lessonsCtx].flatMap((one) => one.registered)
+	// 手记工具注册期不碰 config、也不求根（求根在 execute）：这条用例只跑注册面的 schema 自查
+	const usageNoteCtx = ctxOf()
+	registerUsageNote(usageNoteCtx.ctx)
+	const definitions = [memoryCtx, seeImageCtx, ...Object.values(asmCtxs), batchCtx, lessonsCtx, usageNoteCtx].flatMap((one) => one.registered)
 	assert.deepEqual(
 		definitions.map((definition) => definition.name).sort(),
-		['dispatch_batch', 'dispatch_build', 'dispatch_lessons', 'dispatch_plan', 'dispatch_review', 'dispatch_verify', 'memory', 'see_image'],
-		'八件都在扫描面里：本包多注册一件工具而这张名单没跟上，下面的遍历对它空转而本条照样全绿',
+		[...TOOL_NAMES].sort(),
+		'九件都在扫描面里：本包多注册一件工具而这张名单没跟上，下面的遍历对它空转而本条照样全绿。名单与使用日志白名单（FEATURES 的 label 列）共用 test/helpers.js 的 TOOL_NAMES——label≡工具名是白名单全链的前提，两处同读一份投影',
 	)
 	const bare = []
 	const walk = (node, where) => {
@@ -343,7 +347,7 @@ test('宿主 schema 编译的静态自查：全仓八件工具的每个 object �
 		walk(definition.parameters, `${definition.name}.parameters`)
 		walk(definition.output.schema, `${definition.name}.output.schema`)
 	}
-	// 工厂产物单独过一次：那两件是三族输出 schema 汇进去的地方，它哪天坏了，上面八件会一起红而
+	// 工厂产物单独过一次：那两件是三族输出 schema 汇进去的地方，它哪天坏了，上面九件会一起红而
 	// 报错路径指向的是消费方（看不出是哪一档形状先坏的）。开口那一档也过——它就是当前 BATCH
 	// 输出里事件行/摘要行在用的形状
 	walk(objectShape({ form: { type: 'string' } }), 'objectShape(缺省)')
