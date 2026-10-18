@@ -64,7 +64,11 @@ Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落�
 段数、段名与切在哪一重；一段都没截断时那行不出现。
 
 索引不是数据：条目文件是唯一事实源，注入时按文件名排序扫目录、用
-`frontmatter.title`＋`description` 重建每一行。组装入口 `composeMemory` 有一层**进程内缓存**，
+`frontmatter.title`＋`description` 重建每一行。哪些 `.md` 算条目只有一份判据——**小写 kebab
+名且非保留名**（`naming.js` 单源，读侧枚举与写侧入参校验都问它）；非 kebab 名的文件（存量里的
+`Foo.md`）因此不进索引也不进注入，`lint` 另给一条信息性提醒把它们说出来，离线自检的段表
+同样逐条点名（收紧判据的代价面——「记忆里那条不见了」得有可发现路径）。组装入口
+`composeMemory` 有一层**进程内缓存**，
 键＝store 根路径＋本机机器名＋store 顶层的目录 mtime 与文件名列表＋`machines/` 下的子目录名
 清单与各子目录自己的 mtime 与文件名列表＋`WRITING.md` 的 size/mtime，任一维度
 变即换键全量重算，故写侧工具的增删改名立刻可见。缓存**不含条目内容指纹**：不经写侧工具的原地
@@ -116,8 +120,9 @@ memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏
 
 走**宿主自己的 llm 通道**（不自带 HTTP、不存任何 key）：默认
 `zai-coding-cn/glm-5.3-flash`（免费档；zai 适配层在该模型上自动关思考，见
-pi-ai openai-completions 的 zai thinking 映射）。换路由＝profile 层覆盖配置，
-例（真实存在的路由 id，本机 profile 声明过）：
+pi-ai openai-completions 的 zai thinking 映射）。换路由有两条路，改的是同一份值：**插件页 →
+dsh-toolbox → 「识图路由」卡片**（浏览器半，按宿主模型目录列出候选，选中保存即生效、不必重启）
+为主；**profile 层覆盖配置**仍在，是跳过 UI 的口子。例（真实存在的路由 id，本机 profile 声明过）：
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml
@@ -245,7 +250,7 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 **why 随消费点走**：判断理由跟着会读到它的那一面走——模型读得到的进活字段（形态的 `notes`
 点明预期例外，如上面那两个孤儿形态；`formNotes` 是行×形态的批型限定句），只对代码自身成立的
 机制理由进代码注释（注释只写 why），需要人读的整体口径进本节。同一句理由在三类去处各摆一份
-就成了三份拷贝，改一处忘另两处必漂。写了没人读的字段一律不摆——摆着只会让人以为它在起作用。
+就成了三份拷贝，改一处必须同改其余处，漏一处必漂。写了没人读的字段一律不摆——摆着只会让人以为它在起作用。
 「恒缺席」那一层不归文档管：可缺省只保证写回去也装得上，写回盘上要由 dispatch-data 的用例对着
 真盘面反钉（红的时候自问「它有消费者吗」）。追加面见下节。
 
@@ -378,7 +383,8 @@ lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码）�
 lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一＋退役别名表，零 node:fs、零依赖）。落 lib 根因为它是「工具入参形状」的守门人而不是 memory 的私产，批3 的四件 dispatch 工具复用同一份机械
 lib/memory-root.js       记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与 store」，谁要谁向下指
 lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS）+ core/frontmatter/patterns/naming 纯模块 + write/delete/lint/assemble/segments。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
-lib/see-image/          识图工具：index.js 装配（零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
+lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
+lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场
 lib/dispatch/           派发装配四件、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（装配四件与台账两件的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘）
