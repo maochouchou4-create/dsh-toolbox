@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "0.14.0",
+	"version": "0.15.0",
 	"description": "DSH 个人工具箱：memory（单仓记忆读注入＋写侧工具：store 顶层共享、machines/<机器名>/ 本机私有）＋see_image（图片交视觉模型转述）＋dispatch_plan/review/build/verify 派发装配四件（方案任务书＋按批型配对复核形态＋现成 brief；装配四件传批次名即回填拍板清单）＋dispatch_batch（批次台账：四动作记账、状态从事件现推）＋dispatch_lessons（复盘辅助：读上次复盘之后的增量批、按攒批点位出配对规则修订建议草稿，只出建议不落盘）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",

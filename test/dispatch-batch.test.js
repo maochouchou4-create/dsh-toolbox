@@ -76,10 +76,10 @@ before((t) => {
 
 test('台账路径：显式配置优先，空串按 memoryRoot 推导到 store 下的 data/ 下（两机共享的那一处）', () => {
 	assert.equal(resolveLedgerPath({ configuredPath: '/tmp/自定义台账.jsonl', memoryRoot: '/nowhere' }), '/tmp/自定义台账.jsonl')
-	assert.equal(resolveLedgerPath({ configuredPath: '', memoryRoot: '/nowhere' }), join(resolve('/nowhere'), 'profile', 'data', 'dispatch-ledger.jsonl'))
+	assert.equal(resolveLedgerPath({ configuredPath: '', memoryRoot: '/nowhere' }), join(resolve('/nowhere'), 'memory', 'data', 'dispatch-ledger.jsonl'))
 	// 家目录取 expandHome（与实现同一份 ~ 展开源）：Windows 上是 USERPROFILE、类 Unix 上是 HOME，
 	// 写死其中一个的话这里只在写它的那台机器上成立
-	assert.equal(resolveLedgerPath({ memoryRoot: '~/mem' }), join(resolve(expandHome('~/mem')), 'profile', 'data', 'dispatch-ledger.jsonl'), '~ 展开与绝对化走 memory 那份归一，不是自己拼串')
+	assert.equal(resolveLedgerPath({ memoryRoot: '~/mem' }), join(resolve(expandHome('~/mem')), 'memory', 'data', 'dispatch-ledger.jsonl'), '~ 展开与绝对化走 memory 那份归一，不是自己拼串')
 })
 
 test('rules 指纹＝pairing＋forms 的原始字节按固定顺序拼一次 sha256 取前 8 位（两机同字节同值）', () => {

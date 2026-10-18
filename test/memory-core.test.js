@@ -29,7 +29,7 @@ before((t) => {
 const fixture = (name, machine = 'home') => memoryTree(base, name, machine)
 
 test('resolveRoot：缺省兜底与绝对化一步做完，对已绝对化的入参幂等（注册期归一过再传进来不变形）', () => {
-	assert.deepEqual(resolveRoot(DEFAULT_MEMORY_ROOT), { root: join(homedir(), '.dsh', 'memory'), store: join(homedir(), '.dsh', 'memory', 'profile') }, '默认根的 ~ 要展开')
+	assert.deepEqual(resolveRoot(DEFAULT_MEMORY_ROOT), { root: join(homedir(), '.dsh', 'memory'), store: join(homedir(), '.dsh', 'memory', 'memory') }, '默认根的 ~ 要展开')
 	// 兜底收在这一步：空值与非字符串一律按没给算，调用方不再各自拼回退形态
 	for (const blank of [undefined, null, '', '   ', 42]) {
 		assert.deepEqual(resolveRoot(blank), resolveRoot(DEFAULT_MEMORY_ROOT), `${JSON.stringify(blank)} 应当作没给`)
@@ -277,15 +277,15 @@ test('composeMemory：memoryRoot 支持 ~ 展开（真造目录，不靠「不�
 	const absolute = join(homedir(), `.dsh-memory-tilde-test-${process.pid}`)
 	const asTilde = `~/${basename(absolute)}`
 	try {
-		mkdirSync(join(absolute, 'profile'), { recursive: true })
-		writeFileSync(join(absolute, 'profile', 'topic.md'), entry('展开条目', '触发词'), 'utf8')
+		mkdirSync(join(absolute, 'memory'), { recursive: true })
+		writeFileSync(join(absolute, 'memory', 'topic.md'), entry('展开条目', '触发词'), 'utf8')
 		// 归一的产物路径同源：~ 展开后拼出来的 store 就在那棵真实的树下
 		assert.deepEqual(resolveRoot(asTilde), {
 			root: absolute,
-			store: join(absolute, 'profile'),
+			store: join(absolute, 'memory'),
 		}, '~ 要展开到 homedir，且产物路径同源')
 		const text = composeMemory({ memoryRoot: asTilde })
-		assert.ok(text.includes(`基目录：${join(absolute, 'profile')}`), '注入块里的段目录须是展开后的绝对路径')
+		assert.ok(text.includes(`基目录：${join(absolute, 'memory')}`), '注入块里的段目录须是展开后的绝对路径')
 		assert.ok(text.includes('- [展开条目](topic.md) — 触发词'), '展开后的根真的读出了条目（不展开就落在 cwd 下，读不到）')
 	} finally {
 		rmSync(absolute, { recursive: true, force: true })

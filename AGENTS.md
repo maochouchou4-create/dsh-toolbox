@@ -15,8 +15,8 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 契约散在三处，**改一处必须同改另两处**：工具契约面 `lib/memory/index.js`
 （`parameters`＋`output.schema`＋`content` 的描述词）、判定与派生
 `lib/memory/frontmatter.js`、跨仓的书写规范
-`/home/nvse/code/repos/agent-data/profile-memory/WRITING.md`（本机软链到
-`~/.dsh/memory/profile/WRITING.md`；memory 工具的 description 与 MANIFEST 指针都指向它）。
+`/home/nvse/code/repos/agent-data/memory/WRITING.md`（memory 工具的 description 与
+MANIFEST 指针都指向它）。
 schema 与实现不同步＝子代理照 schema 传参撞上「参数不存在」；规范与实现不同步
 ＝条目按旧格式写进来、写侧当噪声拒收。
 

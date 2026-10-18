@@ -63,17 +63,17 @@ test('deleteEntry：裸名在两段都有＝报错要全形式；全形式只删
 	)
 	const scoped = deleteEntry({ port, memoryRoot: root, machine: 'home', file: 'machines/home/dup.md' })
 	assert.equal(scoped.scope, 'home')
-	assert.equal(existsSync(join(root, 'profile', 'machines', 'home', 'dup.md')), false)
-	assert.equal(existsSync(join(root, 'profile', 'dup.md')), true, '全形式只动指明的段，另一段的那条照旧在场')
+	assert.equal(existsSync(join(root, 'memory', 'machines', 'home', 'dup.md')), false)
+	assert.equal(existsSync(join(root, 'memory', 'dup.md')), true, '全形式只动指明的段，另一段的那条照旧在场')
 	// 未配置机器身份时本机段不进候选：裸名只找共享段（跨机帮删要写全形式）
 	const bare = deleteEntry({ port, memoryRoot: root, file: 'dup.md' })
 	assert.equal(bare.scope, 'shared')
-	assert.equal(existsSync(join(root, 'profile', 'machines', 'home', 'dup.md')), false, '删共享段不牵连本机段')
+	assert.equal(existsSync(join(root, 'memory', 'machines', 'home', 'dup.md')), false, '删共享段不牵连本机段')
 })
 
 test('deleteEntry：条目名被同名目录占用时按宿主词表拒删，与 write 路径同一 name＋code', async () => {
 	const root = join(base, 'delete-not-regular')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(join(dir, 'topic.md'), { recursive: true })
 	const 删除错误 = await 捕获(() => deleteEntry({ port, memoryRoot: root, file: 'topic.md' }))
 	assert.equal(删除错误?.code, 'FS_NOT_REGULAR_FILE', '拒删须报宿主那个码，不得放裸 node 的 EISDIR 出去')
@@ -90,11 +90,11 @@ test('deleteEntry：引用扫描逐文件降级（病态文件只废自己那份
 	await upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'gone.md', content: entry('被删条目', '触发词') })
 	// 病态件放在先扫的共享段、引用件放在后扫的本机段：段枚举顺序由 listSegmentDirs 决定
 	// （共享段恒在首位，机器段按名排序），与 readdir 的返回序无关，所以「abort 后余下段全停」必现
-	mkdirSync(join(root, 'profile', 'x.md'), { recursive: true })
+	mkdirSync(join(root, 'memory', 'x.md'), { recursive: true })
 	await upsertEntry({ port, memoryRoot: root, machine: 'home', file: 'stays.md', content: entry('留下条目', '触发词', '引用 [[gone]] 一处') })
 	const r = deleteEntry({ port, memoryRoot: root, file: 'gone.md' })
 	assert.equal(existsSync(join(r.dir, 'gone.md')), false, '主操作照常成功，降级只作用于附属报告')
-	assert.ok(r.scanError.includes(join('profile', 'x.md')), `降级文件名要进 scanError，实际 ${r.scanError}`)
+	assert.ok(r.scanError.includes(join('memory', 'x.md')), `降级文件名要进 scanError，实际 ${r.scanError}`)
 	assert.equal(r.references.length, 1, '病态文件之后的段仍须扫完')
 	assert.ok(r.references[0].includes(join('stays.md:6')))
 })
@@ -105,7 +105,7 @@ test('deleteEntry：段目录清点抛错时主操作照常成功、整份引用
 	// machines 放文件而不是目录：段目录清点（existsSync 判在场、readdirSync 列机器段）在这里
 	// 抛 ENOTDIR——确定性触发。这是与「逐文件降级」并列的另一条出口：它一失败就整份报告拿不到，
 	// 而半份报告比「没扫到」更难发现，故不许拿它充数，得整份降级说清
-	writeFileSync(join(root, 'profile', 'machines'), '不是目录\n', 'utf8')
+	writeFileSync(join(root, 'memory', 'machines'), '不是目录\n', 'utf8')
 	const r = deleteEntry({ port, memoryRoot: root, file: 'gone.md' })
 	assert.equal(existsSync(join(r.dir, 'gone.md')), false, '主操作照常成功，降级只作用于附属报告')
 	assert.deepEqual(r.references, [], '段清点失败＝整份报告拿不到，不得拿半份充数')

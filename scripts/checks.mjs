@@ -281,7 +281,7 @@ export const CHECKS = [
 			// 首跑不可区分；而离线自检跑在迁移之后，语境明确，缺席就是迁移没做）。
 			// 名字不合规那一格由上面的 bad-machine 认领：那时「目录缺席」是同义的第二种说法
 			if (site.machineGiven && site.machineValid && !site.machineDirExists) {
-				issues.push(`配了机器名 ${site.machine} 却没有私有目录 ${site.machineDir}——先做条目迁移（见 agent-data-sync.md 对机迁移节）`)
+				issues.push(`配了机器名 ${site.machine} 却没有私有目录 ${site.machineDir}——先做条目迁移（见 agent-data-sync.md 记忆仓直连节）`)
 			}
 			// 未给机器 id 而 machines/ 下有条目：本次装配只装共享段，本机段整段缺失，
 			// 照印「全部达标」就是空跑假绿

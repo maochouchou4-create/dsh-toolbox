@@ -147,15 +147,15 @@ test('upsertEntry：scope 缺省＝config.machine，未配机器＝shared（本�
 	const root = join(base, 'write-scope-default')
 	const 共享 = await upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'shared-topic.md', content: entry('共享条目', '触发词') })
 	assert.equal(共享.scope, 'shared')
-	assert.equal(共享.dir, join(root, 'profile'), '共享段＝store 顶层（仓顶层，两机共享）')
+	assert.equal(共享.dir, join(root, 'memory'), '共享段＝store 顶层（仓顶层，两机共享）')
 	// 配了机器：缺省落本机段——「不说落哪段＝落我这台」
 	const 本机 = await upsertEntry({ port, memoryRoot: root, machine: 'home', file: 'local-topic.md', content: entry('本机条目', '触发词') })
 	assert.equal(本机.scope, 'home')
-	assert.equal(本机.dir, join(root, 'profile', 'machines', 'home'))
+	assert.equal(本机.dir, join(root, 'memory', 'machines', 'home'))
 	// 没配机器：缺省落共享段——工具永远可用（「本机身份没配」是配置态，不是拒服务的理由）
 	const 缺省 = await upsertEntry({ port, memoryRoot: root, file: 'fallback-topic.md', content: entry('缺省条目', '触发词') })
 	assert.equal(缺省.scope, 'shared')
-	assert.ok(existsSync(join(root, 'profile', 'fallback-topic.md')))
+	assert.ok(existsSync(join(root, 'memory', 'fallback-topic.md')))
 })
 
 test('upsertEntry：显式 scope 与全形式等价，且全形式可不配机器（跨机帮写）', async () => {
@@ -165,8 +165,8 @@ test('upsertEntry：显式 scope 与全形式等价，且全形式可不配机�
 	assert.equal(byScope.dir, byForm.dir, '两种写法落同一段目录——同一件事不许有两条寻址路数给出不同答案')
 	assert.equal(byForm.scope, 'office')
 	assert.equal(byForm.file_path, 'peer-two.md', '结果里的 file_path 报裸名（是哪一段由 scope 报）')
-	assert.equal(byForm.dir, join(root, 'profile', 'machines', 'office'))
-	assert.equal(existsSync(join(root, 'profile', 'machines', 'office', 'peer-two.md')), true, '帮对机写：本机没配 machine 也照样落对机段（对机 pull 后生效）')
+	assert.equal(byForm.dir, join(root, 'memory', 'machines', 'office'))
+	assert.equal(existsSync(join(root, 'memory', 'machines', 'office', 'peer-two.md')), true, '帮对机写：本机没配 machine 也照样落对机段（对机 pull 后生效）')
 })
 
 test('upsertEntry：日期戳与派生行超长进 warnings（提示不拦截）', async () => {
@@ -190,20 +190,20 @@ test('upsertEntry：frontmatter 契约不合规一律抛错且不落盘', async 
 	await assert.rejects(() => upsertEntry({ ...args, content: entry('[带括号]', '触发词') }), /方括号/)
 	await assert.rejects(() => upsertEntry({ ...args, content: '---\ntitle: 折行\ndescription: >-\n  一\n  二\n---\n\n正文\n' }), /frontmatter 不合规/)
 	await assert.rejects(() => upsertEntry({ ...args, content: '---\ndescription: 触发词\n---\n\n正文\n' }), /缺 title/)
-	assert.equal(existsSync(join(root, 'profile', 'ok.md')), false, '拦截分支不得落盘')
+	assert.equal(existsSync(join(root, 'memory', 'ok.md')), false, '拦截分支不得落盘')
 })
 
 test('upsertEntry：段内同名拦截且不落盘（处置是改 title 不 delete，且点名全部撞上的条目）', async () => {
 	const root = join(base, 'write-dup')
 	await upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'first.md', content: entry('同一个标题', '触发词') })
 	await assert.rejects(() => upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'second.md', content: entry('同一个标题', '另一词') }), /同名/)
-	assert.equal(existsSync(join(root, 'profile', 'second.md')), false, '拦截不得留孤儿条目')
+	assert.equal(existsSync(join(root, 'memory', 'second.md')), false, '拦截不得留孤儿条目')
 	// 同名但就是它自己（重写同一条目）不拦
 	const again = await upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'first.md', content: entry('同一个标题', '触发词改') })
 	assert.equal(again.indexLine, '- [同一个标题](first.md) — 触发词改')
 	// 报错点名全部撞上的条目而不只是第一条：读者照着改要一次改对，撞一个改一个得来回几趟。
 	// 绕过写侧直接落盘（跨机合流的等价物）造出第二条撞名，报错须两个名字都给全
-	writeFileSync(join(root, 'profile', 'third.md'), entry('同一个标题', '第三词'), 'utf8')
+	writeFileSync(join(root, 'memory', 'third.md'), entry('同一个标题', '第三词'), 'utf8')
 	await assert.rejects(
 		() => upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'second.md', content: entry('同一个标题', '另一词') }),
 		(error) => {
@@ -224,7 +224,7 @@ test('upsertEntry：撞名只按段判——两段可以各有一个同 title �
 	// 跨段同名不撞：共享段与本机段各自成段、各自注入，两行分处两段不会撞在一起
 	const 本机 = await upsertEntry({ port, memoryRoot: root, machine: 'home', file: 'two.md', content: entry('同一个标题', '本机那次') })
 	assert.equal(本机.scope, 'home')
-	assert.equal(existsSync(join(root, 'profile', 'machines', 'home', 'two.md')), true)
+	assert.equal(existsSync(join(root, 'memory', 'machines', 'home', 'two.md')), true)
 	// 同一段里再撞仍拦
 	await assert.rejects(
 		() => upsertEntry({ port, memoryRoot: root, machine: 'home', file: 'three.md', content: entry('同一个标题', '本机再撞') }),
@@ -245,7 +245,7 @@ test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语
 
 	// 跨机合流能造出写侧造不出的语料：绕过写侧直接落盘（git merge 的等价物）。共享段是
 	// 跨机同步语料，两台机器各自拦得住自己，合流后这一段才第一次出现重名
-	writeFileSync(join(root, 'profile', 'three.md'), entry('标题一', '触发词'), 'utf8')
+	writeFileSync(join(root, 'memory', 'three.md'), entry('标题一', '触发词'), 'utf8')
 	const reported = dupWarnings()
 	assert.equal(reported.length, 1, '合流出的一组撞名报一条')
 	assert.ok(reported[0].includes('one.md') && reported[0].includes('three.md'), '体检点名撞上的两条')
@@ -261,7 +261,7 @@ test('upsertEntry 与 lintMemory：撞名两侧同判据（写侧造得出的语
 
 test('同名判定：同一条目体检整篇读、写侧头读 64KB 封顶，围栏闭合在窗口之外的存量条目两侧答案不同', async () => {
 	const root = join(base, 'dup-title-head-window')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(dir, { recursive: true })
 	// frontmatter 本身合法，但收尾围栏被推到 FRONTMATTER_HEAD_MAX_BYTES 之外：description 是
 	// 一整行超长值（单行形态、不折行，所以照样合规），这是「值写太长把围栏顶出窗口」的真实形态
@@ -307,7 +307,7 @@ test('groupTitlesByTitle：按 title 字段分组、不合群的另列一份（�
 
 test('upsertEntry：段内 frontmatter 不合规的条目逐条列全（报错要给出脱困路径，修完即解锁）', async () => {
 	const root = join(base, 'write-broken-peer')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(dir, { recursive: true })
 	// 老布局条目：name:/metadata: 而非 title:/description:——迁移期与手改坏文件都是这个形态
 	writeFileSync(join(dir, 'legacy.md'), '---\nname: 老条目\nmetadata:\n  type: user\n---\n\n老正文。\n', 'utf8')
@@ -345,7 +345,7 @@ test('upsertEntry：段内 frontmatter 不合规的条目逐条列全（报错�
 	// edit 的段封路径可达于「编辑的是合规条目、坏的是同伴」：同名判定把 title 不可知的
 	// 同伴当潜在撞名源，宁可封段也不放行
 	const lockRoot = join(base, 'write-edit-lock')
-	const lockDir = join(lockRoot, 'profile')
+	const lockDir = join(lockRoot, 'memory')
 	mkdirSync(lockDir, { recursive: true })
 	await upsertEntry({ port, memoryRoot: lockRoot, scope: 'shared', file: 'valid.md', content: entry('编辑锁条目', '触发词', '## 节\n\n正文\n') })
 	writeFileSync(join(lockDir, 'broken.md'), '没有 frontmatter 的裸正文\n', 'utf8')
@@ -382,7 +382,7 @@ test('upsertEntry：段内 frontmatter 不合规的条目逐条列全（报错�
 
 test('upsertEntry：同名判定只读文件头（探一次、闭合即停），正文里的 title 字样不参与判定', async () => {
 	const root = join(base, 'write-head-only')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(dir, { recursive: true })
 	// 头部两键几百字节就闭合，正文远远排在探测块之外；正文里摆一条完整形态的 title:
 	// 行，它既不该被读进来，也不该被算成这条条目的 frontmatter
@@ -409,7 +409,7 @@ test('upsertEntry：同名判定只读文件头（探一次、闭合即停），
 
 test('upsertEntry：头部未闭合的病态条目升到兜底上限读一次，随后判为不合规（不静默当作无同名）', async () => {
 	const root = join(base, 'write-unclosed-head')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(dir, { recursive: true })
 	// 单行超长正文顶在围栏之前：探测块与兜底上限都读不到闭合围栏，两次往返都只拿到半截
 	const filler = '填'.repeat(Math.ceil(FRONTMATTER_HEAD_MAX_BYTES / 3) + 16)
@@ -467,14 +467,14 @@ test('upsertEntry/editEntry/deleteEntry：会话策略不许写时三个动作�
 		assert.doesNotMatch(error.message, /workspace-write 或更高/, '围栏范围是会话 cwd，照着改成 workspace-write 仍然被拒，不得这么引导')
 		return true
 	})
-	assert.equal(existsSync(join(root, 'profile')), false, '被拒的写入不得建段目录落盘')
+	assert.equal(existsSync(join(root, 'memory')), false, '被拒的写入不得建段目录落盘')
 	await upsertEntry(args)
 	await assert.rejects(() => editEntry({ port: readOnly, memoryRoot: root, file: 'topic.md', heading: '节', body: '新正文' }), /不允许写记忆/)
-	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词'), '被拒的编辑不得落盘')
+	assert.equal(readFileSync(join(root, 'memory', 'topic.md'), 'utf8'), entry('主题条目', '触发词'), '被拒的编辑不得落盘')
 	// delete 的 I/O 虽留在 node:fs（宿主契约无删除能力），照样接端口问能不能写：
 	// 四个 action 同一口径。它是同步函数（I/O 无 await），故用 throws 而非 rejects
 	assert.throws(() => deleteEntry({ port: readOnly, memoryRoot: root, file: 'topic.md' }), /不允许写记忆/)
-	assert.ok(existsSync(join(root, 'profile', 'topic.md')), '被拒的删除不得动条目')
+	assert.ok(existsSync(join(root, 'memory', 'topic.md')), '被拒的删除不得动条目')
 	// 策略缺省（无会话上下文）＝不受限：字段缺席不得被当成只读而误拒
 	const ok = await upsertEntry({ ...args, file: 'other.md', content: entry('另一条目', '触发词') })
 	assert.equal(ok.indexLine, '- [另一条目](other.md) — 触发词')
@@ -491,7 +491,7 @@ test('upsertEntry：write 路径不带版本守卫（语义是「以我这份为
 
 test('editEntry：并发两次改同一条目，后到者抛 FS_STALE_VERSION 且先到者正文完好', async () => {
 	const root = join(base, 'edit-guard')
-	const entryPath = join(root, 'profile', 'topic.md')
+	const entryPath = join(root, 'memory', 'topic.md')
 	await upsertEntry({ port, memoryRoot: root, scope: 'shared', file: 'topic.md', content: entry('主题条目', '触发词', '## 状态\n\nv1 状态行\n') })
 	// 竞态窗口在 editEntry 读条目与 upsert 写条目之间：在 readText 返回后立刻由并发方
 	// 直接改写正文（绕过端口），后到的 edit 才踩得到传下去的 entryVersion 守卫
@@ -537,7 +537,7 @@ test('editEntry：裸名在两段之间唯一命中；两段都有＝报错要�
 	)
 	const 全形式 = await editEntry({ port, memoryRoot: root, machine: 'home', file: 'machines/home/dup.md', heading: '节', body: '\n丙\n' })
 	assert.equal(全形式.scope, 'home')
-	assert.equal(readFileSync(join(root, 'profile', 'machines', 'home', 'dup.md'), 'utf8'), '---\ntitle: 本机重复\ndescription: 触发词\n---\n\n## 节\n\n丙\n', '全形式只改指明的那一段')	// 未配机器身份时本机段不进候选：跨机帮改要写全形式（不然改的是同名的共享段那条）
+	assert.equal(readFileSync(join(root, 'memory', 'machines', 'home', 'dup.md'), 'utf8'), '---\ntitle: 本机重复\ndescription: 触发词\n---\n\n## 节\n\n丙\n', '全形式只改指明的那一段')	// 未配机器身份时本机段不进候选：跨机帮改要写全形式（不然改的是同名的共享段那条）
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, file: 'local.md', heading: '节', body: '\n丁\n' }), /条目不存在/)
 })
 
@@ -580,7 +580,7 @@ test('editEntry：改出不合规 frontmatter 走同一条拦截链（先算后�
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, file: 'topic.md', title: '[带括号]' }), /方括号/)
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, file: 'topic.md', description: '折\n行' }), /单行/)
 	await assert.rejects(() => editEntry({ port, memoryRoot: root, file: 'topic.md', title: '   ' }), /title 为空/, '空值键行写进去后由 frontmatter 契约拦')
-	assert.equal(readFileSync(join(root, 'profile', 'topic.md'), 'utf8'), entry('主题条目', '触发词', '## 节\n\n正文行\n'), '被拦后整份保持原样')
+	assert.equal(readFileSync(join(root, 'memory', 'topic.md'), 'utf8'), entry('主题条目', '触发词', '## 节\n\n正文行\n'), '被拦后整份保持原样')
 })
 
 test('editEntry：锚定拦截（未命中列出全部节标题/重名拒绝/无节可锚）与目标组合拦截（并存/缺 body/body 无锚/无目标）', async () => {
@@ -599,7 +599,7 @@ test('editEntry：锚定拦截（未命中列出全部节标题/重名拒绝/无
 	)
 	// 重名拒绝：同名节有两处时锚不唯一，替换落到哪节全凭运气——拦
 	writeFileSync(
-		join(root, 'profile', 'dup.md'),
+		join(root, 'memory', 'dup.md'),
 		entry('重名节条目', '触发词', '## 状态\n\n第一处\n\n## 状态\n\n第二处\n'),
 		'utf8',
 	)
@@ -645,7 +645,7 @@ test('editEntry：body 空串删节正文保留标题行；多节条目编辑中
 
 test('editEntry：CRLF 正文照常工作，落盘归一 LF（git checkout 形态）', async () => {
 	const root = join(base, 'edit-crlf')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(dir, { recursive: true })
 	writeFileSync(join(dir, 'topic.md'), '---\r\ntitle: 主题条目\r\ndescription: 触发词\r\n---\r\n\r\n## 节\r\n\r\n甲行\r\n\r\n', 'utf8')
 	const r = await editEntry({ port, memoryRoot: root, file: 'topic.md', heading: '节', body: '\n乙行\n\n' })
@@ -663,7 +663,7 @@ test('editEntry：超失控保护与按键路径的契约拦截走同一条链�
 	await assert.rejects(() => editEntry({ port, memoryRoot: big, file: 'big.md', heading: '节', body: `## 节\n\n${'yy'.repeat(RUNAWAY_CEILING)}\n` }), /失控保护/)
 	// 按键编辑只改现存键行：键不在（老布局条目）即拦并指给 write，不静默当作改成功
 	const legacyRoot = join(base, 'edit-legacy-key')
-	const dir = join(legacyRoot, 'profile')
+	const dir = join(legacyRoot, 'memory')
 	mkdirSync(dir, { recursive: true })
 	writeFileSync(join(dir, 'legacy.md'), '---\nname: 老条目\n---\n\n正文\n', 'utf8')
 	await assert.rejects(() => editEntry({ port, memoryRoot: legacyRoot, file: 'legacy.md', title: '新标题' }), /没有「title:」行/)
@@ -676,7 +676,7 @@ test('editEntry：超失控保护与按键路径的契约拦截走同一条链�
 
 test('editEntry：条目名被同名目录占用时按宿主词表拒改，与 upsert／delete 同一 name＋code', async () => {
 	const root = join(base, 'edit-not-regular')
-	const dir = join(root, 'profile')
+	const dir = join(root, 'memory')
 	mkdirSync(join(dir, 'topic.md'), { recursive: true })
 	const 捕获 = async (fn) => {
 		try {

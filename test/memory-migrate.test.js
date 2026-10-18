@@ -94,7 +94,7 @@ test('二次跑：零改动（迁移脚本被反复跑是常态，每次重写�
 	assert.match(stdout, /待迁 0 条/, stdout)
 	assert.equal(readFileSync(join(store, 'batch-subagent-process.md'), 'utf8'), before, '已迁移的条目再跑一次不改')
 	// 折行那条是永久跳过项（转换后仍不合规），故「零改动」不等于「零跳过」
-	assert.ok(stdout.includes(`跳过 ${rel('profile', 'folded.md')}`), '折行条目始终是跳过项')
+	assert.ok(stdout.includes(`跳过 ${rel('memory', 'folded.md')}`), '折行条目始终是跳过项')
 })
 
 /**
@@ -173,7 +173,7 @@ test('机器段里的老布局条目同在迁移扫描内（段清点吃全部�
 			// 只扫 store 顶层时这里既不报「拟改写」也不报跳过，整份报告与「已合规」同形：
 			// 机器段漏扫不会自己说话，故这条要钉住它在扫描内（单仓化后机器段也是记忆条目）
 			assert.ok(
-				dry.stdout.includes(`拟 改写 ${rel('profile', 'machines', 'home', 'legacy.md')}`),
+				dry.stdout.includes(`拟 改写 ${rel('memory', 'machines', 'home', 'legacy.md')}`),
 				`机器段条目须在扫描内：\n${dry.stdout}`,
 			)
 			assert.match(dry.stdout, /待迁 1 条/, dry.stdout)
@@ -192,7 +192,7 @@ test('条目名被同名目录占住：逐条降级成「跳过」，不让异�
 		},
 		(root) => {
 			const { code, stdout } = runOn(root, ['--apply'])
-			assert.ok(stdout.includes(`跳过 ${rel('profile', 'broken.md')}：读不动`), `读不动须降级上报：\n${stdout}`)
+			assert.ok(stdout.includes(`跳过 ${rel('memory', 'broken.md')}：读不动`), `读不动须降级上报：\n${stdout}`)
 			assert.doesNotMatch(stdout, /at\s+\S+\s+\(.*:\d+:\d+\)/, '逐条降级，不许把栈回溯抛到顶层')
 			assert.equal(code, 1, '有跳过条目时退出码须非 0（跳过＝仍需人工处理）')
 			assert.equal(readKeys(root, 'ok.md').description, '触发词', '一条坏的不许挡住另一条')
@@ -213,7 +213,7 @@ test('迁移不得造出它要躲的那个问题：转换结果段内撞名的�
 		(root) => {
 			const dry = runOn(root, [])
 			assert.ok(
-				dry.stdout.includes(`跳过 ${rel('profile', 'dup-a.md')}：转换结果与同段的 dup-b.md、dup-c.md 撞 title「同题条目」`),
+				dry.stdout.includes(`跳过 ${rel('memory', 'dup-a.md')}：转换结果与同段的 dup-b.md、dup-c.md 撞 title「同题条目」`),
 				dry.stdout,
 			)
 			assert.match(dry.stdout, /待迁 1 条、跳过 3 条/, dry.stdout)
@@ -279,8 +279,8 @@ test('没有成形 frontmatter 的文件：跳过并点名（机械转换无从�
 		},
 		(root) => {
 			const { code, stdout } = runOn(root, ['--apply'])
-			assert.ok(stdout.includes(`跳过 ${rel('profile', 'no-fence.md')}：首行不是 ---`), stdout)
-			assert.ok(stdout.includes(`跳过 ${rel('profile', 'unclosed.md')}：frontmatter 未闭合`), stdout)
+			assert.ok(stdout.includes(`跳过 ${rel('memory', 'no-fence.md')}：首行不是 ---`), stdout)
+			assert.ok(stdout.includes(`跳过 ${rel('memory', 'unclosed.md')}：frontmatter 未闭合`), stdout)
 			assert.equal(code, 1, '有跳过条目时退出码须非 0')
 			assert.equal(readFileSync(join(storeOf(root), 'no-fence.md'), 'utf8'), '# 根本没有 frontmatter\n\n正文。\n', '跳过的文件原样不动')
 			assert.equal(readKeys(root, 'ok.md').description, '触发词', '能迁的那条照迁')
@@ -301,7 +301,7 @@ test('metadata 块被空行终结：块后的键属于别的键，不跟着 meta
 			const { code, stdout } = runOn(root, ['--apply'])
 			// 块后的 other: 留下来了，于是转换结果是三键、不合规：这条正是「空行终结 metadata 块」
 			// 的行为证据——若空行没有终结，缩进行判定不参与，结论也一样，但少了这条就用例钉不住它
-			assert.ok(stdout.includes(`跳过 ${rel('profile', 'after-blank.md')}`), stdout)
+			assert.ok(stdout.includes(`跳过 ${rel('memory', 'after-blank.md')}`), stdout)
 			assert.match(stdout, /多余键|other/, stdout)
 			assert.equal(code, 1)
 		},
@@ -317,7 +317,7 @@ test('退役索引文件按保留名判定，大小写不敏感（大小写不�
 		},
 		(root) => {
 			const { stdout } = runOn(root, ['--apply'])
-			assert.ok(stdout.includes(`删除 ${rel('profile', 'memory.md')}`), stdout)
+			assert.ok(stdout.includes(`删除 ${rel('memory', 'memory.md')}`), stdout)
 			assert.equal(existsSync(join(storeOf(root), 'memory.md')), false)
 			assert.equal(existsSync(join(storeOf(root), 'WRITING.md')), true, 'WRITING.md 是保留名但不是退役索引，不许删')
 		},

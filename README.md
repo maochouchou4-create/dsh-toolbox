@@ -33,22 +33,24 @@
 
 ## memory 的索引与条目契约
 
-记忆只有一处落点：`~/.dsh/memory/profile`（下称 store；家机上是指向 agent-data 仓
-`profile-memory` 的目录联接）。store 顶层放两机共享条目，`machines/<机器名>/` 放各机私有
-条目，全部记忆同在这一处。注入分两段——「共享（跨机同步）」与「本机（<机器名>）」，
-标题与基目录都写在块里。`machines/` 下非本机的段不进注入（有几条都不进），只在块尾留一行
+记忆只有一处落点：agent-data 仓的 `memory/` 目录（下称 store；插件从配置的记忆根拼出
+`<记忆根>/memory`，两机都把记忆根直接指到这个仓）。store 顶层放两机共享条目，
+`machines/<机器名>/` 放各机私有条目，全部记忆同在这一处。注入分两段——「共享（跨机同步）」
+与「本机（<机器名>）」，标题与基目录都写在块里。`machines/` 下非本机的段不进注入
+（有几条都不进），只在块尾留一行
 「另：machines/<id> N 条未注入，可直接读文件」，每条机器段一行、空段不报。机器名来自
 Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落共享段；`shared` 是保留字，
 不可作机器名。跨机帮写帮改用 `file_path=machines/<机器名>/<文件名>` 全形式。
 
-机器名写在 profile 的 cordis 配置里（值＝小写字母数字与中划线，如 `home`）：
+机器名与记忆根都写在 profile 的 cordis 配置里：
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml
 - id: dsh-toolbox
   name: dsh-toolbox
   config:
-    machine: home
+    machine: <机器名>                    # 小写字母数字与中划线，如 home
+    memoryRoot: <agent-data 仓绝对路径>   # store＝<memoryRoot>/memory；两机都须显式配置
 ```
 
 索引块每轮上下文都装一份，所以它有四重预算，全在 `lib/memory/core.js` 声明：段内索引的
@@ -97,16 +99,17 @@ edit 按节锚定的锚点是条目内唯一的 `##` 标题：未命中时报错
 
 ## memory 与 dispatch 写侧的文件策略边界
 
-memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏；而记忆文件按设计住在
-工作目录之外（`~/.dsh/memory`），所以写记忆要求 `danger-full-access`（本 profile 的
-`permission-presets.defaultPreset` 即如此）。若把权限切到 `workspace-write`，写记忆
-会被宿主判成越界而拒——设计后果，不是故障。delete 与 lint 两族因宿主 fs 契约没有
+memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏；记忆根在哪决定它拦不拦——
+记忆根在工作区之外时，写记忆才要求 `danger-full-access`（围栏范围是会话 cwd，
+`workspace-write` 覆盖不到它）；两机现配置的记忆根都是 agent-data 仓，落在各自常用
+工作区之内，所以常规会话里写记忆不受围栏影响。delete 与 lint 两族因宿主 fs 契约没有
 删除能力而留在 node:fs，不受该围栏约束，但 delete 同样受只读策略前检（只读会话
 一律拒写）。
 
-`dispatch_batch` 的写侧同通道同前置：台账落在记忆根的 `data/` 下、同样在工作目录之外，
-`workspace-write` 的会话里记账一样会被当场拒——那是同一个前提，不是这个工具多要的一份
-权限。`dispatch_lessons` 只读台账，不受这条约束——装配层传给它的端口上压根没有写方法
+`dispatch_batch` 的写侧同通道同前置：台账落在 store 下的 `data/` 里（＝agent-data 仓的
+`memory/data/`）。它与记忆同处一仓、同在常用工作区之内，所以记账的门槛与写记忆完全一样
+——记忆根出了工作区的会话里两者一起被拒，不是这个工具多要的一份权限。`dispatch_lessons`
+只读台账，不受这条约束——装配层传给它的端口上压根没有写方法
 （`fs-port.js` 的只读门面），边界是结构性的而不是靠记着别写。
 
 ## see_image 通道说明
@@ -159,7 +162,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 |---|---|---|---|
 | 常驻召回面 | 六个工具的 `description`（装配四件＋`dispatch_batch`/`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
 | 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效（例外：参数面的 `enum` 是注册期快照，新增合法值要重启才进词表，见下节） |
-| 追加面 | 台账 `profile-memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、装配四件与 `dispatch_lessons` 读 | 不要 |
+| 追加面 | 台账 `memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_batch` 写、装配四件与 `dispatch_lessons` 读 | 不要 |
 
 现读面五份：
 
@@ -313,9 +316,8 @@ const results = await parallel(briefs.map(b => async () => {
 两行 JSON 直接相邻会长成一行不可解析的内容。写前拿的是旧版本就报版本失配（并发写不整篇
 覆盖别人的行）。台账里出现坏行时 `status`/`list` 带行号报错，不静默跳过一行继续出稿。
 
-写侧前提与 memory 写工具同一条：台账落在工作目录之外（记忆根下的 `data/`），会话文件策略是
-`workspace-write` 时写入会被宿主当场拒——要记账就得给这一次会话全权（或放宽到记忆根），
-不是这个工具多要的一份权限。
+写侧前提与 memory 写工具同一条（口径见「memory 与 dispatch 写侧的文件策略边界」节）：
+台账落在 store 下的 `data/`，与记忆同仓同围栏，不是这个工具多要的一份权限。
 
 返回值分两种：给批次名的那一趟连事件一起回（单批有界，程序侧要能自己复算），`list` 与不给
 批次名的 `status` 不回事件——一百分批就是几百 KB，那是往上下文里灌垃圾；那两种视图改带一批一行的
@@ -344,9 +346,9 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
   与 Config 的 `machine` 同形同值域。**两参必须带全**：未给机器 id 而 `machines/` 下已有带
   条目的机器段时判红（本次只装共享段、本机段整段缺失，是空跑而不是全绿）；给了机器 id 而
   `machines/<id>/` 不存在也判红（配了机器名却没有私有目录——先做条目迁移，见
-  `agent-data-sync.md` 的对机迁移节）。只有共享段的记忆根（还没分机器段）未给第二个实参
-  不算错，命令末尾会提示未给机器 id。本机正确形态：
-  `npm run check:memory -- /home/nvse/.dsh/memory home`
+  `agent-data-sync.md` 的「记忆仓直连」节）。只有共享段的记忆根（还没分机器段）未给第二个
+  实参不算错，命令末尾会提示未给机器 id。家机正确形态：
+  `npm run check:memory -- D:\code\agent-data home`
   （扫 store 顶层与 `machines/<id>/` 两段，按注入侧同一份判定验预算、frontmatter 契约、
   段内 title 重名与条目内 ## 节重名；接参 `[记忆根] [机器id]`；覆盖项见命令末尾自报名单）。
 - 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印

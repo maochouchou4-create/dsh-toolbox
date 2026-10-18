@@ -161,7 +161,7 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	const { root, store, machineDir } = memoryTree(base, 'case', 'home')
 	assert.deepEqual(
 		[store, machineDir],
-		[join(root, 'profile'), join(root, 'profile', 'machines', 'home')],
+		[join(root, 'memory'), join(root, 'memory', 'machines', 'home')],
 		'给了机器 id 就建私有段，不给的那一档是 undefined（调用方据此知道这条用例只碰共享段）',
 	)
 	assert.ok(existsSync(store) && existsSync(machineDir))

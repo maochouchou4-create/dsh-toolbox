@@ -17,7 +17,7 @@
  * 的闸门静默变 no-op 比误报红坏得多。本文件因此没有 import.meta.main / argv[1] 守卫。
  *
  * 用法：node scripts/check-memory-index.mjs [记忆根] [机器id]
- * 记忆根默认 ~/.dsh/memory（指向 store＝<记忆根>/profile），机器 id 默认未给（只检共享段，
+ * 记忆根默认 ~/.dsh/memory（store＝<记忆根>/memory），机器 id 默认未给（只检共享段，
  * 并在 machines/ 下有条目时判红）。
  * 退出码：0＝CHECKS 全部通过；1＝至少一项判红，逐条列出检查项 id。
  */

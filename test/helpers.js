@@ -135,14 +135,14 @@ const assertSingleLevelName = (value, who) => {
 }
 
 /**
- * 在 base 下建一棵可写的记忆树：store（＝<root>/profile，顶层就是共享段）＋可选的
+ * 在 base 下建一棵可写的记忆树：store（＝<root>/memory，顶层就是共享段）＋可选的
  * machines/<机器id>（那台机器的私有段）。给 machineId 就顺带建私有段（没给的那一档
  * machineDir 是 undefined，调用方据此知道这条用例只碰共享段）。返回各段路径，省掉调用方重拼目录名。
  */
 export const memoryTree = (base, name, machineId) => {
 	assertSingleLevelName(name, 'memoryTree 的名字')
 	const root = join(base, name)
-	const store = join(root, 'profile')
+	const store = join(root, 'memory')
 	mkdirSync(store, { recursive: true })
 	if (machineId === undefined) return { root, store, machineDir: undefined }
 	assertSingleLevelName(machineId, 'memoryTree 的机器 id')
