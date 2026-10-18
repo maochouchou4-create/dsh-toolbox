@@ -256,7 +256,9 @@ kind=提交（少了则记到收尾的批次永远算在飞，多了则提交这
 
 ## 装配四件的 workflow 消费（批量派发）
 
-`dispatch_verify`（门二）输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核，替代逐路 subagent 手工派发。脚本骨架：
+委派形态的固定口径（用户拍板，本节即单一真相源，规则不外置到 memory 或批清单）：**同道多路复核固定走 workflow**——briefs 喂 `parallel` 攒齐一次返回，替代逐路 subagent 手工派发与断续完工通知；**施工单与修正轮走独立 subagent**——单批单 agent，回报可针对性追问。
+
+`dispatch_verify`（门二）输出的结构化值里有 `briefs` 数组（每路 `{form, text}`——形态名＋完整 brief 文本），可直接喂给 workflow 工具的 `agent()` 并行跑多路复核。脚本骨架：
 
 ```js
 const briefs = args.briefs;                    // 从 dispatch_verify 输出值转抄 briefs 数组
