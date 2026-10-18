@@ -293,19 +293,26 @@ test('validateParams：缺必填点名拒绝（stage 级矩阵＋修复批的 ro
 	assert.doesNotThrow(() => validateParams(data, construction()))
 })
 
-test('matchRhythm：谓词两侧都验（修复批二轮／机械搬运免派／Flash 拆批／未传 provider 不出 Flash）', () => {
+test('matchRhythm：谓词两侧都验（修复批二轮／机械搬运免派／超规模拆批／规模内不出拆批）', () => {
 	assert.ok(matchRhythm(data, { batchType: '修复批', stage: '门二' }).some((note) => note.includes('默认二轮复核')))
 	assert.ok(matchRhythm(data, { batchType: '机械搬运/小修', stage: '门二' }).some((note) => note.includes('小批免派')))
 	assert.ok(!matchRhythm(data, { batchType: '机械搬运/小修', stage: '门二' }).some((note) => note.includes('默认二轮复核')), '谓词互斥：修复批那条不该命中机械搬运批')
 	assert.ok(matchRhythm(data, { batchType: '直做批', stage: '门二' }).some((note) => note.includes('终审不可替代批内双路')), 'stage=门二 的终审条目独立命中')
 
-	const flash = matchRhythm(data, { batchType: '纯后端管线批', stage: '施工', provider: 'minimax-cn' })
-	assert.ok(flash.some((note) => note.includes('Flash 施工批只设上限')))
-	assert.ok(flash.some((note) => note.includes('机器门前置')), '多命中全出：stage 与 provider 两条同时命中')
+	const oversized = matchRhythm(data, { batchType: '纯后端管线批', stage: '施工', changedFiles: 10 })
+	assert.ok(oversized.some((note) => note.includes('单段施工＝一个可独立自验的闭环')), '超参考上限（changedFiles≥10）时不带 provider 也出拆批提示：判据挂规模不挂模型路线')
+	assert.ok(oversized.some((note) => note.includes('机器门前置')), '多命中全出：stage 与规模两条同时命中')
 
-	const noProvider = matchRhythm(data, { batchType: '纯后端管线批', stage: '施工' })
-	assert.ok(!noProvider.some((note) => note.includes('Flash')), '未传 provider 时含 provider 字段的条目不命中')
-	assert.ok(noProvider.some((note) => note.includes('机器门前置')))
+	const within = matchRhythm(data, { batchType: '纯后端管线批', stage: '施工', changedFiles: 9 })
+	assert.ok(!within.some((note) => note.includes('单段施工＝一个可独立自验的闭环')), '参考上限内不出拆批提示（10 命中、9 不命中：min 含阈值本身）')
+	assert.ok(within.some((note) => note.includes('机器门前置')), '规模内那一趟的其余命中照旧')
+	for (const provider of [undefined, 'minimax-cn']) {
+		assert.ok(
+			matchRhythm(data, { batchType: '纯后端管线批', stage: '施工', changedFiles: 10, provider }).some((note) => note.includes('单段施工＝')),
+			'拆批判据不挂 provider：带不带路线参数都照出（正面断言，不否掉将来真挂 provider 的条目）',
+		)
+	}
+
 	assert.deepEqual(matchRhythm(data, { stage: '方案' }), [], '无命中输出空数组')
 	assert.ok(matchRhythm(data, { batchType: '纯后端管线批', stage: '门一' }).some((note) => note.includes('施工走查')), '门一通用提示：大工程方案走查加挂')
 })
@@ -594,7 +601,7 @@ test('P11/P12 rhythm：放宽谓词命中变多不放宽、结果与无关参数
 	assert.ok(gate1Hits.some((note) => note.includes('整套重派门一')), 'A2 重派条对门一通配命中（batchType 缺省＝全批型）')
 })
 
-test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚举混用、0 也算给了、只对门二出', () => {
+test('规模参数（区间（min/max））：阈值两侧、多字段交集、与枚举混用、0 也算给了、只对门二出', () => {
 	const base = { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' }
 	const exempt = '本规模建议直修＋单测（对齐 AGENTS.md 几行级小修口径）——确要派发请把理由记台账 note；动了共享面（工具参数面、数据表、模板、契约）照走门禁，规模小不是免门禁的理由'
 	const hits = (params) => matchRhythm(data, params).includes(exempt)
@@ -617,7 +624,7 @@ test('规模参数（{max:N} 区间）：阈值两侧、多字段交集、与枚
 		'规模参数按非负安全整数收：类型错当场点名，不留到「提示没出」那种看不出原因的结果里；文案带上限子句——与描述面同一个域（断言两侧同强度）',
 	)
 	for (const value of [-1, 4.5]) {
-		assert.throws(() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }), /参数「diffLines」须是非负安全整数/, `diffLines=${value}：负数与小数按 ≤max 一比照样「命中」，等于按一个不存在的规模发了免派建议`)
+		assert.throws(() => validateParams(data, { ...base, diffLines: value, changedFiles: 1 }), /参数「diffLines」须是非负安全整数/, `diffLines=${value}：负数与小数按规模区间一比照样「命中」，等于按一个不存在的规模发了免派建议`)
 	}
 	assert.doesNotThrow(() => validateParams(data, { ...base, diffLines: 0, changedFiles: 0 }), '0 不触发「不消费该槽位」')
 	assert.doesNotThrow(

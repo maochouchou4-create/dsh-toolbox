@@ -524,11 +524,11 @@ test('安全五问按载体点名＋两处逐字同形：删判定／追加写�
 	})
 })
 
-test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字段写数组、max 非非负整数＝加载失败', (t) => {
+test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字段写数组、区间两键都缺或值域错＝加载失败', (t) => {
 	const entryWith = (pairing, field) => pairing.rhythm.find((entry) => entry.when[field] !== undefined)
 	withDataDir(t, (dir) => {
 		editData(dir, 'pairing.json', (pairing) => {
-			entryWith(pairing, 'provider').when.provider = { max: 3 }
+			entryWith(pairing, 'diffLines').when.provider = { max: 3 }
 		})
 		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.provider 须是 string\[\]，实得 \{"max":3\}/, 'provider 收区间加载通过又永不命中（provider 无词表可核，词表核那层拦不住——形态按字段类别守门才拦得住）')
 	})
@@ -536,30 +536,50 @@ test('rhythm 谓词按字段类别守形态：枚举字段写区间、规模字�
 		editData(dir, 'pairing.json', (pairing) => {
 			entryWith(pairing, 'diffLines').when.diffLines = ['5']
 		})
-		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '规模字段收数组：比的是成员包含，本次参数是个数字，比出来恒不命中')
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 minMaxBound/, '规模字段收数组：比的是成员包含，本次参数是个数字，比出来恒不命中')
 	})
-	for (const max of [-1, 4.5]) {
-		withDataDir(t, (dir) => {
-			editData(dir, 'pairing.json', (pairing) => {
-				entryWith(pairing, 'diffLines').when.diffLines = { max }
+	for (const bound of ['min', 'max']) {
+		for (const value of [-1, 4.5]) {
+			withDataDir(t, (dir) => {
+				editData(dir, 'pairing.json', (pairing) => {
+					entryWith(pairing, 'diffLines').when.diffLines = { [bound]: value }
+				})
+				assert.throws(() => loadDispatchData({ dataDir: dir }), new RegExp(`when\\.diffLines\\.${bound} 须是 非负整数`), `${bound}=${value}：负数与小数都让阈值落在不存在的一档上`)
 			})
-			assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines\.max 须是 非负整数/, `max=${max}：负数与小数都让阈值落在不存在的一档上`)
-		})
+		}
 	}
 	withDataDir(t, (dir) => {
 		editData(dir, 'pairing.json', (pairing) => {
-			entryWith(pairing, 'diffLines').when.diffLines = { max: 5, min: 0 }
+			entryWith(pairing, 'diffLines').when.diffLines = {}
 		})
-		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 多出未声明字段「min」/, '区间只认 max 一个键：多写的那个不生效＝规则按一条不存在的口径出提示')
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须至少给 min 或 max 一键/, '两键都缺＝该条规则恒命中：加载期必须拒，放行＝提示看起来在场实则与本次规模无关')
+	})
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { min: 0, max: 5 }
+		})
+		assert.doesNotThrow(() => loadDispatchData({ dataDir: dir }), '双键同给是合法形态：min 与 max 各收窄一头，不是互斥的两形')
+	})
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { min: 1, max: 0 }
+		})
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 的 min 不得大于 max/, '空区间：加载得过而该条规则永不命中，是静默失效而不是坏数据')
+	})
+	withDataDir(t, (dir) => {
+		editData(dir, 'pairing.json', (pairing) => {
+			entryWith(pairing, 'diffLines').when.diffLines = { max: 5, mid: 1 }
+		})
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 多出未声明字段「mid」/, '多写的键不生效＝规则按一条不存在的口径出提示，与只认 min/max 是同一道门')
 	})
 	withDataDir(t, (dir) => {
 		editData(dir, 'pairing.json', (pairing) => {
 			entryWith(pairing, 'diffLines').when.diffLines = '5'
 		})
-		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 maxBound/, '字符串数字两形都不是')
+		assert.throws(() => loadDispatchData({ dataDir: dir }), /when\.diffLines 须是 minMaxBound/, '字符串数字两形都不是')
 	})
-	assert.doesNotThrow(() => loadDispatchData(), '真数据那条免派条目（stage＋diffLines/changedFiles 各收 {max}）加载得过')
-	// 配置侧 {max:N} 有意比输入侧（安全整数）宽一档：它量的是自配规则、只由本仓维护者改——
+	assert.doesNotThrow(() => loadDispatchData(), '真数据两形都加载得过：免派条目收 {max}、拆批条目收 {min}')
+	// 配置侧区间值有意比输入侧（安全整数）宽一档：它量的是自配规则、只由本仓维护者改——
 	// 这条断言钉住这个不对称是有意的，后来者「统一两侧」时这里会红，先读 data.js 的 why 注释再动
 	withDataDir(t, (dir) => {
 		editData(dir, 'pairing.json', (pairing) => {
@@ -770,9 +790,9 @@ test('rhythm 的 when.stage 条目逐条可达（判据）：按条目自己的�
 			stage: row.when.stage[0],
 			batchType: row.when.batchType?.[0] ?? '纯后端管线批',
 			provider: row.when.provider?.[0] ?? 'minimax-cn',
-			// 规模谓词只设上限：给上限内的值即命中；无规模谓词的条目给非零值不碍事
-			diffLines: row.when.diffLines?.max ?? 3,
-			changedFiles: row.when.changedFiles?.max ?? 1,
+			// 规模谓词两键：取本条自己声明的那一头即落在区间内（无规模谓词的条目给非零值不碍事）
+			diffLines: row.when.diffLines?.max ?? row.when.diffLines?.min ?? 3,
+			changedFiles: row.when.changedFiles?.max ?? row.when.changedFiles?.min ?? 1,
 		}
 		assert.ok(
 			matchRhythm(loadDispatchData(), params).includes(row.note),
