@@ -1,7 +1,7 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前五件：
+单个工具初始化失败只丢那一件，不连坐整包。当前六件：
 
 - **memory**：单仓记忆读写（store 顶层＝两机共享条目，`machines/<机器名>/`＝本机私有条目），
   `write/edit/delete/lint` 四动作。`write` 收可选 `scope`（缺省＝本机段，未配机器名时＝共享段）；
@@ -30,6 +30,11 @@
   是不是到了复盘点（这三档阈值的单源是 `lifecycle.json` 复盘行的 `point` 字段，这里是它的
   快照）；到了出配对规则的**修订建议草稿**——只出建议给主会话裁决，
   **不自动改配对表、不落盘**（装配层只把端口的读方法传给它，写方法不在那个对象上，见下节）。
+- **usage_note**：使用日志的手记口子。本包九件的调用行由订阅层旁路落
+  `<DSH home>/toolbox-usage/` 下按天分片的 jsonl（参数与结果摘要、失败行的
+  `error.info` 在内；白名单＝本包九件的注册名现读，本机私有、不进任何 git 仓；写失败只
+  `warn`、不污染调用链）；结构化字段装不下的隐性坑（哪步不顺利、试过什么、怎么绕开的）
+  用 `note`/`tool`/`ok` 事后补记一行，复盘时与调用行同一条时间线。
 
 ## memory 的索引与条目契约
 
@@ -52,6 +57,10 @@ Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落�
     machine: <机器名>                    # 小写字母数字与中划线，如 home
     memoryRoot: <agent-data 仓绝对路径>   # store＝<memoryRoot>/memory；两机都须显式配置
 ```
+
+注入块首行固定是**工作流引导行**（跑批六阶段：方案→门一→施工→门二→提交→复盘——每步先调
+对应装配工具），它不是记忆数据、不进 `composeMemory`，由注册层在记忆块之前另拼；阶段序列的
+单源是 `lifecycle.json`，改版漏改这一行测试即红。
 
 索引块每轮上下文都装一份，所以它有四重预算，全在 `lib/memory/core.js` 声明：段内索引的
 **行数与字符数**、单条派生行的**字符数**，以及**注入块整块的字符数**（含写侧纪律
@@ -385,6 +394,7 @@ lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一�
 lib/memory-root.js       记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根与 store」，谁要谁向下指
 lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS）+ core/frontmatter/patterns/naming 纯模块 + write/delete/lint/assemble/segments。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
+lib/usage-log/          使用日志与手记工具：recorder.js（订阅宿主 tools/result 旁路落 <DSH home>/toolbox-usage/ 下按天分片的 jsonl；白名单由胶水从 FEATURES 现读传入，直连 node:fs——同步 append 单行＋写前递归建目录，整体 try/catch 只 warn）+ note.js（第九件工具 usage_note＝手记口子，零直连）
 lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场
 lib/dispatch/           派发装配四件、批次台账与复盘工具：index.js 装配（零直连）+ core.js（查表/谓词/模板渲染纯函数）+ parameters.js（装配四件与台账两件的参数面，清单现读拼，零直连）+ batch.js（事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，复用台账读法、经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与双向引用，直连 node:fs）＋ data/（22 形态／11 配对行＋12 节奏／九键模板／6 阶段表／13 节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）

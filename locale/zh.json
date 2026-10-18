@@ -1,6 +1,6 @@
 {
 	"meta": {
 		"title": "DSH 工具箱",
-		"description": "个人工具集：单仓记忆索引注入＋memory 写侧工具（store 顶层两机共享，machines/<机器名>/ 本机私有），see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型），dispatch_plan/review/build/verify 派发装配四件（各服务一个固定阶段：方案／门一／施工／门二；按批型配对复核形态＋现成 brief，方案那件出方案任务书，规则在数据面现读、改 JSON 即生效；例外是参数面 enum 属注册期快照，新合法值要重启才进词表），dispatch_batch 批次台账（start/advance/status/list 四动作，状态从事件现推、台账落两机共享的 agent-data 仓，装配四件传批次名即回填该批拍板清单），dispatch_lessons 复盘辅助（读上次复盘之后的增量批、按攒批点位出配对规则修订建议草稿，只出建议给主会话裁决、不落盘）。"
+		"description": "个人工具集：单仓记忆索引注入＋memory 写侧工具（store 顶层两机共享，machines/<机器名>/ 本机私有），see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型），dispatch_plan/review/build/verify 派发装配四件（各服务一个固定阶段：方案／门一／施工／门二；按批型配对复核形态＋现成 brief，方案那件出方案任务书，规则在数据面现读、改 JSON 即生效；例外是参数面 enum 属注册期快照，新合法值要重启才进词表），dispatch_batch 批次台账（start/advance/status/list 四动作，状态从事件现推、台账落两机共享的 agent-data 仓，装配四件传批次名即回填该批拍板清单），dispatch_lessons 复盘辅助（读上次复盘之后的增量批、按攒批点位出配对规则修订建议草稿，只出建议给主会话裁决、不落盘），usage_note 使用日志手记口子（订阅宿主工具调用事件，本包九件按天旁路落 <DSH home>/toolbox-usage/ 的 jsonl——参数与结果摘要、失败行 error.info 在内，本机私有；结构化字段装不下的隐性坑用 note/tool/ok 补记一行，复盘时与调用行同一条时间线）。"
 	}
 }
