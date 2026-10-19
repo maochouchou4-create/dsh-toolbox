@@ -55,7 +55,7 @@ const COUNT_SNAPSHOT = {
 	rhythm: 12,
 	stages: 6,
 	blocks: 13,
-	checklist: 11,
+	checklist: 12,
 }
 
 /**
