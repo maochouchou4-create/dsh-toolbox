@@ -4,6 +4,12 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 ## 开工前
 
+- **改动落点地图（先看这条再找文件）**：派发规则面＝`lib/dispatch/data/` 五份 JSON
+  （forms 形态角色句／pairing 配对表／templates 模板／lifecycle 阶段表／plan-spec 方案规范）。
+  **数据 JSON 现读不缓存——改完下次 dispatch 调用即生效；要等宿主重启的只有代码（lib/*.js）**。
+  `test/dispatch-data.test.js` 存着模板镜像副本（比较的是含 JSON 转义的原文字节），
+  改 templates.json 必须同批同步镜像与 `test/dispatch-core.test.js` 的结构断言。
+  配对表怎么读、形态选型说明在 `README.md`「dispatch 数据资产」节。
 - **插件改动要在下次启动后才算数**。本仓被宿主按模块代缓存，改完 `lib/` 不会热更新。
   本会话不重启宿主（重启会掐断会话），所以任何「装上了/生效了」的说法都不成立：
   交付时把运行期验证标成**待下次启动验证**，只报你真正验过的。
