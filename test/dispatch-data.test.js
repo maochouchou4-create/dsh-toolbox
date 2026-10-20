@@ -38,7 +38,7 @@ const COUNT_SNAPSHOT = {
 
 /** 模板正文指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
 const TEMPLATE_SNAPSHOT = {
-	任务书骨架: 'dd6eac56516ed110',
+	任务书骨架: '7216492b749e4e0f',
 	证伪门: '14ef69885dfe0cc6',
 	方案证伪: 'b6474adc91c1cb9f',
 	横切判据: '44fcf5800bdde029',
@@ -183,7 +183,8 @@ test('模板渲染：空值整行省略、未知占位符与缺值都当场报�
 test('模板行数上限：任务书骨架超 15 行、拍板卡超 6 行都在加载期报错（带实际行数）', (t) => {
 	withDataDir(t, (dir) => {
 		editData(dir, 'templates.json', (value) => {
-			value['任务书骨架'] = `${value['任务书骨架']}\n${Array.from({ length: 5 }, (_, i) => `多余行 ${i + 1}`).join('\n')}`
+			const lines = value['任务书骨架'].split('\n').length
+			value['任务书骨架'] = `${value['任务书骨架']}\n${Array.from({ length: 16 - lines }, (_, i) => `多余行 ${i + 1}`).join('\n')}`
 		})
 		assert.throws(
 			() => loadDispatchData(dir),

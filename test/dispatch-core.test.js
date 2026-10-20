@@ -122,6 +122,10 @@ test('任务书（M 档）：≤15 行、末行门报、直出可派参数与门
 	assert.match(value.triageLine, /^分诊：M｜/)
 	assert.match(value.triageLine, /门组合：方案证伪 0 路／证伪门 1 路/)
 	assert.match(value.triageLine, /diff：UNJUDGED/)
+	const noSubject = assembleTask(data, taskOf({ subject: undefined }))
+	assert.doesNotMatch(noSubject.prompt, /对象（规格正文/, '未传 subject 时对象行整行省略（可选行）')
+	const withSubject = assembleTask(data, taskOf({ subject: '/x/方案.md 的「批2」节' }))
+	assert.match(withSubject.prompt, /对象（规格正文，先读再动工）：\/x\/方案\.md 的「批2」节/, '传了 subject 必进任务书——施工者靠它找规格正文')
 	assert.deepEqual(value.workflowArgs, { label: '施工 smoke-batch（M）', prompt: value.prompt })
 	const rendered = renderTaskResult(value)
 	assert.ok(
