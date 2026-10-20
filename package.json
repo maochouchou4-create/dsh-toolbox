@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "1.3.1",
+	"version": "1.3.2",
 	"description": "DSH 个人工具箱：memory（单仓记忆读注入＋写侧工具：store 顶层共享、machines/<机器名>/ 本机私有）＋see_image（图片交视觉模型转述）＋dispatch_task/dispatch_challenge 跑批工作流 v2 装配两件（任务书＋分诊档位＋直出可派参数；证伪门 brief＋裁决落 gate 事件；参数从台账回填）＋dispatch_batch（批次台账：start/gate/commit/review 四事件、状态从事件现推、旧事件兼容读）＋dispatch_lessons（复盘辅助：读上次复盘之后的增量批、按攒批点位出配对规则修订建议草稿，只出建议不落盘）＋usage_note（使用日志手记：订阅宿主工具调用事件，本包七件按天按机器旁路落记忆仓 memory/data/usage-log/ 的 jsonl——参数与结果摘要、失败行 error.info 在内，与批次台账同一仓同步；结构化字段装不下的隐性坑用 note/tool/ok 补记一行）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",
