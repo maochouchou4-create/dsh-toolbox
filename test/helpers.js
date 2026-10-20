@@ -54,10 +54,8 @@ export const FIXTURES_DIR = join(ROOT_DIR, 'test', 'fixtures')
  * FEATURES 表的投影（imports.test 对着源码钉 label 列），这里只是让两处断言指向同一份投影。
  */
 export const TOOL_NAMES = [
-	'dispatch_plan',
-	'dispatch_review',
-	'dispatch_build',
-	'dispatch_verify',
+	'dispatch_task',
+	'dispatch_challenge',
 	'dispatch_batch',
 	'dispatch_lessons',
 	'memory',
@@ -202,7 +200,7 @@ export const editData = (dir, file, mutate) => {
 /** withDataDir 的加载版：按 edits（{文件名: mutator}）改坏一份真数据，把加载结果交给 run。 */
 export const withLoadedData = (t, edits, run) => withDataDir(t, (dir) => {
 	for (const [file, mutate] of Object.entries(edits ?? {})) editData(dir, file, mutate)
-	return run(loadDispatchData({ dataDir: dir }))
+	return run(loadDispatchData(dir))
 })
 
 /* ---------- 台账事件夹具（lessons 与 dispatch 两族共用） ---------- */
@@ -220,22 +218,27 @@ export const isoClock = (epochMs = Date.UTC(2026, 0, 1)) => {
 }
 
 /**
- * 一份事件夹具：字段名与生产构造器（batch.js 的 startEvent／advanceEvent）逐字同形。做成工厂而
- * 不是两个模块级函数，是为了让时钟按「一份夹具一份」计数——两个文件共用同一个模块级计数器时，
- * 两边的先后次序会互相影响，而次序正是这些用例的前提。
+ * 一份事件夹具：字段名与生产构造器（batch.js 的 startEvent／gateEvent／commitEvent／reviewEvent）
+ * 逐字同形。做成工厂而不是四个模块级函数，是为了让时钟按「一份夹具一份」计数——两个文件共用
+ * 同一个模块级计数器时，两边的先后次序会互相影响，而次序正是这些用例的前提。
  *
- * 计数格的缺省形状跟写侧走（combo/recommended＝串数组、perFormCounts＝[{form,count}]）；旧形状
- * （串/对象）在用例里显式给，作历史数据覆盖读侧兼容。
+ * 计数格的缺省形状跟写侧走（recommended／forms＝串数组、perFormCounts＝[{form,count}]）。
  */
 export const makeEvent = () => {
 	const iso = isoClock()
-	const start = (batch, batchType, rules = 'v1', extra = {}) => ({
-		t: iso(), batch, action: 'start', batchType, baseBatchType: '', intent: `${batch} 意图`, subject: '', decisions: [], rules, ...extra,
+	const start = (batch, tier = 'M', rules = 'v2', extra = {}) => ({
+		t: iso(), action: 'start', batch, tier, triage: `${tier}｜夹具分诊`, intent: `${batch} 意图`, subject: '（待写）', decisions: [], rules, ...extra,
 	})
-	const advance = ({ batch, stage = '门二', rules = 'v1', combo = [], recommended = [], perFormCounts = [], adopted = 0, overlap = 0, missed = '', note = '' }) => ({
-		t: iso(), batch, action: 'advance', stage, rules, combo, recommended, perFormCounts, adopted, overlap, missed, note,
+	const gate = ({ batch, gate = '证伪门', tier = 'M', segment = '净 diff', rules = 'v2', recommended = [], forms = [], perFormCounts = [], adopted = 0, rejected = 0, overlap = 0, missed = '', note = '' }) => ({
+		t: iso(), action: 'gate', batch, gate, tier, segment, recommended, forms, perFormCounts, adopted, rejected, overlap, missed, note, rules,
 	})
-	return { start, advance }
+	const commit = ({ batch, commit = 'abc1234', pushed = 'ok', note = '' }) => ({
+		t: iso(), action: 'commit', batch, commit, pushed, note,
+	})
+	const review = ({ batch, retro = '本批收', efficacy = '', note = '' }) => ({
+		t: iso(), action: 'review', batch, retro, efficacy, note,
+	})
+	return { start, gate, commit, review }
 }
 
 /** 落一份台账：一行一事件（与写侧同形，故读侧那条「坏行 fail fast」的契约在用到它的文件里也生效）。 */

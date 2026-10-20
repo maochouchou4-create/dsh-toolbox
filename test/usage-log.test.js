@@ -131,7 +131,7 @@ test('调用行构造：失败行 error 整块 { message, info } 不截断，age
 	const message = 'e'.repeat(400)
 	const info = { kind: 'ToolArgsError', detail: 'f'.repeat(400) }
 	const event = usageCallEvent(
-		{ name: 'dispatch_plan', callId: 'call-2', arguments: {} },
+		{ name: 'dispatch_task', callId: 'call-2', arguments: {} },
 		{ isError: true, error: { message, info } },
 		AT,
 		PROFILE,

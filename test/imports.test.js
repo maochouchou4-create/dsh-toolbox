@@ -75,7 +75,7 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
 		['dispatch/index.js', [
-			'registerDispatchPlan', 'registerDispatchReview', 'registerDispatchBuild', 'registerDispatchVerify',
+			'registerDispatchTask', 'registerDispatchChallenge',
 			'registerDispatchBatch', 'registerDispatchLessons', 'configShape',
 		]],
 		// 使用日志的手记工具：注册面在 note.js（要 defineTool，故这里只核它对 recorder.js 的四个
@@ -214,7 +214,27 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 三件工具写进一行就是「一件起不来，另两件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配四件与台账、复盘、记忆、识图、手记各占一行，彼此失败原因互不相干——四件并一行＝逐工具隔离没了）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配两件与台账、复盘、记忆、识图、手记各占一行，彼此失败原因互不相干——四件并一行＝逐工具隔离没了）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	// 行形正则锁得住列数，锁不住列里写了什么：FEATURES 曾带第三列 seeImageShape/usageNoteShape，
+	// 两个标识符在胶水里根本没有绑定——apply 一跑就 ReferenceError，整包 DOA（逐工具隔离接不住
+	// 模块加载期错误）。这里逐标识符核绑定面：import 名＋顶层声明名。
+	const featureBlock = glue.match(/const FEATURES = \[([\s\S]*?)\n\]/)?.[1] ?? ''
+	assert.ok(featureBlock, '胶水里要能定位 FEATURES 数组（正则/结构变了先改这条）')
+	const bound = new Set()
+	for (const match of glue.matchAll(/import\s*\{([^}]+)\}\s*from/g)) {
+		for (const part of match[1].split(',')) {
+			const name = part.trim().split(/\s+as\s+/).pop().trim()
+			if (name) bound.add(name)
+		}
+	}
+	for (const match of glue.matchAll(/^import\s+(\w+)\s+from/gm)) bound.add(match[1])
+	for (const match of glue.matchAll(/^(?:export\s+)?(?:const|function|class)\s+(\w+)/gm)) bound.add(match[1])
+	const declaredKeywords = new Set(['const', 'FEATURES', 'true', 'false', 'null'])
+	const featureTokens = (featureBlock.replace(/'[^']*'/g, "''").match(/[A-Za-z_$][\w$]*/g) ?? [])
+	for (const token of featureTokens) {
+		if (declaredKeywords.has(token)) continue
+		assert.ok(bound.has(token), `FEATURES 里的标识符 ${token} 在本文件没有绑定（import 名或顶层声明）——表读得动，apply 一跑就 ReferenceError，整包 DOA`)
+	}
 	// 使用日志白名单与落点参数的单源哨兵：apply 必须从 FEATURES 表现读 label 列。手抄回一份数组（哪怕
 	// 当时内容正确）就是第二份真相源——加一件工具时它静默漏记，而症状是「日志里少一件工具的调用」，
 	// 与「白名单没生效」长得一样却是另一处改漏。
@@ -339,6 +359,7 @@ const NODE_FS_DIRECT = new Map([
 	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
 	['client.js', false],
 	['dispatch/core.js', false],
+	['dispatch/vocab.js', false],
 	['dispatch/parameters.js', false],
 	['dispatch/batch.js', false],
 	['dispatch/lessons.js', false],

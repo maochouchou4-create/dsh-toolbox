@@ -1,10 +1,45 @@
 {
   "stages": [
-    { "id": "方案", "order": 1, "gate": false, "kind": "方案", "templateKey": "方案任务书", "requires": ["subject", "intent"], "uses": ["plan-spec.json", "templates.json"] },
-    { "id": "门一", "order": 2, "gate": true, "kind": "复核", "requires": ["batchType", "subject", "intent"], "uses": ["templates.json"] },
-    { "id": "施工", "order": 3, "gate": false, "kind": "施工", "requires": ["batchType", "subject", "intent", "anchors"], "uses": ["templates.json"] },
-    { "id": "门二", "order": 4, "gate": true, "kind": "复核", "templateKey": "门一", "requires": ["batchType", "subject", "intent"], "uses": ["pairing.json", "templates.json"] },
-    { "id": "提交", "order": 5, "gate": true, "kind": "提交", "requires": [], "uses": ["git-commit skill"] },
-    { "id": "复盘", "order": 6, "gate": false, "kind": "复盘", "requires": [], "uses": ["dispatch_lessons"], "point": { "minBatches": 5, "minBatchTypes": 3, "upperBatches": 8 } }
+    {
+      "id": "立项",
+      "order": 1,
+      "kind": "立项",
+      "gate": false,
+      "requires": ["batch", "tier", "triage", "intent", "anchors"],
+      "uses": ["pairing.json", "templates.json"],
+      "note": "dispatch_task 出稿时自动落 start 事件：档位／分诊行／拍板清单＋数据指纹。S 档免任务书不免记账。"
+    },
+    {
+      "id": "门报",
+      "order": 2,
+      "kind": "门报",
+      "gate": true,
+      "requires": ["batch", "tier", "subject"],
+      "uses": ["pairing.json", "templates.json"],
+      "note": "dispatch_challenge 出证伪门/方案证伪 brief；裁决回来时同一工具写 gate 事件（门名／findings 裁决字段／施工段标记）。"
+    },
+    {
+      "id": "提交",
+      "order": 3,
+      "kind": "提交",
+      "gate": false,
+      "requires": [],
+      "uses": [],
+      "note": "dispatch_batch action=commit 写 commit 事件（commit 号／推送结果）。"
+    },
+    {
+      "id": "复盘",
+      "order": 4,
+      "kind": "复盘",
+      "gate": false,
+      "requires": [],
+      "uses": ["dispatch_lessons"],
+      "note": "dispatch_batch action=review 写 review 事件（复盘行＋门效能字段），复盘行也是 dispatch_lessons 的销账点。",
+      "point": {
+        "minBatches": 5,
+        "minTiers": 3,
+        "upperBatches": 8
+      }
+    }
   ]
 }
