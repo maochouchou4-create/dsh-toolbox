@@ -238,9 +238,13 @@ test('decisions 空则整行省略，非空则逐条带入', () => {
 	assert.ok(withDecisions.text.includes('拍板清单（不得重开）：拍板 1：零宿主依赖；拍板 2：判断归主会话。'))
 })
 
-test('施工 brief：执行纪律内联在首段、对象行在位，自证与必读链在位，禁区／自验命令可省；修复批追加增量三行', () => {
+test('施工 brief：身份句在首段、执行纪律内联在次段、对象行在位，自证与必读链在位，禁区／自验命令可省；修复批追加增量三行', () => {
 	const [plain] = assembleBrief(data, construction())
 	assert.equal(plain.form, '施工')
+	// 固定骨架不倒装：身份句（镜头）永远在背景与纪律之前
+	assert.ok(data.templates['门一'].startsWith('〔形态角色句'), '门一模板首段须是形态角色句占位')
+	assert.ok(data.templates['施工'].startsWith('你是施工者'), '施工模板首段须是身份句')
+	assert.equal(plain.text.split('\n')[0], '你是施工者，按实施方案对应批次节动工。', '身份句独占首行')
 	for (const fragment of [
 		'方案是未执行先写就的，落点级偏差（锚点行号漂移、现场结构微差、等效更优的局部做法、触及链路内几行级顺势精简）按现场实际施工，不逐字照搬；逐字档内容除外——改它＝设计级冲突，停下上报。',
 		'对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。',
@@ -257,7 +261,7 @@ test('施工 brief：执行纪律内联在首段、对象行在位，自证与�
 	}
 	assert.ok(!plain.text.includes('先读 implementation-plan skill'), '方案 skill 已剪切进 plan-spec，施工 brief 不再指它')
 	assert.ok(!plain.text.includes('〔'), '占位须全部替换，不留半截模板')
-	assert.equal(plain.text.split('\n')[1], '对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。', '对象行紧跟执行纪律首段——方案路径不丢在这一趟')
+	assert.equal(plain.text.split('\n')[2], '对象（动工前先读对应批次节）：/home/nvse/code/实施方案/方案.md 批 1。', '对象行紧跟身份句与执行纪律段——方案路径不丢在这一趟')
 	assert.ok(!plain.text.includes('禁区：'), '禁区空则本行省略')
 	assert.ok(!plain.text.includes('自验封顶'), '自验命令空则本行省略')
 	assert.ok(!plain.text.includes('根因分类'), '非修复批不加修复增量')
