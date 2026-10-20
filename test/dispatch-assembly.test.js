@@ -248,7 +248,7 @@ test('dispatch_batch：commit／review 追加事件，list 汇总全量批次', 
 	const committed = await exec(batch, { action: 'commit', batch: 'smoke-gate', commit: 'abc1234', pushed: 'ok' })
 	assert.match(committed.text, /提交：abc1234／推送 ok/)
 	const reviewed = await exec(batch, { action: 'review', batch: 'smoke-gate', retro: '本批收', efficacy: '证伪门拦住假值' })
-	assert.equal(reviewed.next, null)
+	assert.equal(reviewed.next, '完工')
 	const list = await exec(batch, { action: 'list' })
 	assert.match(list.text, /smoke-gate｜M｜已过：立项→门报→提交→复盘｜下一阶段：完工/)
 	assert.match(list.text, /smoke-batch｜M/)

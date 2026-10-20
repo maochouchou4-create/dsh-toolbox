@@ -170,6 +170,20 @@ test('旧 start（无档位）过 status/list/落账出口：tier 输出必为�
 	})
 })
 
+test('完工批过 status/list/review 出口：next 输出必为字符串占位（MCP 出口校验不容 null）', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await appendStartOnce({ port, path, event: startOf('b3') })
+		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b3', gate: GATE_LABELS.challenge, tier: 'M', segment: '净 diff', adopted: 1, now: at(1) }) })
+		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b3', commit: 'def5678', pushed: 'ok' } })
+		const reviewOut = await runBatchAction({ port, path, action: 'review', params: { batch: 'b3', retro: '收官', efficacy: '拦一次' } })
+		assert.equal(reviewOut.next, '完工')
+		const statusOut = await runBatchAction({ port, path, action: 'status', params: { batch: 'b3' } })
+		assert.equal(statusOut.next, '完工')
+		const listOut = await runBatchAction({ port, path, action: 'list' })
+		assert.equal(listOut.rows.every((row) => typeof row.next === 'string'), true)
+	})
+})
+
 test('渲染：批次行含档位/已过/下一阶段，单批折叠含进度与门效能', () => {
 	const state = foldBatch([
 		startOf('b1'),
@@ -280,7 +294,7 @@ test('门报落账：gate 一条一轮不合并；commit/review 追加后状态�
 			action: 'review',
 			params: { batch: 'b1', retro: '本批收', efficacy: '证伪门拦住假值' },
 		})
-		assert.equal(reviewed.next, null)
+		assert.equal(reviewed.next, '完工')
 		assert.match(reviewed.text, /最近复盘：本批收（门效能：证伪门拦住假值）/)
 		assert.equal(readLines(path).length, 5, 'start＋2 gate＋commit＋review 各一行，不重写')
 
