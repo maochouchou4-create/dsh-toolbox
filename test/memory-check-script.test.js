@@ -20,10 +20,10 @@ import assert from 'node:assert/strict'
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, SHARED_SEGMENT, resolveScopeDir } from '../lib/memory/core.js'
+import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, SHARED_SEGMENT, resolveScopeDir } from '../lib/memory/core.js'
 import { resolveRoot } from '../lib/memory-root.js'
 import { deriveIndexLine } from '../lib/memory/frontmatter.js'
-import { CHECKS, collectSite, readOptions, renderReport } from '../scripts/checks.mjs'
+import { CHECKS, ENTRY_LINE_YELLOW, SECTION_LENGTH_RED, collectSite, readOptions, renderReport } from '../scripts/checks.mjs'
 import { WORKFLOW_LINE, withWorkflowLine } from '../lib/memory/assemble.js'
 import { SCRIPTS_DIR, tempRoot } from './helpers.js'
 
@@ -243,7 +243,7 @@ test('段内重名结论的覆盖面：title 判不了的条目一并说出来�
 	assert.ok(violationIds(stdout).includes('entry-frontmatter'), stdout)
 })
 
-test('条目内 ## 节重名：只由那一项判红（edit 按节锚定以标题为锚，重名即分不清锚在哪）', () => {
+test('条目内 ## 节重名：只由那一项判红（标题是条目内唯一的节锚，重名即指不出是哪一节）', () => {
 	const root = join(base, 'section-dup')
 	mkdirSync(root, { recursive: true })
 	// 共享段铺一条合规条目（seedSegment 连带铺 WRITING.md）：本用例只该由节重名那项判红，
@@ -264,6 +264,85 @@ test('条目内 ## 节重名：只由那一项判红（edit 按节锚定以标�
 	const check = CHECKS.find((item) => item.id === 'entry-section-dup')
 	assert.ok(check, '节重名检查项必须在检查项数组里')
 	assert.deepEqual(check.claims, ['entry-section-dup'], '新 issue kind 必须被显式认领（否则 check:memory 红在 issue-unclaimed）')
+})
+
+test('单节行数超红线：只由那一项判红，未超线的节不牵进来（阈值问常量，不写死第二个数）', () => {
+	const root = join(base, 'section-length')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 超线节：标题行＋红线那么多的内容行 ⇒ 节长＝红线＋1。行数由常量算出，抬线时这条
+	// 用例的语料跟着长，钉的仍是「超了就判红」
+	seedRaw(root, 'home', 'long.md', `---\ntitle: 长节条目\ndescription: 触发词\n---\n\n## 大节\n${'行。\n'.repeat(SECTION_LENGTH_RED)}`)
+	// 恰在红线下的一节（标题行＋红线−1 行内容 ⇒ 节长＝红线）不得误伤
+	seedRaw(root, 'home', 'mid.md', `---\ntitle: 中节条目\ndescription: 触发词\n---\n\n## 中节\n${'行。\n'.repeat(SECTION_LENGTH_RED - 1)}`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `节长超红线须以 1 退出：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-section-length'], `只该由这一项判红：\n${stdout}`)
+	assert.ok(stdout.includes('long.md') && stdout.includes('大节'), `病灶须点名条目与节：\n${stdout}`)
+	assert.ok(!stdout.includes('mid.md'), `恰在红线上的节不报：\n${stdout}`)
+})
+
+test('wikilink 死链：只由那一项判红，活链不牵进来（stem 集跨段共享，跨段活链也不误伤）', () => {
+	const root = join(base, 'dead-link')
+	mkdirSync(root, { recursive: true })
+	// 共享段的条目（落盘名 topic-0.md，stem＝topic-0）给本机条目的 [[topic-0]] 当所指：
+	// stem 集是全库的，跨段指到就是活链
+	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'topic-0.md' })])
+	// 本机段陪衬条目与链接条目各一题：链接条目不得与陪衬条目撞 title（那是另一项的事）
+	seedSegment(root, 'home', [deriveIndexLine({ title: '陪衬条目', description: '触发词', file: 'topic-0.md' })])
+	seedRaw(root, 'home', 'link.md', '---\ntitle: 链接条目\ndescription: 触发词\n---\n\n见 [[topic-0]]，另见 [[ghost]]（全库没有这个名字）。\n')
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `死链须以 1 退出：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-dead-link'], `只该由这一项判红：\n${stdout}`)
+	assert.ok(stdout.includes('ghost') && stdout.includes('link.md'), `病灶须点名条目与所指不明的 stem：\n${stdout}`)
+})
+
+test('description 带日期戳：只由那一项判红（判据问 patterns 单源，报告带上日期原文）', () => {
+	const root = join(base, 'date-stamp')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedRaw(root, 'home', 'ok.md', '---\ntitle: 正常条目\ndescription: 触发词\n---\n\n正文。\n')
+	seedRaw(root, 'home', 'stamped.md', '---\ntitle: 带日期的条目\ndescription: 触发词 2026-01-01 备忘\n---\n\n正文。\n')
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `日期戳须以 1 退出：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-date-stamp'], `只该由这一项判红：\n${stdout}`)
+	// 文案不带日期原文（定位靠条目名），断言认的是判据出自共享文案这一点
+	assert.ok(stdout.includes('日期戳') && stdout.includes('stamped.md'), `病灶须点名条目：\n${stdout}`)
+	// 同一份 styleWarnings 里派生行超长那一半归 entry-index-line 报，这里不得重复报
+	assert.ok(!violationIds(stdout).includes('entry-index-line'), stdout)
+})
+
+test('单条字符数超失控保护：只由那一项判红（超线注入侧会截断丢尾）', () => {
+	const root = join(base, 'runaway')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 字符数由常量推：正文比失控保护还长就必超（frontmatter 只占几十字符）。正文是单行
+	// 长串，行数黄线不沾、节长红线不沾——deepEqual 钉的正是「只有失控那一项判红」
+	seedRaw(root, 'home', 'huge.md', `---\ntitle: 失控条目\ndescription: 触发词\n---\n\n${'字'.repeat(RUNAWAY_CEILING)}\n`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `失控条目须以 1 退出：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-runaway'], `只该由这一项判红：\n${stdout}`)
+	assert.ok(stdout.includes('huge.md'), stdout)
+	assert.ok(stdout.includes(`超失控保护 ${RUNAWAY_CEILING}`), stdout)
+})
+
+test('黄线只提示不判红：正文行数过黄线时退出 0 且「全部达标」，提示段单独列出', () => {
+	const root = join(base, 'yellow-line')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 过黄线一条：正文行数＝黄线＋1（无 ## 节，故节长红线不沾；行短，失控线也不沾）
+	seedRaw(root, 'home', 'fat.md', `---\ntitle: 过黄线条目\ndescription: 触发词\n---\n\n${'行。\n'.repeat(ENTRY_LINE_YELLOW)}`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 0, `黄线不得改变退出码：\n${stdout}`)
+	assert.ok(stdout.includes('全部达标'), `无红线病灶时须印全部达标：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), [], '黄线条目不得出现在病灶段')
+	// 提示段用「~」前缀单独成段：与病灶行（「·」前缀）在报告文本上就分得开
+	assert.ok(stdout.includes('条黄线提示（不判红）'), `须有黄线提示段：\n${stdout}`)
+	assert.ok(/^ {2}~ \[entry-lines-hint\] /m.test(stdout), `黄线行须以 ~ 前缀列出：\n${stdout}`)
+	assert.ok(stdout.includes(`过黄线 ${ENTRY_LINE_YELLOW}`), stdout)
 })
 
 test('没人认领的 issue kind：兜底项把它报出来，而不是让它随报告消失', () => {
@@ -292,6 +371,18 @@ test('记忆根存在但里面没有条目段：同样 exit 1（空目录与打�
 	const { code, stdout } = runScript([root, 'home'])
 	assert.equal(code, 1, `扫到 0 条不得假绿：\n${stdout}`)
 	assert.ok(violationIds(stdout).includes('memory-root-wired'), `须由 memory-root-wired 判红：\n${stdout}`)
+})
+
+test('实参给记忆目录本身（…/memory）也收：按 store 算、root 取父目录，退出 0（注入头句的基目录照抄不叠路径）', () => {
+	const root = join(base, 'store-form')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'topic-0.md' })])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '本机条目', description: '触发词', file: 'topic-0.md' })])
+	// 实参是 store（<root>/memory），不是 root：resolveRoot 再叠一层就成了 memory/memory 假红
+	const { code, stdout } = runScript([join(root, 'memory'), 'home'])
+	assert.equal(code, 0, `记忆目录形态实参须收：\n${stdout}`)
+	assert.ok(stdout.includes('全部达标'), `须真扫到条目后全绿：\n${stdout}`)
+	assert.ok(stdout.includes(join(root, 'memory')), `共享段须指到实参本身而不是叠一层：\n${stdout}`)
 })
 
 test('配了机器名却没有私有目录：退出 1 且指路条目迁移（空目录与首跑不可区分，故这条只在离线自检里判）', () => {

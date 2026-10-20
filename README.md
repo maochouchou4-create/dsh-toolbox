@@ -1,17 +1,14 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前七件：
+单个工具初始化失败只丢那一件，不连坐整包。当前六件：
 
-- **memory**：单仓记忆读写（store 顶层＝两机共享条目，`machines/<机器名>/`＝本机私有条目），
-  `write/edit/delete/lint` 四动作。`write` 收可选 `scope`（缺省＝本机段，未配机器名时＝共享段）；
-  `edit`/`delete` 只认 `file_path`：裸名（共享段与本机段范围内唯一命中）或
-  `machines/<机器名>/<文件名>` 全形式——跨机帮写帮改走全形式，对机 pull 后生效。
-  edit 按节锚定：`heading`（条目内唯一的 `##` 标题）定位＋`body` 整段替换，
-  frontmatter 两键走 `title`/`description`；参数名与宿主自家编辑工具对齐（`file_path`）。
-  附会话 systemPrompt 索引注入（`memory:index`，order 200），分「共享（跨机同步）」与
-  「本机（<机器名>）」两段。索引行由条目
-  frontmatter（恰好 `title`＋`description` 两键）现场派生，不落盘、不手写。
+- **memory**：单仓记忆注入（store 顶层＝两机共享条目，`machines/<机器名>/`＝本机私有条目）。
+  会话 systemPrompt 索引注入（`memory:index`，order 200），分「共享（跨机同步）」与
+  「本机（<机器名>）」两段；索引行由条目 frontmatter（恰好 `title`＋`description` 两键）
+  现场派生，不落盘、不手写。条目的写改删不走插件工具：写＝宿主 write、改＝宿主 edit、
+  删＝rm，落盘后跑 `npm run check:memory -- <记忆根> <机器id>` 离线自检（frontmatter
+  契约／死链／日期戳／防膨胀线都在它里面机判）。
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
@@ -86,16 +83,15 @@ Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落�
 `WRITING.md`）。前三重由注入时逐段施加，越线截断并带显式标注（不静默丢）；整块这一重
 **运行期不截**——截整块会连写侧纪律一起截掉，规则被静默丢掉比超预算更难查，所以它只判红，
 由 `npm run check:memory` 离线做。数值别照抄本文档里的，那条命令会打印当前定档与实测。
-`memory` 工具的 `lint` 与它逐条报病灶。整块那一重的线按「**还能装几条新条目**」换算（用
+`memory` 工具的 `lint` 已随写侧退役，这活现在由离线自检 `check:memory` 逐条报病灶。整块那一重的线按「**还能装几条新条目**」换算（用
 实测的条目派生行均长），不按百分比——百分比定的线在语料一变就名不副名。运行期关于「索引
 没装全」只有一个信号：某一段真被截断时块尾多一行「本次注入有 N 段索引超预算已截断」，报出
 段数、段名与切在哪一重；一段都没截断时那行不出现。
 
 索引不是数据：条目文件是唯一事实源，注入时按文件名排序扫目录、用
 `frontmatter.title`＋`description` 重建每一行。哪些 `.md` 算条目只有一份判据——**小写 kebab
-名且非保留名**（`naming.js` 单源，读侧枚举与写侧入参校验都问它）；非 kebab 名的文件（存量里的
-`Foo.md`）因此不进索引也不进注入，`lint` 另给一条信息性提醒把它们说出来，离线自检的段表
-同样逐条点名（收紧判据的代价面——「记忆里那条不见了」得有可发现路径）。组装入口
+名且非保留名**（`naming.js` 单源，注入侧枚举与离线自检都问它）；非 kebab 名的文件（存量里的
+`Foo.md`）因此不进索引也不进注入，离线自检的段表把它们逐条点名（收紧判据的代价面——「记忆里那条不见了」得有可发现路径）。组装入口
 `composeMemory` 有一层**进程内缓存**，
 键＝store 根路径＋本机机器名＋store 顶层的目录 mtime 与文件名列表＋`machines/` 下的子目录名
 清单与各子目录自己的 mtime 与文件名列表＋`WRITING.md` 的 size/mtime，任一维度
@@ -107,36 +103,22 @@ Config 的 `machine`：未配置时注入只有共享段、`write` 缺省也落�
 那一趟**不重复上报读侧诊断**（frontmatter 不合规、条目重名那几条），要等键变了重算时才再报一次
 ——同进程同根同机器名的第二次调用起就在这个窗口里（换根或换机器名反而安全：键里有它们，不串块也不吞诊断）。
 体检走纯函数那条路（`scanSegment`）；离线自检（`check:memory`）是独立进程、每进程只调一次，
-首调即满算，不吃陈旧值。因此
-**没有索引文件**，`write`/`edit` 也不碰索引；`delete` 只删条目文件，它那一行随文件消失。
-frontmatter 出现第三键（如与文件名重复的 `name:`）直接抛错——两键之外没有消费者的字段
-就是死字段；两键的值按字面取、不解析 YAML，引号会原样进索引行。派生行以 title 为准，
-故段内同名条目会被写侧拦下（改 frontmatter 的 title 键，用 `edit` 的 `title` 参数）；写侧那道拦截只在
-进程内拦得住自己，而共享段是跨机 git 同步语料——两台机器各自干净、合流后重名照样进索引，
-所以 `lint` 也会点名同段撞名的条目。**写侧报错**＝你正要写的那条与另一条撞名了，
-**体检 warning**＝盘上已经存在撞名对；两种口径处置同向，都不是 `delete`——撞上的每一
-条都是各自带正文的现存条目（title 与文件名本就是两回事），要改的是那一组里的某一条。
-edit 按节锚定的锚点是条目内唯一的 `##` 标题：未命中时报错列出全部节标题，重名节（`lint`
-同报）在收敛前写不进——按节锚定消的是「逐字复述正文必漂」那类失败，不是再加一道门槛。
-同段某条目 frontmatter 不合规时同名
-判定不可信，写侧直接报错而不是放行，并列出段内全部不合规条目。**拦的只是别的条目**：
-不合规的那条本身被扫描跳过，段内只有它一条时可以用 `write` 以修好 frontmatter 的全文
-重写它（同名扫描把待写这条排除在外；`edit` 的按键编辑只改现存键行，补不出缺失的键）；
-两条以上时重写任一条都会被另一条挡住，须先 `delete` 掉多余的，剩最后一条再 `write`
-重写。修好之后该段立即恢复。
-
-`edit`/`delete` 的裸名寻址按「共享段＋本机段」这个范围解析：唯一命中即动手，两段都有同名
-条目则报错并列出候选，要跨机或消歧就用全形式。`scope` 只有 `write` 消费——`edit`/`delete`
-收到它即报错，寻址一律走 `file_path`（同一个位置两种表述迟早说岔）。
+首调即满算，不吃陈旧值。因此**没有索引文件**：条目文件是唯一事实源，增删改直接作用文件，
+它那一行随下一次扫描消失或重生。frontmatter 出现第三键（如与文件名重复的 `name:`）判
+不合规——两键之外没有消费者的字段就是死字段；两键的值按字面取、不解析 YAML，引号会
+原样进索引行。派生行以 title 为准，段内同名条目进索引就是两条触发器抢一个名字；写侧
+工具退役后这道拦截只剩离线自检一档——共享段是跨机 git 同步语料，两台机器各自干净、
+合流后重名照样进索引，所以合流后要跑一次 `check:memory` 兜住它。修法＝改其中一条的
+frontmatter title 键（title 与文件名本就是两回事），不是删条目——撞名的每一条都是各自
+带正文的现存条目。条目内节标题重名同样由自检点名：两节同名，wikilink 与人读都指不对
+那一段。
 
 ## memory 与 dispatch 写侧的文件策略边界
 
-memory 的写入走宿主自己的 fs 通道，因此受会话文件策略围栏；记忆根在哪决定它拦不拦——
-记忆根在工作区之外时，写记忆才要求 `danger-full-access`（围栏范围是会话 cwd，
+memory 的写改删走宿主自己的 write/edit 工具与 rm，受会话文件策略围栏；记忆根在哪决定它
+拦不拦——记忆根在工作区之外时，写记忆才要求 `danger-full-access`（围栏范围是会话 cwd，
 `workspace-write` 覆盖不到它）；两机现配置的记忆根都是 agent-data 仓，落在各自常用
-工作区之内，所以常规会话里写记忆不受围栏影响。delete 与 lint 两族因宿主 fs 契约没有
-删除能力而留在 node:fs，不受该围栏约束，但 delete 同样受只读策略前检（只读会话
-一律拒写）。
+工作区之内，所以常规会话里写记忆不受围栏影响。
 
 `dispatch_batch` 的写侧同通道同前置：台账落在 store 下的 `data/` 里（＝agent-data 仓的
 `memory/data/`）。它与记忆同处一仓、同在常用工作区之内，所以记账的门槛与写记忆完全一样
@@ -346,12 +328,12 @@ lib/paths.js            跨工具族的路径原语（目前只有 ~ 展开）�
 lib/value.js            跨工具族的值判据原语（isNonBlankString：非空白的字符串才算「给了」）。落 lib 根同理由：Config 回退、脚本入参判定、宿主注入的路径校验问的是同一个问题
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
 lib/fs-port.js           包级 fs 端口：宿主 ctx.fs 与 node:fs 收敛成同一组方法，写侧 I/O 的唯一通道（memory 与 dispatch 共用这一份）。落 lib 根因为第二个工具族也要它——留在 lib/memory/ 就是 memory 私产，另一族 import 它等于跨族借私产
-lib/fs-guard.js          文件系统守卫与错误码词表（写侧四条路径共用一份，零 node:fs——并进端口会把直连拖进 write.js 的本地导入闭包，写侧「I/O 只经端口」当场失效）
+lib/fs-guard.js          文件系统守卫与错误码词表（写侧路径共用一份，零 node:fs——并进端口会把直连拖进写侧模块的本地导入闭包，「写侧 I/O 只经端口」当场失效）
 lib/tool-schema.js       工具 schema 的共用形状工厂（stringList／objectShape，三族工具的输出 schema 共用）。object 节点默认闭集、每次返回新对象、假值入参当场拒；「形状写一份」是宿主要求（object 节点缺 additionalProperties 整件工具注册失败，症状是工具从上下文里消失而不是某字段被拒）
 lib/head-read.js         分块头读（开句柄/分块/累积/末尾解码），端口适配器与读侧共用一份——曾有两份拷贝连块大小都分家，漂起来的症状是「某些条目读不到头」这种没法定位的偶发
 lib/param-guard.js       execute 入参守卫（未知键点名＋折叠归一＋退役别名表，零 node:fs、零依赖）。落 lib 根因为它是「工具入参形状」的守门人而不是 memory 的私产，批3 的四件 dispatch 工具复用同一份机械
 lib/memory-root.js       记忆根默认值与归一、根 → store 落点、store 下数据域落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 一族：dispatch 族的台账、使用日志与离线自检脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们；上移之后本模块只承诺「根、store、store 下的数据域」，谁要谁向下指
-lib/memory/             记忆工具：index.js 装配 + params.js（工具 parameters 单源表＋退役别名表，enum 引 core.js 的 MEMORY_ACTIONS）+ core/frontmatter/patterns/naming 纯模块 + write/delete/lint/assemble/segments。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举；写侧 write.js 的本地导入闭包零 node:fs 由同文件的闭包断言钉住
+lib/memory/             记忆注入与自检：index.js 装配（只注册注入，无工具）+ core/frontmatter/patterns/naming/assemble/segments 纯模块（写侧 write/delete/lint/params 已随工具退役删除）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/usage-log/          使用日志与手记工具：recorder.js（订阅 tools/execute＋tools/result 旁路落 store 下 data/usage-log/ 的按天按机器分片 jsonl——成功行瘦（参数键集＋耗时）、失败行胖（args 摘要＋error），写入与注册时按 14 天窗口轮转（只删已提交到 HEAD 的档）；白名单由胶水从 FEATURES 现读传入，直连 node:fs——同步 append 单行＋写前递归建目录，整体 try/catch 只 warn）+ note.js（usage_note 工具＝手记口子，零直连）
 lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场

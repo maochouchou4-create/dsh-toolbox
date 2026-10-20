@@ -4,10 +4,9 @@
  * ① 胶水→工具模块：导入名须在目标模块 export 语句里（目标含宿主 import 只能
  *    静态验证；搬家断链的历史实锤见 dsh-memory 0.2 core→write 搬家事故）；
  * ② 工具模块→下游模块：动态 import 验导出面（纯模块的清单不在这里枚举——枚举随搬家
- *    漂移，而「某模块算不算纯模块」由下面的 node:fs 判定表与闭包断言回答）；
+ *    漂移，而「某模块算不算纯模块」由下面的 node:fs 判定表回答）；
  * ③ inject 声明与模块内 ctx.* 服务消费双向对齐（少声明＝cordis DOA，多声明＝
- *    噪音），以及工具参数面→写侧函数签名一致性、memory 各模块的 node:fs 直连面
- *    （write.js 传递闭包零直连＝写入侧 I/O 只经 fs 端口）。
+ *    噪音），以及 lib/ 各模块的 node:fs 直连面按文件判定表。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -94,83 +93,6 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	}
 })
 
-test('memory 工具参数面与写侧函数签名一致（action→入参字段逐一对齐）', async () => {
-	// 参数面单源在 params.js（纯模块）：这里 import 现值断言，不再静态解析 index.js 源码
-	// 抽参数名——源码正则绑定的是写法不是契约，表挪个位置断言就空转（改写申报：原版对
-	// index.js 的 /^\s{3}(\w+):\s*\{\s*type:/ 抽取退役，换成本条的 import 现值断言）
-	const { MEMORY_PARAMS, RETIRED_PARAM_GUIDES, guardMemoryParams } = await loadModule('memory/params.js')
-	const parameters = Object.keys(MEMORY_PARAMS)
-	for (const expected of ['action', 'scope', 'file_path', 'content', 'heading', 'body', 'title', 'description']) {
-		assert.ok(parameters.includes(expected), `工具 parameters 缺 "${expected}"`)
-	}
-	// 退役参数与派生名同退同进：schema 里留着而实现不接，子代理照 schema 传参就撞
-	// 「参数不存在」；反过来实现还认着的退役名也不许从 schema 里凭空消失——两边同退
-	for (const retired of ['layer', 'file', 'oldString', 'newString', 'replaceAll', 'indexLine']) {
-		assert.ok(!parameters.includes(retired), `退役参数 "${retired}" 不得回到工具 parameters`)
-	}
-	// action 的 enum 读单源（core.js），且是同一份引用不是抄本——抄本与单源在下一轮改
-	// 词表时分叉，报错清单就会教一个 schema 不收的值。
-	// scope 反过来：值域一个字都不写进 schema——宿主参数 DSL 的白名单只收 type/oneOf/
-	// properties/…，pattern 键会让工具在宿主侧静默消失；而「本机机器名是什么」是本机
-	// 配置里的事实，schema 里写不下（写成 enum 就要求每台机器改 schema）。
-	// 值域的单源因此落在 core：shared 是保留值，机器 id 过 MACHINE_ID_RE。
-	const core = await loadModule('memory/core.js')
-	assert.equal(MEMORY_PARAMS.action.enum, core.MEMORY_ACTIONS, 'action enum 须引用 MEMORY_ACTIONS 单源本体')
-	const scopeParam = MEMORY_PARAMS.scope
-	assert.equal(scopeParam.type, 'string', 'scope 只声明字符串')
-	assert.equal(scopeParam.enum, undefined, 'scope 不得带 enum（机器名随机器配置，schema 里写不下）')
-	assert.equal(scopeParam.pattern, undefined, 'scope 不得带 pattern（宿主参数 DSL 白名单不收，工具会静默消失）')
-	assert.equal(core.SHARED_SEGMENT, 'shared', '共享段的段值单源＝core.SHARED_SEGMENT')
-	assert.ok(core.MACHINE_ID_RE.test('home') && !core.MACHINE_ID_RE.test('shared'), '机器 id 值域单源＝core.MACHINE_ID_RE（shared 是保留值，不是机器名）')
-	// 机器名的位置表达单源：configShape 的机器名须引用 MACHINE_ID_RE，不得内联正则抄本
-	// （schemastery 只有 .pattern()，没有 .regex／.optional——写错一处即整包起不来）
-	assert.ok(readLib('memory/index.js').includes('pattern(MACHINE_ID_RE)'), 'configShape 的机器名判定须引用 MACHINE_ID_RE 单源')
-	// index.js 只引用单源表与守卫（宿主包导入不可加载，接线用源码钉）：parameters 直指
-	// MEMORY_PARAMS、execute 先点名未知键再看动作、条件必填运行期点名——三处断线都会让
-	// 契约测试测的与运行期跑的脱钩
-	const source = readLib('memory/index.js')
-	assert.ok(source.includes('parameters: MEMORY_PARAMS'), 'index.js 的 parameters 须引用 params.js 单源表')
-	// 判归属句按单源渲染的源码哨兵：description 模板串里出现的是具名引用（宿主包导入不可
-	// 加载，接线用源码钉）——写成裸串「两机都成立→shared」即测这句与 WRITING_FILE 脱钩
-	assert.ok(source.includes('写前按 ${WRITING_FILE} 判归属'), '工具 description 的判归属句须按 WRITING_FILE 单源渲染')
-	// 输出 schema 是闭集（objectShape 缺省 additionalProperties:false）：lint 结果里那个机器
-	// 身份字段不在 properties 里就等于拒收整份体检结果——只有宿主验返回值时才显形，直调测不到
-	assert.ok(/machine:\s*\{\s*type:\s*'string'\s*\}/.test(source), '输出 schema 须声明 lint 的机器身份字段（闭集缺它就拒收该返回值）')
-	const executeBody = source.slice(source.indexOf('async execute'), source.indexOf('function renderToolResult'))
-	assert.ok(executeBody.includes('guardMemoryParams'), 'execute 须先走入参守卫（未知键点名）')
-	assert.ok(executeBody.indexOf('guardMemoryParams') < executeBody.indexOf("args.action === 'write'"), '入参守卫须先于动作分派（点名先于按动作取值）')
-	assert.ok(executeBody.includes('assertRequiredParams'), 'execute 须运行期点名条件必填（file_path/content 按动作）')
-	// 逐分支切片，不对整份源码做子串匹配：函数定义处（function assertScopeNotAccepted）本身就满足
-	// 整份源码的匹配，于是「edit/delete 真调了它」恒真——切片后剩下的只有分支体内那几行
-	const editBody = executeBody.slice(executeBody.indexOf("args.action === 'edit'"), executeBody.indexOf("args.action === 'delete'"))
-	const deleteBody = executeBody.slice(executeBody.indexOf("args.action === 'delete'"), executeBody.indexOf("args.action === 'lint'"))
-	assert.ok(editBody.includes('assertScopeNotAccepted'), 'edit 分支须显式拒 scope（scope 只归 write 消费，逐动作的 Fail Fast 落点）')
-	assert.ok(deleteBody.includes('assertScopeNotAccepted'), 'delete 分支须显式拒 scope（逐分支切片，函数定义处满足不了它）')
-	// 写侧三个动作各成一文件（write.js 是端口写侧，delete/lint 刻意直连 node:fs），
-	// execute 的分派面按模块归属一起核。动作模块的集合现场扫出来而不是手写枚举：枚举
-	// 漏登记一个文件时不会红，而分派面恰恰靠「全部动作模块导出面的并集」才查得全
-	const memoryDir = join(libDir, 'memory')
-	const actionFiles = readdirSync(memoryDir).filter((file) => file.endsWith('.js') && file !== 'index.js')
-	const writeSide = {}
-	for (const file of actionFiles) Object.assign(writeSide, await loadModule(join('memory', file)))
-	for (const fn of ['upsertEntry', 'editEntry', 'deleteEntry', 'lintMemory']) {
-		assert.ok(typeof writeSide[fn] === 'function', `execute 分派的 "${fn}" 不在写侧任一动作模块的导出面`)
-		assert.ok(executeBody.includes(fn), `execute 未分派 "${fn}"`)
-	}
-	assert.ok(executeBody.includes('未知 action'), '未知 action 须显式 throw（不得静默成功）')
-	// 别名表逐键可指路（键按折叠口径匹配，退役名的每个常见拼写都得落进某一条指引），
-	// 否则撞上那个拼写的调用方只会拿到兜底句，指路名存实亡
-	const { foldParamName } = await loadModule('param-guard.js')
-	assert.equal(typeof guardMemoryParams, 'function', 'guardMemoryParams 须可调用（execute 的入参守卫）')
-	for (const retired of ['oldString', 'old_string', 'newString', 'new_string', 'replaceAll', 'file', 'indexLine', 'layer']) {
-		const folded = foldParamName(retired)
-		assert.ok(
-			Object.keys(RETIRED_PARAM_GUIDES).some((key) => foldParamName(key) === folded),
-			`退役名 "${retired}" 在别名表没有折叠命中的键`,
-		)
-	}
-})
-
 test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', async () => {
 	const glue = readLib('index.js')
 	const match = /export const inject = \[([^\]]*)\]/.exec(glue)
@@ -206,15 +128,19 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	}
 	// 反向钉住按需取用的识别：上面那个 continue 会把「正则退化成永不命中」伪装成
 	// 「没问题」，而这正是本用例的立身之本（少声明＝DOA）
-	assert.ok(used.has('sandboxPolicy'), "memory/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
+	assert.ok(used.has('sandboxPolicy'), "dispatch/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
 
-	for (const file of ['memory/index.js', 'see-image/index.js', 'dispatch/index.js', 'usage-log/note.js']) {
+	for (const file of ['see-image/index.js', 'dispatch/index.js', 'usage-log/note.js']) {
 		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
 	}
+	// 记忆索引注入的装配哨兵：它不是工具（不占 FEATURES 行、不进使用日志白名单），独立装配
+	// 意味着 FEATURES 表动它不会红——少这一行 import 哪都在，调用线一断注入就静默死
+	// （症状＝会话里再无记忆块，而无任何报错），故把调用本身钉在源码上
+	assert.ok(stripComments(glue).includes('registerMemory(ctx, config)'), '胶水须独立装配记忆索引注入（registerMemory(ctx, config)）——写侧退役后它只剩注入，调用线一断即静默死')
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
-	// 三件工具写进一行就是「一件起不来，另两件陪葬」——逐工具隔离正是本层存在的理由
+	// 多件工具写进一行就是「一件起不来，另几件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配两件与台账、复盘、记忆、识图、手记各占一行，彼此失败原因互不相干——四件并一行＝逐工具隔离没了）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配四件与识图、手记各占一行，彼此失败原因互不相干——并一行＝逐工具隔离没了；记忆索引注入不占行，见上一条哨兵）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
 	// 行形正则锁得住列数，锁不住列里写了什么：FEATURES 曾带第三列 seeImageShape/usageNoteShape，
 	// 两个标识符在胶水里根本没有绑定——apply 一跑就 ReferenceError，整包 DOA（逐工具隔离接不住
 	// 模块加载期错误）。这里逐标识符核绑定面：import 名＋顶层声明名。
@@ -328,23 +254,18 @@ test('浏览器半的依赖面哨兵：client.js 静态 require 的每件都在�
  * 则两者都不存在：模块里任何一处（含模块级 helper）想摸 node:fs，都得先在这张面上
  * 登记，而登记是有人看着的显式动作。
  *
- * 表只回答「每个文件各自直不直」。写侧那条硬边界（upsert/edit 的 I/O 只经 fs 端口）问的
- * 是另一个量：write.js 的**传递闭包**里有没有直连模块——写侧与全部下游都登记为零直连时，
- * 一个共享件直连 node:fs 照样能让写侧绕过端口，而这张表全绿。闭包断言在表之后。
+ * 表只回答「每个文件各自直不直」。各 true 行的理由各是各的：读侧的失控读与段扫描
+ * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件），fs-port.js 是
+ * 端口本尊（node 实现就在这里），recorder 是使用日志唯一写盘处，data.js 读数据面。
  *
- * 共享机制也算一张表里的行：head-read.js 由端口的 node 适配器与读侧共用，它直连不等于
- * 写侧直连——端口适配器本来就是本仓的 node 实现，而它不在 write.js 的闭包内（下面那条
- * 闭包断言正是替这件事兜底）。
+ * 共享机制也算一张表里的行：head-read.js 的头读由读侧 assemble 与离线自检共用，它直连
+ * 是「头读必须先于整读」这一职责本身，不算旁路。
  */
 const NODE_FS_DIRECT = new Map([
-	['memory/write.js', false],
 	['memory/frontmatter.js', false],
 	['memory/naming.js', false],
 	['memory/core.js', false],
 	['memory/patterns.js', false],
-	['memory/params.js', false],
-	['memory/delete.js', true],
-	['memory/lint.js', true],
 	['memory/assemble.js', true],
 	['memory/segments.js', true],
 	['memory/index.js', true],
@@ -421,7 +342,7 @@ function nodeFsImports(source) {
 // 示例即恢复，代价远小于为剥字符串再写一套会出错的词法扫描。
 const nodeFsCalls = (source) => [...stripComments(source).matchAll(NODE_FS_CALL_RE)].length
 
-test('lib/ 各模块的 node:fs 直连按文件判定（端口写侧与装配层零直连，其余必须显式直连）', () => {
+test('lib/ 各模块的 node:fs 直连按文件判定（读侧与端口本尊显式直连，其余零直连）', () => {
 	// 名单即覆盖：每个域下的每个模块都要在表上定性过。新模块漏登记＝这条判定对它空转，
 	// 而「漏登记」恰好就是放行名单腐化的起点
 	for (const scope of NODE_FS_SCOPES) {
@@ -436,53 +357,13 @@ test('lib/ 各模块的 node:fs 直连按文件判定（端口写侧与装配层
 		const imports = nodeFsImports(source)
 		const calls = nodeFsCalls(source)
 		if (direct) {
-			// 「必须」是反方向的那一半：只有它，文件哪天悄悄改走端口（或多出第五个直连模块）
+			// 「必须」是反方向的那一半：只有它，文件哪天悄悄改走别的路（或多出新的直连模块）
 			// 才会红；没有它，单向禁令分不出「设计变更」与「漏改」
-			assert.ok(imports > 0, `${file} 按设计直连 node:fs（宿主 fs 契约无删除能力／读侧枚举与体检遍历不经端口），导入面却没有登记`)
+			assert.ok(imports > 0, `${file} 按设计直连 node:fs（读侧失控读与段扫描、端口本尊、日志追加、数据面读取各是自己的理由），导入面却没有登记`)
 			assert.ok(calls > 0, `${file} 登记了 node:fs 直连却一个调用也没有——导入面与实际用法脱节，这条判定对它空转`)
 		} else {
-			assert.equal(imports, 0, `${file} 出现 node:fs 导入——它登记为零直连（端口写侧 I/O 只经 fs-port.js，装配层由宿主能力代劳）`)
+			assert.equal(imports, 0, `${file} 出现 node:fs 导入——它登记为零直连（该经端口的经端口，装配层由宿主能力代劳）`)
 			assert.equal(calls, 0, `${file} 出现 node:fs 直连调用——它登记为零直连，模块级 helper 同样算`)
 		}
-	}
-})
-
-/**
- * 本地 import 的目标（任意形态：具名/默认/命名空间/副作用/`export *` 从句/动态 import）。
- * 要的是「依赖到谁」，故不按花括号形态过滤；动态 `import('./x.js')` 也是一条边——
- * 漏了它，闭包就停在调用点那一层，而那个文件照样能摸 node:fs。
- */
-function localImportTargets(source) {
-	const code = stripComments(source)
-	return [
-		...code.matchAll(/\bfrom\s+'(\.[^']+)'/g),
-		...code.matchAll(/\bimport\s+'(\.[^']+)'/g),
-		...code.matchAll(/\bimport\s*\(\s*'(\.[^']+)'\s*\)/g),
-	].map((match) => match[1])
-}
-
-/** 从入口沿本地 import 递归求传递闭包（lib 内相对路径集合，含入口自己）。 */
-function localClosure(entry) {
-	const seen = new Set()
-	const queue = [entry]
-	while (queue.length > 0) {
-		const file = queue.pop()
-		if (seen.has(file)) continue
-		seen.add(file)
-		for (const specifier of localImportTargets(readLib(file))) queue.push(join(dirname(file), specifier))
-	}
-	return seen
-}
-
-test('memory/write.js 的本地导入闭包零 node:fs（端口写侧 I/O 只经 fs 端口的真实保证）', () => {
-	// 逐文件判定只证「本文件零直连」，一进一跳就空转：下游模块里加一行 import node:fs，
-	// upsert/edit 的 I/O 立刻能绕过端口，而判定表与行为测试照样全绿。逐跳递归才够到那一层
-	const closure = localClosure('memory/write.js')
-	// 闭包只剩入口自己时下面那些断言恒真：先把「扫描退化成空转」本身判红，免得闭包断言成假绿
-	assert.ok(closure.size > 1, `write.js 的本地导入闭包只有入口自己（${[...closure].join('、')}）——本地 import 扫描退化成空转`)
-	for (const file of closure) {
-		const source = readLib(file)
-		assert.equal(nodeFsImports(source), 0, `${file} 在 write.js 的传递闭包内且 import node:fs——upsert/edit 的 I/O 须只经 fs 端口`)
-		assert.equal(nodeFsCalls(source), 0, `${file} 在 write.js 的传递闭包内且直连 node:fs 调用——同上`)
 	}
 })

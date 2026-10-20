@@ -66,7 +66,7 @@ test('nonEmptyOrDefault：退化输入一律回落，有值原样返回', () => 
 	assert.equal(nonEmptyOrDefault('  ~/.dsh/memory  ', fallback), '  ~/.dsh/memory  ', '不得 trim 入参')
 })
 
-test('styleWarnings：日期戳与派生行超长各出一条，合规输入一条不出', () => {
+test('styleWarnings：日期戳与派生行超长各出一条（kind 标注），合规输入一条不出', () => {
 	const 短行 = '- [标题](a.md) — 触发词'
 	const 刚好 = '- [标题](a.md) — ' + '词'.repeat(INDEX_LINE_CHAR_BUDGET - '- [标题](a.md) — '.length)
 	const 超一行 = `${刚好}词`
@@ -76,12 +76,14 @@ test('styleWarnings：日期戳与派生行超长各出一条，合规输入一�
 	// 日期戳：文案须指向写侧纪律出处，否则读到的人不知道该去问哪条规则
 	const 日期戳 = styleWarnings({ description: '2026-01-02 记', indexLine: 短行 })
 	assert.equal(日期戳.length, 1)
-	assert.ok(日期戳[0].includes('日期戳') && 日期戳[0].includes('WRITING.md'), 日期戳[0])
+	assert.equal(日期戳[0].kind, 'date-stamp', '消费方按 kind 拣选，kind 是对外契约')
+	assert.ok(日期戳[0].text.includes('日期戳') && 日期戳[0].text.includes('WRITING.md'), 日期戳[0].text)
 	// 超长：文案须给收敛方向，只说「超了」等于把判断留给读到的人
 	const 超长 = styleWarnings({ description: '触发词', indexLine: 超一行 })
 	assert.equal(超长.length, 1)
-	assert.ok(超长[0].includes(String(INDEX_LINE_CHAR_BUDGET)), 超长[0])
-	assert.ok(超长[0].includes('收敛 description'), 超长[0])
+	assert.equal(超长[0].kind, 'index-line-length')
+	assert.ok(超长[0].text.includes(String(INDEX_LINE_CHAR_BUDGET)), 超长[0].text)
+	assert.ok(超长[0].text.includes('收敛 description'), 超长[0].text)
 	// 两条同时命中时都在
 	assert.equal(styleWarnings({ description: '2026-01-02 记', indexLine: 超一行 }).length, 2)
 })

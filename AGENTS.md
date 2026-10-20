@@ -21,17 +21,13 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 ## 改 memory 契约时
 
-契约散在三处，**改一处必须同改其余处**：工具契约面 `lib/memory/index.js`
-（`parameters`＋`output.schema`＋`content` 的描述词）、判定与派生
-`lib/memory/naming.js`（条目名与保留名判定）与 `lib/memory/frontmatter.js`
-（frontmatter 契约与索引行派生）、跨仓的书写规范
-`/home/nvse/code/repos/agent-data/memory/WRITING.md`（memory 工具的 description 与
-MANIFEST 指针都指向它）。
-schema 与实现不同步＝子代理照 schema 传参撞上「参数不存在」；规范与实现不同步
-＝条目按旧格式写进来、写侧当噪声拒收。
-
-参数级写法细则（值按字面取、不解析 YAML、折行被拒）写进 `index.js` 的参数描述即可，
-不必塞进 WRITING.md——后者每轮都进上下文，承载的是记忆书写纪律，不是单个参数的语法。
+契约散在三处，**改一处必须同改其余处**：注入装配面 `lib/memory/index.js`（注册与
+描述词）、判定与派生 `lib/memory/naming.js`（条目名与保留名判定）与
+`lib/memory/frontmatter.js`（frontmatter 契约与索引行派生）、跨仓的书写规范
+`/home/nvse/code/repos/agent-data/memory/WRITING.md`（每轮随索引注入进上下文的写侧
+纪律）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
+常量（防膨胀两条线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
+两处各抄一份。
 
 ## 完成标准
 
@@ -64,11 +60,11 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
 
 ## 硬边界
 
-- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（memory 与 dispatch 共用），它是写侧
-  （`upsertEntry`/`editEntry`）唯一的 I/O 通道：契约、守卫、错误码
-  （`FS_SANDBOX_DENIED`/`FS_STALE_VERSION`）、原子发布都不许为图省事削弱或绕过。要在写侧
-  读目录就用端口的 `listDir`，别在 upsert/edit 里调 `node:fs`。
-  这条边界的口径是**整个本地导入闭包**：给 `write.js` 的下游模块加一行 `import node:fs`
+- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（memory 写侧已随工具退役，现由 dispatch 的
+  台账与复盘件消费），它是写侧唯一的 I/O 通道：契约、守卫、错误码
+  （`FS_SANDBOX_DENIED`/`FS_STALE_VERSION`）、原子发布都不许为图省事削弱或绕过；
+  dispatch 侧要读写落盘就走端口方法（`resolve/stat/readText/writeText`），别直调
+  `node:fs`。这条边界的口径是**整个本地导入闭包**：给消费端模块加一行 `import node:fs`
   同样算绕门（`test/imports.test.js` 的闭包断言就为此存在，逐文件定性表管不到那一跳）。
 - `lib/memory/` 下除装配层（`index.js`）外一律零宿主依赖，可直接单测；
   `lib/see-image/vision.js` 同。新增文件按这条规则就位，不要维护枚举清单。

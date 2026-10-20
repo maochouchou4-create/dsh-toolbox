@@ -3,8 +3,8 @@
  *
  * 收口理由分四层，每层都对着一种「两边各自都对、于是没人发现」的分家：
  *
- * ①条目正文模板（frontmatter 两键加正文）此前四个测试文件各写一份逐字相同的它（memory-write／
- *   memory-lint／memory-core／memory-delete）。frontmatter 是契约且在收紧（恰好两键），模板一分
+ * ①条目正文模板（frontmatter 两键加正文）此前多个测试文件各写一份逐字相同的它（写侧退役后
+ *   现消费方＝memory-core／memory-check-script）。frontmatter 是契约且在收紧（恰好两键），模板一分
  *   家就有某个文件里的夹具按旧形态造条目——症状不是那条用例红，而是它造的条目压根进不了索引，
  *   于是「这条用例到底在验什么」变得不可读。
  *
@@ -58,7 +58,6 @@ export const TOOL_NAMES = [
 	'dispatch_challenge',
 	'dispatch_batch',
 	'dispatch_lessons',
-	'memory',
 	'see_image',
 	'usage_note',
 ]

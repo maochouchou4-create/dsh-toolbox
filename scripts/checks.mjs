@@ -6,12 +6,17 @@
  * 静默变成 no-op，比误报红坏得多（误报红会被看见）。拆成「模块 + 薄壳」之后，两种
  * 入口只剩一种答案，也就没有守卫可写错。
  *
+ * 检查面有两族：注入块预算（截不截、超不超线）与条目内容健康（frontmatter 契约、节
+ * 组织、死链、日期戳、防膨胀两条线）。memory 写侧工具退役后，后一族是从写侧 lint 收编
+ * 过来的——全库体检只剩这一处，判据与文案都沿用同一批共享模块（patterns/segments/
+ * frontmatter），不在脚本里另写一份。
+ *
  * 零宿主依赖：这里只 import 本仓 lib/memory 下的纯模块与 node 标准库，单测可直接
  * import 本文件拿 CHECKS，不必起子进程才能验一份清单。
  */
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { composeMemory, ignoredEntryFiles, readEntryHead, scanSegment, withWorkflowLine } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
@@ -19,16 +24,36 @@ import {
 	INDEX_LINE_BUDGET,
 	INDEX_LINE_CHAR_BUDGET,
 	MACHINES_DIR,
+	RUNAWAY_CEILING,
 	SHARED_SEGMENT,
 	assertMachineId,
 	resolveScopeDir,
 } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory-root.js'
-import { FRONTMATTER_KEYS } from '../lib/memory/frontmatter.js'
-import { RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/naming.js'
-import { listSegmentDirs } from '../lib/memory/segments.js'
-import { duplicateSectionHeadings, sectionDupNotice } from '../lib/memory/patterns.js'
+import { findFenceEnd, frontmatterLines, FRONTMATTER_KEYS } from '../lib/memory/frontmatter.js'
+import { RESERVED_STEMS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/naming.js'
+import { knownStems, listSegmentDirs } from '../lib/memory/segments.js'
+import { duplicateSectionHeadings, forEachWikilinkMatch, sectionDupNotice, sectionHeadings, styleWarnings } from '../lib/memory/patterns.js'
 import { isNonBlankString } from '../lib/value.js'
+
+/**
+ * 条目级防膨胀两条线。判据只服务本脚本：注入侧不按它们截断（那里只有失控保护与索引
+ * 预算两族），故常量不进 core.js——「哪条线在运行期有牙齿」靠分居表达，混进同一处
+ * 就要靠读注释分辨。
+ *
+ * - 单条黄线（ENTRY_LINE_YELLOW）：条目正文行数超线只出提示不判红。定档＝排除存量
+ *   超线提示后语料正文行上限的上取整档（首档实测：99/152 两条存量之外上限 74，取 80）
+ *   ——它是「先收敛再加」的那声提醒，不是闸门；存量超线条目常驻提示正是要的效果（促收不拦行）。
+ * - 节长红线（SECTION_LENGTH_RED）：单节行数超线判红。定档取现存最长一节的上方一档
+ *   ——红线必须让现行语料通过，否则每次自检都在报一批改不了的旧账，红线很快被习惯性
+ *   无视；同时把「一节吞掉大半条」的形态拦在下次追加之前。分布是中段断档的（多数节
+ *   十几行、个别长节远超），红线落位看的是最长那档而非中位数。
+ *
+ * 确需抬线先重新实测分布，把新实测值与理由写进 commit message——这两条线没有运行期
+ * 消费方，注释里的数字最容易陈旧，实测值归 git 历史。
+ */
+export const ENTRY_LINE_YELLOW = 80
+export const SECTION_LENGTH_RED = 60
 
 /**
  * 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。
@@ -44,9 +69,12 @@ import { isNonBlankString } from '../lib/value.js'
  * 与空机器名去算，然后印「全部达标」，那是「检查没跑」却报成功。
  */
 export function readOptions(argv = process.argv, env = process.env) {
-	// 用 `||` 不用 `??`：显式传空串（想只跑默认值）不该被当成「记忆根就是当前目录」，
-	// 那会让脚本在一片空地上报「全部达标」
-	const memoryRoot = argv[2] || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
+	// 实参双形都收：记忆根（store＝<根>/memory）或记忆目录本身（…/memory，root 取其父目录）。
+	// 注入块头句给人看的基目录就是记忆目录，照抄那条路径是最自然的用法，不该换来「路径叠成
+	// memory/memory」的假红；归一只在脚本入口做，resolveRoot 本身保持单形（dispatch 台账与
+	// 使用日志共用它，另一套口径会在那里分家）。环境变量与缺省值保持纯根语义——名字就叫 ROOT。
+	const given = argv[2]
+	const memoryRoot = (isNonBlankString(given) && given.endsWith('/memory') ? dirname(given) : given) || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
 	const machine = argv[3] || ''
 	return {
 		memoryRoot,
@@ -89,12 +117,34 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 			// 非 kebab 名的 .md 按同一份判据不算条目，于是既不进 entryFiles 也不进派生行——
 			// 报告要能说出这块钱去哪了，否则读者只看到数字比盘上文件数少
 			ignored: ignoredEntryFiles(dir, names),
+			// 风格告警（日期戳等）从头扫描的派生行与 description 现算：判据问 patterns
+			// 的单源，采的是头读那一次读盘的产物，不为风格再读一遍。派生行超长那一半
+			// 不收（按 kind 拣选）——它是 entry-index-line 的事实，这里再报就是同一件事两行
+			styles: (scan?.entries ?? [])
+				.filter((entry) => entry.indexLine !== null)
+				.flatMap((entry) =>
+					styleWarnings({ description: entry.parsed.frontmatter.description, indexLine: entry.indexLine })
+						.filter((warning) => warning.kind === 'date-stamp')
+						.map((warning) => ({ name: entry.name, text: warning.text })),
+				),
 		}
 	})
-	// 节重名查的是正文，头读那份窗口看不到——这一项自己整篇读（与体检同一读法；读法是
-	// 消费方的知识）。逐文件降级：读不动的条目已由 entry-readable 认领 read-error，
-	// 这里跳过不重复报。issue kind entry-section-dup 由 entry-section-dup 检查项认领
-	// ——没人认领的新 kind 会被 issue-unclaimed 兜住，那是 CHECKS 数组结构给的保险
+	// 正文族检查（节长、死链、失控、节重名）查的是整篇，头读那份窗口看不到——这一趟
+	// 自己整篇读（与读侧失控读取同一读法；读法是消费方的知识）。逐文件降级：读不动的
+	// 条目已由 entry-readable 认领 read-error，这里跳过不重复报。
+	// 重名判定与节长度量各问 patterns 的同一份节判定，不在脚本里自拼「什么算一节」；
+	// 死链判据问 segments 的全库 stem 集，头扫描的段清单就是它的段界
+	// 收编自写侧 lint 的降级路径：全库 stem 集读不动时退保留名集＋报告记一行，不崩——
+	// 崩会把整份报告换成一条栈，降级只可能漏报死链，其余检查照跑
+	let stems
+	let stemsDegraded = false
+	try {
+		stems = knownStems(segmentDirs)
+	} catch {
+		stems = new Set(RESERVED_STEMS)
+		stemsDegraded = true
+	}
+	const entries = []
 	for (const { kind, dir } of segmentDirs) {
 		let names
 		try {
@@ -105,12 +155,33 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 		for (const name of names) {
 			if (!isEntryName(name)) continue
 			const path = join(dir, name)
+			let text
 			try {
-				for (const title of duplicateSectionHeadings(readFileSync(path, 'utf8'))) {
-					issues.push({ kind, issue: 'entry-section-dup', path, detail: sectionDupNotice(title) })
-				}
+				text = readFileSync(path, 'utf8')
 			} catch {
 				continue // 单文件读失败已在扫描期以 read-error 入账
+			}
+			const lines = frontmatterLines(text)
+			const fenceEnd = findFenceEnd(lines)
+			// 无闭合围栏的条目按「全文即正文」量：它已由 entry-frontmatter 判红，
+			// 行数量个大概即可，不为坏 frontmatter 另立分支
+			const bodyStart = fenceEnd === -1 ? 0 : fenceEnd + 1
+			// 以 \n 结尾的文件 split 出的最后一个空串不是一行，剥掉再计
+			const bodyEnd = lines.length - (lines[lines.length - 1] === '' ? 1 : 0)
+			const headings = sectionHeadings(text)
+			const sections = headings.map((heading, index) => ({
+				title: heading.title,
+				// 节长含节标题行、止于下一节标题（末节止于正文尾）：行号是同一份行数组的
+				// 下标，差值即行数，不必再切一次
+				len: (index + 1 < headings.length ? headings[index + 1].line : bodyEnd) - heading.line,
+			}))
+			const deadLinks = []
+			forEachWikilinkMatch(text, (stem, line) => {
+				if (!stems.has(stem)) deadLinks.push({ stem, line })
+			})
+			entries.push({ kind, path, name, chars: text.length, bodyLines: bodyEnd - bodyStart, sections, deadLinks })
+			for (const title of duplicateSectionHeadings(text)) {
+				issues.push({ kind, issue: 'entry-section-dup', path, detail: sectionDupNotice(title) })
 			}
 		}
 	}
@@ -159,6 +230,7 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 		machine,
 		machineGiven,
 		segments,
+		entries,
 		issues,
 		memoryBlock,
 		block,
@@ -166,15 +238,18 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 		machineDirExists,
 		machineValid,
 		rulesChars,
+		stemsDegraded,
 	}
 }
 
 /**
  * 检查项：id 是稳定的短名（报告与自报名单里出现的就是它），label 说这一项在管什么，
- * guard 说它守的判据——判据里的数值全部由 core.js 的常量插值，不在脚本里另抄一份，
+ * guard 说它守的判据——判据里的数值全部由常量插值，不在脚本里另抄一份，
  * 常量一改这里自动跟着改。run(site) 返回该站场上这一项待收敛的条目（人读的一行一个）。
  * claims 列出这一项**认领**的 issue kind：认领是显式登记的，于是「扫描出了没人认领的
  * issue kind」本身成为一项可判的事（见 issue-unclaimed），而不是随报告一起无声消失。
+ * soft: true 的是黄线项：只出提示、不进 violations（判红与提示分档——红是「必须收敛」，
+ * 黄是「先收敛再加」；分档的落点在 renderReport 与 collectViolations 的 soft 过滤）。
  */
 export const CHECKS = [
 	{
@@ -192,7 +267,7 @@ export const CHECKS = [
 			const ignored = site.segments.reduce((count, segment) => count + (segment.ignored?.length ?? 0), 0)
 			if (ignored > 0) {
 				return [
-					`记忆根下扫到 0 条条目，但有 ${ignored} 个非 kebab 名的 .md 未计入——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。改成小写 kebab 名即回到索引（memory lint 有逐个提醒）`,
+					`记忆根下扫到 0 条条目，但有 ${ignored} 个非 kebab 名的 .md 未计入——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。改成小写 kebab 名即回到索引（名单见上方段表）`,
 				]
 			}
 			return [
@@ -258,8 +333,8 @@ export const CHECKS = [
 		label: '段内没有 title 重名（撞名的各行在注入块里按 title 分不出谁是谁）',
 		guard: '按 frontmatter 的 title 字段分组，同组 >1 即判红；title 判不了的条目不占坑',
 		claims: ['segment-title-dup'],
-		// 文案不再自己渲染：detail 出自 frontmatter.js 那份共享渲染点，与体检 warning、
-		// 写侧报错同一份口径；这里只补上「哪一段」这半句定位前缀
+		// 文案不再自己渲染：detail 出自 frontmatter.js 那份共享渲染点，与注入侧告警
+		// 同一份口径；这里只补上「哪一段」这半句定位前缀
 		run: (site) => site.issues.filter((item) => item.issue === 'segment-title-dup').map((item) => `${item.kind}：${item.detail}`),
 	},
 	{
@@ -271,11 +346,59 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-section-dup',
-		label: '条目内没有重名的 ## 节标题（edit 按节锚定以标题为锚，重名即分不清锚在哪）',
-		guard: '整篇读条目正文，同一 ## 标题（去空白后）出现 ≥2 即判红；只查重名不查无节——无节条目是语料迁移收口前的存量常态',
+		label: '条目内没有重名的 ## 节标题（节标题是条目里唯一的锚，重名即分不清指哪节）',
+		guard: '整篇读条目正文，同一 ## 标题（去空白后）出现 ≥2 即判红；只查重名不查无节——无节条目是存量常态',
 		claims: ['entry-section-dup'],
-		// detail 出自 patterns 的共享渲染点（与体检 warning 同一份口径），这里补上「哪一段」定位
+		// detail 出自 patterns 的共享渲染点，这里补上「哪一段」定位
 		run: (site) => site.issues.filter((item) => item.issue === 'entry-section-dup').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
+	},
+	{
+		id: 'entry-section-length',
+		label: `单节行数在红线上（一节吞掉大半条＝该收敛或该拆条的膨胀形态）`,
+		guard: `SECTION_LENGTH_RED=${SECTION_LENGTH_RED}（行；现存最长一节的上方一档，抬线先重测分布）`,
+		run: (site) =>
+			site.entries.flatMap((entry) =>
+				entry.sections
+					.filter((section) => section.len > SECTION_LENGTH_RED)
+					.map((section) => `${entry.kind}：${entry.path} 的节「${section.title}」${section.len} 行超红线 ${SECTION_LENGTH_RED}——先收敛该节（销账即删、活事实归位），或把这一节拆成独立条目`),
+			),
+	},
+	{
+		id: 'entry-runaway',
+		label: '单条字符数在失控保护内（超线注入侧会截断丢尾，且只留一句截断标注）',
+		guard: `RUNAWAY_CEILING=${RUNAWAY_CEILING}（字符，与注入侧 readCapped 同一份常量）`,
+		run: (site) =>
+			site.entries
+				.filter((entry) => entry.chars > RUNAWAY_CEILING)
+				.map((entry) => `${entry.kind}：条目 ${entry.name} ${entry.chars} 字符超失控保护 ${RUNAWAY_CEILING}（注入会被截断丢尾）——收敛正文或拆条`),
+	},
+	{
+		id: 'entry-dead-link',
+		label: '条目内 wikilink 都有所指（死链的另一半「删条目清引用」靠写的人当场做）',
+		guard: '[[stem]] 的 stem 落在全库已知 stem 集（segments.knownStems，含保留名）内；判不出所指即判红',
+		run: (site) =>
+			site.entries.flatMap((entry) =>
+				entry.deadLinks.map((link) => `${entry.kind}：${entry.path}:${link.line} 的 [[${link.stem}]] 无所指（全库没有这个名字的条目）——改指现存条目，或删掉这处引用`),
+			),
+	},
+	{
+		id: 'entry-date-stamp',
+		label: '条目 description 不带日期戳（时序归 git；日期会让触发器「过期」而不自知）',
+		guard: 'description 含 YYYY-MM-DD 形态即判红（判据问 patterns.styleWarnings 单源）',
+		run: (site) =>
+			site.segments.flatMap((segment) =>
+				segment.styles.map((style) => `${segment.kind}：条目 ${style.name} —— ${style.text}`),
+			),
+	},
+	{
+		id: 'entry-lines-hint',
+		label: '单条正文行数在黄线下（超线是「先收敛再加」的提醒，不是闸门）',
+		guard: `ENTRY_LINE_YELLOW=${ENTRY_LINE_YELLOW}（行；排除存量提示后语料上限 74 的上取整档）`,
+		soft: true,
+		run: (site) =>
+			site.entries
+				.filter((entry) => entry.bodyLines > ENTRY_LINE_YELLOW)
+				.map((entry) => `${entry.kind}：条目 ${entry.name} 正文 ${entry.bodyLines} 行过黄线 ${ENTRY_LINE_YELLOW}——追加前先收敛：销账段删掉、活事实归位`),
 	},
 	{
 		id: 'block-chars',
@@ -295,7 +418,7 @@ export const CHECKS = [
 			const issues = site.issues
 				.filter((item) => item.issue === 'bad-machine')
 				.map((item) => `机器 id「${item.path}」不合规——${item.detail}`)
-			// 配了机器名而目录缺席＝那台机器的条目还没迁进来（lint 判不了这一条：空目录与
+			// 配了机器名而目录缺席＝那台机器的条目还没迁进来（头扫描判不了这一条：空目录与
 			// 首跑不可区分；而离线自检跑在迁移之后，语境明确，缺席就是迁移没做）。
 			// 名字不合规那一格由上面的 bad-machine 认领：那时「目录缺席」是同义的第二种说法
 			if (site.machineGiven && site.machineValid && !site.machineDirExists) {
@@ -325,15 +448,16 @@ export const CHECKS = [
 	},
 ]
 
-/** 跑完一份检查项数组，返回全部待收敛条目（带 id，报告与自报名单靠它对上）。 */
+/** 跑完一份检查项数组，返回全部待收敛条目（带 id，报告与自报名单靠它对上）。黄线项不进这里。 */
 export function collectViolations(site) {
-	return CHECKS.flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
+	return CHECKS.filter((check) => !check.soft).flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
 }
 
 /**
- * 报告：现场清点 → 逐项判定 → 自报名单。末段清单由 CHECKS 生成而不是手抄文案常量——
- * 另写一份就是给「覆盖了哪几项」造出下一次改动就会漂的旁证，而这正是本检查存在的理由。
- * 「全部达标」那句也不枚举覆盖范围：枚举一份只点了三类的清单，等于在本文件里养第二份真相。
+ * 报告：现场清点 → 逐项判定 → 黄线提示 → 自报名单。末段清单由 CHECKS 生成而不是手抄文案
+ * 常量——另写一份就是给「覆盖了哪几项」造出下一次改动就会漂的旁证，而这正是本检查存在的
+ * 理由。「全部达标」那句也不枚举覆盖范围：枚举一份只点几类的清单，等于在本文件里养第二份
+ * 真相。
  */
 export function renderReport(site) {
 	const out = []
@@ -343,6 +467,7 @@ export function renderReport(site) {
 	// 而报告里的一切数字都是相对它量的
 	push(`记忆根来源：${site.rootGiven ? '本次实参' : '默认值（未显式给出）'}`)
 	push(`机器 id（决定本机段）：${site.machineGiven ? site.machine : '（未给）'}`)
+	if (site.stemsDegraded) push('⚠ 死链判定降级：全库 stem 集读不动，保留名集兜底——死链可能漏报，其余检查照跑')
 	push()
 	push('段\t条目文件\t派生行\t索引字符\t最长行\t超单行预算')
 	for (const segment of site.segments) {
@@ -364,7 +489,7 @@ export function renderReport(site) {
 		push('提示：未给机器 id，本次装配只有共享段（本机段与尾行均不含本机）')
 	}
 	push(
-		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符`,
+		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符；防膨胀线：单条黄线 ${ENTRY_LINE_YELLOW} 行（不判红），单节红线 ${SECTION_LENGTH_RED} 行`,
 	)
 	push(`其中写侧纪律 ${WRITING_FILE} 占 ${site.rulesChars} 字符`)
 	push()
@@ -377,6 +502,13 @@ export function renderReport(site) {
 		for (const violation of violations) push(`  · [${violation.id}] ${violation.text}`)
 	} else {
 		push(`全部达标：${CHECKS.length} 项检查全过（逐项见下）。`)
+	}
+	// 黄线提示单独一段、用「~」前缀：不进 violations、不参与退出码，行形也与病灶行分开，
+	// 「必须收敛」与「可以先收敛」两股流在报告与测试里都各认各的
+	const hints = CHECKS.filter((check) => check.soft).flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
+	if (hints.length > 0) {
+		push(`${hints.length} 条黄线提示（不判红）：`)
+		for (const hint of hints) push(`  ~ [${hint.id}] ${hint.text}`)
 	}
 	push()
 	push(`本命令覆盖 ${CHECKS.length} 项（检查项数组即清单，改这一份就够）：`)
