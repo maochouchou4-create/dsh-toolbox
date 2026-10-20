@@ -76,7 +76,7 @@ const planning = (overrides = {}) => ({
 
 test('computeCombo：主行命中取该门组合，每形态一句理由（专抓什么即理由）', () => {
 	assert.deepEqual(formIds(computeCombo(data, { batchType: '纯后端管线批', stage: '门二' })), [
-		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff',
+		'设计七维·终审', '连带面', '砍刀·diff',
 	])
 	assert.deepEqual(formIds(computeCombo(data, { batchType: '纯后端管线批', stage: '门一' })), ['锚点核对', '事实校准', '工程复用', '砍刀'])
 	for (const entry of computeCombo(data, { batchType: '纯后端管线批', stage: '门二' })) {
@@ -88,7 +88,7 @@ test('computeCombo：主行命中取该门组合，每形态一句理由（专�
 test('computeCombo：加挂行并集叠加，与主行重复的形态只出一次', () => {
 	const combo = computeCombo(data, { batchType: '纯后端管线批', stage: '门二', addons: ['涉鉴权/上传/输入', '大数值/通知批'] })
 	assert.deepEqual(formIds(combo), [
-		'设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff', '安全专项',
+		'设计七维·终审', '连带面', '砍刀·diff', '安全专项',
 	], '大数值/通知批的终审与连带面与主行重复，去重后不出第二份')
 	const gate1 = computeCombo(data, { batchType: '纯后端管线批', stage: '门一', addons: ['涉鉴权/上传/输入', '大数值/通知批'] })
 	assert.deepEqual(formIds(gate1), ['锚点核对', '事实校准', '工程复用', '砍刀', '安全清单行', '数字口径问'])
@@ -106,7 +106,7 @@ test('computeCombo：新功能·形态未定的门一带自带形态，门二才
 	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一' })), ['锚点核对', '第一性原理', '砍刀'])
 	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门一', baseBatchType: '用户可见功能批' })), ['锚点核对', '第一性原理', '砍刀'], '门一自带形态优先于 base 行')
 	assert.throws(() => computeCombo(data, { batchType: '新功能·形态未定', stage: '门二' }), /baseBatchType/)
-	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门二', baseBatchType: '用户可见功能批' })), ['设计七维·终审', '连带面', 'GUI 目检', '蜕变关系问', '砍刀·diff'])
+	assert.deepEqual(formIds(computeCombo(data, { batchType: '新功能·形态未定', stage: '门二', baseBatchType: '用户可见功能批' })), ['设计七维·终审', '连带面', 'GUI 目检', '砍刀·diff'])
 })
 
 test('批型条件必填来自数据不在代码（改配对行的 needsBase／needsRootCause 即改行为，文件不动）', () => {
@@ -350,7 +350,7 @@ test('assembleDispatch：总结构齐、裁决六条逐条在位、自检抬头�
 
 	const review = assembleDispatch(data, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' })
 	assert.equal(review.adjudication.length, 6, '裁决段不随阶段变')
-	assert.equal(review.briefs.length, 6, '门二逐形态一路')
+	assert.equal(review.briefs.length, 3, '门二逐形态一路（三问改加挂制后基组合＝三路）')
 	assert.deepEqual(review.warnings, [], '门二无 anchors 参数，不产出锚点告警')
 	assert.throws(() => assembleDispatch(data, { stage: '施工', batchType: '纯后端管线批', subject: 'x' }), /intent、anchors/)
 })
@@ -459,10 +459,10 @@ test('MU13 加挂只增路不改路：加挂后主行已生成那路 brief 逐�
 })
 
 test('P6 role 归属：全部 22 个形态都扫一遍——该形态那路 brief 以本形态 role 句起头', () => {
-	// 两个预期孤儿（设计七维、证伪复核）配对表没有行引用，借一条收容行把它们扫进来，
-	// 否则「角色句取成别的形态」这件事在它们身上永远无人验
+	// 四个预期孤儿（设计七维、证伪复核＝门一承载/手动指派；性能放大问、性质测试问＝三问加挂制）
+	// 配对表没有行引用，借一条收容行把它们扫进来，否则「角色句取成别的形态」这件事在它们身上永远无人验
 	const swept = structuredClone(data)
-	swept.pairing.rows.push({ batchType: '孤儿收容批', gate1: ['设计七维', '证伪复核'], gate2: [] })
+	swept.pairing.rows.push({ batchType: '孤儿收容批', gate1: ['设计七维', '证伪复核'], gate2: ['性能放大问', '性质测试问'] })
 	const seen = new Set()
 	// 主行各走一趟；加挂行不作 batchType（那是槽位对称那条用例），改由主行把它加挂进来
 	const sweepCalls = swept.pairing.rows.flatMap((row) => (row.kind === 'addon'

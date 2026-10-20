@@ -52,7 +52,7 @@ const COUNT_SNAPSHOT = {
 	forms: 22,
 	rejected: 3,
 	rows: 11,
-	rhythm: 12,
+	rhythm: 14,
 	stages: 6,
 	blocks: 13,
 	checklist: 12,
@@ -110,7 +110,7 @@ const countsOnDisk = (dir = DEFAULT_DATA_DIR) => {
 	}
 }
 
-test('盘上真数据加载即用：五份数据的计数与数据文件现读对账（快照一致＋加载器与盘上一致），warnings 只收两条预期孤儿', () => {
+test('盘上真数据加载即用：五份数据的计数与数据文件现读对账（快照一致＋加载器与盘上一致），warnings 只收四条预期孤儿', () => {
 	const data = loadDispatchData()
 	assert.deepEqual(Object.keys(data).sort(), ['forms', 'lifecycle', 'pairing', 'planSpec', 'templates', 'warnings'])
 	// 对账式而非钉死式：数据是 SSOT，测试守「快照与源同步」不守「数不变」。加一条形态、改一条节奏
@@ -131,11 +131,11 @@ test('盘上真数据加载即用：五份数据的计数与数据文件现读�
 		[...ZERO_READER_LIST_FIELDS].sort(),
 		'形状规格里可缺省的顶层列表字段须逐个在零读者名单（data.js 的 ZERO_READER_LIST_FIELDS）里：那一维不进快照是因为没人读它，不是因为漏了一维',
 	)
-	assert.deepEqual(data.warnings.map(orphanId).sort(), ['设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦')
+	assert.deepEqual(data.warnings.map(orphanId).sort(), ['性能放大问', '性质测试问', '设计七维', '证伪复核'], '形状与引用自洽才加载得出来，孤儿只报不拦（性能/性质两问＝加挂制预期孤儿，仅 rhythm 点名）')
 	assert.ok(data.warnings.every((warning) => warning.includes('预期孤儿')), '孤儿告警带出该形态自己的 notes，说明它是刻意的')
 	// 加载出来的那份直接喂 core：这一条兜住「加载通过但核心函数吃不下」的缝
 	const output = assembleDispatch(data, { stage: '门二', batchType: '纯后端管线批', subject: 'git diff HEAD~1', intent: '终审' })
-	assert.equal(output.briefs.length, 6)
+	assert.equal(output.briefs.length, 3)
 })
 
 test('三段阶段模板的正文与快照逐字一致（改模板＝改规则，红在这里指明该改快照）', () => {
@@ -200,7 +200,7 @@ test('去掉一条配对引用不失败：该形态进 warnings，数据照常�
 			const data = loadDispatchData({ dataDir: dir })
 			assert.deepEqual(countsOf(data), countsOnDisk(dir), '孤儿只报不拦：三份数据照常返回（被形变的是引用，不是条目本身），装配层继续可用')
 			assert.ok(data.warnings.some((warning) => orphanId(warning) === '砍刀'), '无引用（且自己没写 notes）的形态也进 warnings')
-			assert.deepEqual(data.warnings.filter((warning) => warning.includes('预期孤儿')).map(orphanId).sort(), ['设计七维', '证伪复核'])
+			assert.deepEqual(data.warnings.filter((warning) => warning.includes('预期孤儿')).map(orphanId).sort(), ['性能放大问', '性质测试问', '设计七维', '证伪复核'])
 		})
 })
 
@@ -752,13 +752,13 @@ test('批1 数据迁移：砍刀/砍刀·diff 进对齐的主行门列、用户�
 	assert.deepEqual(rowOf('配置/迁移批').gate1, ['锚点核对', '砍刀'])
 	assert.deepEqual(rowOf('新功能·形态未定').gate1, ['锚点核对', '第一性原理', '砍刀'])
 	// 六主行 gate2 终值逐字钉住（各含砍刀·diff；用户可见终值另列）
-	assert.deepEqual(rowOf('纯后端管线批').gate2, ['设计七维·终审', '连带面', '性能放大问', '性质测试问', '蜕变关系问', '砍刀·diff'])
+	assert.deepEqual(rowOf('纯后端管线批').gate2, ['设计七维·终审', '连带面', '砍刀·diff'])
 	assert.deepEqual(rowOf('跨端契约批').gate2, ['契约一致性', '连带面', '砍刀·diff'])
 	assert.deepEqual(rowOf('配置/迁移批').gate2, ['迁移执行核对', '连带面', '蜕变关系问', '砍刀·diff'])
 	assert.deepEqual(rowOf('机械搬运/小修').gate2, ['连带面', '金主比对', '砍刀·diff'])
 	assert.deepEqual(rowOf('直做批').gate2, ['设计七维·终审', '连带面', '砍刀·diff'])
-	// 用户可见功能批 gate2 终值（蜕变关系问插在「GUI 目检」后、砍刀·diff 收尾）
-	assert.deepEqual(rowOf('用户可见功能批').gate2, ['设计七维·终审', '连带面', 'GUI 目检', '蜕变关系问', '砍刀·diff'])
+	// 用户可见功能批 gate2 终值（三问改加挂制后基组合＝七维终审＋连带面＋GUI 目检＋砍刀·diff）
+	assert.deepEqual(rowOf('用户可见功能批').gate2, ['设计七维·终审', '连带面', 'GUI 目检', '砍刀·diff'])
 	// addon 行两门与批1 改前逐字相等（砍刀/砍刀·diff 不进 addon 行是钉死口径）
 	assert.deepEqual(rowOf('涉鉴权/上传/输入').gate1, ['安全清单行'])
 	assert.deepEqual(rowOf('涉鉴权/上传/输入').gate2, ['安全专项'])
