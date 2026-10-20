@@ -157,6 +157,19 @@ test('旧批（无 start）：档位未登记降级、先行事件缺立项有�
 	assert.ok(state.warnings.some((warning) => warning.includes('没有 start 事件')))
 })
 
+test('旧 start（无档位）过 status/list/落账出口：tier 输出必为字符串占位（MCP 出口校验不容 null）', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await appendStartOnce({ port, path, event: startEvent({ batch: 'b2', tier: undefined, triage: undefined, intent: '旧批' }) })
+		const statusOut = await runBatchAction({ port, path, action: 'status', params: { batch: 'b2' } })
+		assert.equal(statusOut.tier, '未登记')
+		const listOut = await runBatchAction({ port, path, action: 'list' })
+		assert.equal(listOut.rows.every((row) => typeof row.tier === 'string'), true)
+		await appendStartOnce({ port, path, event: commitEvent({ batch: 'b2', commit: 'abc1234', pushed: 'ok' }) })
+		const commitOut = await runBatchAction({ port, path, action: 'commit', params: { batch: 'b2', commit: 'abc1234', pushed: 'ok' } })
+		assert.equal(commitOut.tier, '未登记')
+	})
+})
+
 test('渲染：批次行含档位/已过/下一阶段，单批折叠含进度与门效能', () => {
 	const state = foldBatch([
 		startOf('b1'),
