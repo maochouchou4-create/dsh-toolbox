@@ -1,7 +1,9 @@
 /**
- * 使用日志的单测：事件构造（纯函数，含值级截断边界）、profile 归因键、落点与分片口径、白名单
- * 过滤、订阅落盘、两机分片、机器段值域与缺席的三条处置、手记工具的注册面与落盘形状。落点全按
- * 记忆根推——真实家目录不参与测试。
+ * 使用日志的单测：事件构造两态（成功瘦行只留参数键集与耗时、失败胖行保留 args 与 error）、
+ * 值级截断边界、profile 归因键、落点与分片口径、14 天轮转（判龄看档名日期不看 mtime、只删已
+ * 提交到 HEAD 的档、写入与注册两处都清）、at 必传校验、白名单过滤、订阅落盘与耗时起收表、两机
+ * 分片、机器段值域与缺席的三条处置、手记工具的注册面与落盘形状。落点全按记忆根推——真实家目录
+ * 不参与测试。轮转夹具是真 git 仓：删除资格就是「在 HEAD 里且工作区一致」。
  *
  * 进程时钟整个文件冻结在 AT：写侧（订阅监听器与手记 execute）自己取 new Date()、读侧按固定 AT
  * 对应的文件名找当日文件；不冻住就是「写侧取一次 now、读侧再取一次」，跨零点那一下读空报假红。
@@ -13,7 +15,8 @@
  */
 import { after, before, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -21,7 +24,9 @@ import { FIXTURES_DIR, tempRoot } from './helpers.js'
 import { resolveLedgerPath } from '../lib/dispatch/batch.js'
 import { DEFAULT_MEMORY_ROOT, resolveRoot } from '../lib/memory-root.js'
 import {
+	appendUsageLine,
 	handleToolResult,
+	pruneUsageLog,
 	subscribeUsageLog,
 	usageCallEvent,
 	usageLogFile,
@@ -49,11 +54,46 @@ const MACHINE = 'home'
 const localDay = (at) => `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
 const utcDay = (at) => at.toISOString().slice(0, 10)
 
+/** 相对 AT 的日档名（轮转夹具）：offset 是本地日历日偏移，按本地分量现拼——写死字面量在别的时区
+ * 会造出「名字里是 15 天前、实际算下来是 14 天」的夹具，用例就失去判别力。 */
+const dayFileName = (offset, machine = MACHINE) => {
+	const day = new Date(AT.getFullYear(), AT.getMonth(), AT.getDate() + offset)
+	return `${localDay(day)}.${machine}.jsonl`
+}
+
 /** 本地日与 UTC 日不同的时刻：按本机时区偏移现挑（偏移为正＝本地在前，取 UTC 深夜；为负＝本地
  * 在后，取 UTC 凌晨）。偏移为 0 的时区里两者恒等，那时这条判别力退化——由「文件名取本地分量」
  * 那句兜住，不假装还有第二层判别力。 */
 const TZ_OFFSET_MINUTES = -new Date().getTimezoneOffset()
 const LOCAL_EDGE_AT = new Date(Date.UTC(2026, 0, 2, TZ_OFFSET_MINUTES >= 0 ? 23 : 1, 0))
+
+/** 直接起 git：轮转的删除资格（在 HEAD 里且工作区一致）只能拿真仓验，替身证明不了 git 判定本身。 */
+const git = (root, ...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' })
+
+/** 轮转夹具根＝已初始化的空仓。身份与签名在仓内写死：公司机／CI 的全局 git 配置不同，夹具红得
+ * 莫名其妙时会先去怀疑产品代码。 */
+const gitRoot = (t, label) => {
+	const root = tempRoot(t, label)
+	mkdirSync(root, { recursive: true })
+	assert.equal(git(root, 'init', '-q').status, 0, '夹具仓建不起来，后面的轮转断言就没有意义')
+	git(root, 'config', 'user.email', 'test@example.com')
+	git(root, 'config', 'user.name', 'test')
+	return root
+}
+
+/** 把当前夹具全部提交：这是「档可以被轮转」的前提，不是用例的点缀。 */
+const commitAll = (root, message = 'fixture') => {
+	assert.equal(git(root, 'add', '-A').status, 0)
+	const result = git(root, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message)
+	assert.equal(result.status, 0, `夹具提交失败：${result.stderr}`)
+}
+
+/** 捕获 console.warn：轮转跳过超龄档时没有 logger 面，这一条是「没删」唯一的显形处。 */
+const captureConsoleWarn = (t) => {
+	const warnings = []
+	t.mock.method(console, 'warn', (message) => warnings.push(message))
+	return warnings
+}
 
 before(() => mock.timers.enable({ apis: ['Date'], now: AT }))
 after(() => mock.timers.reset())
@@ -96,20 +136,20 @@ const absentProfileCtx = () => {
 	return stub
 }
 
-test('调用行构造：值级截断落在字符边界，嵌套里的长串同样截', () => {
+test('成功调用行：字段集固定为瘦行，只留参数键集与耗时，参数值与结果摘要都不落', () => {
+	const content = 'y'.repeat(5000)
 	const exec = {
 		name: 'memory',
 		callId: 'call-1',
 		agent: { id: 'session-1' },
-		arguments: {
-			atLimit: 'a'.repeat(200),
-			overLimit: 'b'.repeat(201),
-			empty: '',
-			nested: { deep: 'c'.repeat(201) },
-			flagged: false,
-		},
+		arguments: { action: 'write', content, scope: 'shared' },
 	}
-	const event = usageCallEvent(exec, { isError: false, value: { ok: true, summary: 'd'.repeat(201) } }, AT, PROFILE)
+	const event = usageCallEvent(exec, { isError: false, value: { ok: true, summary: 'z'.repeat(500) } }, AT, PROFILE, 12)
+	assert.deepEqual(
+		Object.keys(event),
+		['ts', 'type', 'tool', 'callId', 'ok', 'agent', 'profile', 'argKeys', 'ms'],
+		'成功行字段集就是读侧契约：多出 args/result/error 任何一格都算胖回去',
+	)
 	assert.equal(event.ts, '2026-01-02T03:04:05.000Z')
 	assert.equal(event.type, 'call')
 	assert.equal(event.tool, 'memory')
@@ -117,28 +157,45 @@ test('调用行构造：值级截断落在字符边界，嵌套里的长串同�
 	assert.equal(event.ok, true)
 	assert.equal(event.agent, 'session-1', 'agent 只记标识')
 	assert.equal(event.profile, PROFILE, 'profile 归因键取宿主 profileContext.name')
-	assert.equal(event.args.atLimit, 'a'.repeat(200), '正好到上限整体保留')
-	assert.deepEqual(event.args.overLimit, { len: 201, head: 'b'.repeat(200) })
-	assert.equal(event.args.empty, '')
-	assert.deepEqual(event.args.nested.deep, { len: 201, head: 'c'.repeat(200) }, '嵌套对象里的长串同样截')
-	assert.equal(event.args.flagged, false, '非字符串值原样')
-	assert.deepEqual(event.result, { value: { ok: true, summary: { len: 201, head: 'd'.repeat(200) } } })
-	assert.ok(!('isError' in event.result), 'result 不带内层 isError——顶层 ok 就是同一个事实')
-	assert.ok(!('error' in JSON.parse(JSON.stringify(event))), '成功行不出现 error 键')
+	assert.deepEqual(event.argKeys, ['action', 'content', 'scope'], '只记键名，顺序随参数对象')
+	assert.equal(event.ms, 12, 'ms 由订阅侧测量后传入')
+	const line = JSON.stringify(event)
+	assert.ok(line.length < 300, `成功行应有界（实得 ${line.length} 字符）——memory 写条目的几千字正文不进日志`)
+	assert.ok(!line.includes(content.slice(0, 50)), '参数值不落盘')
+	assert.ok(!line.includes('z'.repeat(50)), '结果摘要同样不落成功行')
+	assert.ok(!('args' in event) && !('result' in event) && !('error' in event), '瘦行不出现胖行的三格')
+	assert.equal(
+		usageCallEvent(exec, { isError: false, value: {} }, AT, PROFILE).ms,
+		null,
+		'没测到耗时记 null 而不是 0——「0 毫秒」与「没测到」是两件事',
+	)
+	assert.equal(
+		usageCallEvent({ name: 'memory', callId: 'call-null', arguments: null }, { isError: false, value: {} }, AT, PROFILE, 1).argKeys,
+		null,
+		'参数不是普通对象（schema 允许数组/标量）时键集记 null，不兜成空数组',
+	)
 })
 
-test('调用行构造：失败行 error 整块 { message, info } 不截断，agent 缺席记 null', () => {
+test('失败调用行：保持既有全量形态——args 值级摘要与 error 整块都在，不混入瘦行字段', () => {
 	const message = 'e'.repeat(400)
 	const info = { kind: 'ToolArgsError', detail: 'f'.repeat(400) }
+	const body = 'x'.repeat(500)
+	const args = { batch: 'usage-log', diffLines: 3, body, nested: { deep: 'c'.repeat(201) } }
 	const event = usageCallEvent(
-		{ name: 'dispatch_task', callId: 'call-2', arguments: {} },
+		{ name: 'dispatch_task', callId: 'call-2', arguments: args },
 		{ isError: true, error: { message, info } },
 		AT,
 		PROFILE,
+		999,
 	)
 	assert.equal(event.ok, false)
 	assert.equal(event.agent, null, '没有 agent 的调用记 null（agent 字段不判主/子）')
 	assert.equal(event.profile, PROFILE)
+	assert.equal(event.args.batch, 'usage-log', '失败行的普通参数值原样保留')
+	assert.equal(event.args.diffLines, 3)
+	assert.deepEqual(event.args.body, { len: 500, head: 'x'.repeat(200) }, '失败行保留 args 值级摘要（复盘靠它复现调错现场）')
+	assert.deepEqual(event.args.nested.deep, { len: 201, head: 'c'.repeat(200) }, '嵌套里的长串同样截')
+	assert.deepEqual(event.result, { value: undefined }, '失败行仍带 result 格（当前形态）')
 	assert.deepEqual(event.error, { message, info }, '失败行 error 整块落：message 与结构化 info 都不截断')
 	assert.deepEqual(
 		JSON.parse(JSON.stringify(event)).error,
@@ -146,6 +203,24 @@ test('调用行构造：失败行 error 整块 { message, info } 不截断，age
 		'info 是宿主 ToolFailure 的机判失败类别，模型可见 content 不含它——日志是唯一的持久面',
 	)
 	assert.ok(!('isError' in event.result), 'result 只装产出摘要')
+	assert.ok(!('argKeys' in event) && !('ms' in event), '失败行是既有形态原样，不混入瘦行的 argKeys/ms')
+})
+
+test('值级截断边界：正好 200 原样、空串与非串原样、201 才截', () => {
+	// 边界写成字面上的 200：VALUE_MAX_CHARS 改动时这条要跟着一起被看见，不能两处同源改完仍绿
+	const exact = 'a'.repeat(200)
+	const event = usageCallEvent(
+		{ name: 'memory', callId: 'c-boundary', arguments: { exact, empty: '', zero: 0, flag: false, nil: null, over: 'b'.repeat(201) } },
+		{ isError: true, error: { message: 'boom' } },
+		AT,
+		PROFILE,
+	)
+	assert.equal(event.args.exact, exact, '正好等于上限不截——边界是「超过」而不是「达到」')
+	assert.equal(event.args.empty, '', '空串原样')
+	assert.equal(event.args.zero, 0, '非串原样：数字')
+	assert.equal(event.args.flag, false, '非串原样：布尔')
+	assert.equal(event.args.nil, null, '非串原样：null')
+	assert.deepEqual(event.args.over, { len: 201, head: 'b'.repeat(200) }, '超过上限一个字符就截')
 })
 
 test('手记行构造：note 上限 500、tool 缺省 usage_note、ok 未给记 null', () => {
@@ -197,16 +272,114 @@ test('记忆根缺席：沿用 resolveRoot 的默认根（落默认根下的 sto
 	assert.equal(usageLogRoot(undefined), join(resolveRoot(DEFAULT_MEMORY_ROOT).store, 'data', 'usage-log'), '空记忆根取默认根而不是进程 cwd（与台账同款行为）')
 })
 
+test('轮转判据：只看档名里的日期（mtime 不参与）、14 天边界保留、不认识的档名不碰', (t) => {
+	const root = gitRoot(t, 'usage-log-prune')
+	// 夹具的 mtime 全是「现在」——clone/checkout 出来的仓也是这个样子：判龄若看 mtime，
+	// 新克隆一次就会把整个旧历史当成过期档清空
+	const names = [dayFileName(-15), dayFileName(-14), dayFileName(0), dayFileName(3, 'work')]
+	for (const name of names) writeFileSync(join(root, name), '{"fixture":true}\n')
+	const keep = ['notes.txt', '2026-02-30.home.jsonl', `${dayFileName(-15)}.bak`, dayFileName(-15, 'shared')]
+	for (const name of keep) writeFileSync(join(root, name), 'not a day file\n')
+	// 删除资格＝已提交到 HEAD：夹具得先真的提交，否则删的是唯一一份（见下一条用例）
+	commitAll(root)
+	const removed = pruneUsageLog(root, AT)
+	assert.deepEqual(removed, [dayFileName(-15)], '只删超过 14 天的日档，删掉谁要看得见')
+	const left = readdirSync(root)
+	assert.ok(!left.includes(dayFileName(-15)), '15 天前的旧日档被清')
+	assert.ok(left.includes(dayFileName(-14)), '正好 14 天前在窗口内，保留')
+	assert.ok(left.includes(dayFileName(0)), '当日档不动')
+	assert.ok(left.includes(dayFileName(3, 'work')), '未来日期与别的机器段都不动（时钟回拨/时区差异造得出来）')
+	for (const name of keep) assert.ok(left.includes(name), `不认识的档名「${name}」不碰`)
+	// 目录还不存在时没有旧档可清，不是错误（日志目录是首次写入才递归建的）
+	assert.deepEqual(pruneUsageLog(join(root, 'absent'), AT), [])
+})
+
+test('轮转的删除资格：untracked／有未提交改动／非 git 目录的超龄档都不删，各 warn 一条', (t) => {
+	const warnings = captureConsoleWarn(t)
+	// ① 仓里但没提交（untracked）：删了就是不可恢复
+	const repo = gitRoot(t, 'usage-log-prune-untracked')
+	writeFileSync(join(repo, dayFileName(-15)), '{"fixture":true}\n')
+	assert.deepEqual(pruneUsageLog(repo, AT), [], 'untracked 的超龄档不删')
+	assert.ok(existsSync(join(repo, dayFileName(-15))), '文件还在盘上')
+	assert.equal(warnings.length, 1, '跳过要可见：不静默')
+	assert.match(warnings[0], /未删除/)
+	assert.match(warnings[0], new RegExp(dayFileName(-15)))
+
+	// ② 已提交，但工作区与 HEAD 不一致：删了连当前那一版也没了
+	const dirty = gitRoot(t, 'usage-log-prune-dirty')
+	const dirtyName = dayFileName(-20)
+	writeFileSync(join(dirty, dirtyName), '{"fixture":true}\n')
+	commitAll(dirty)
+	writeFileSync(join(dirty, dirtyName), '{"edited":true}\n')
+	assert.deepEqual(pruneUsageLog(dirty, AT), [], '有未提交改动的超龄档不删')
+	assert.ok(existsSync(join(dirty, dirtyName)))
+	assert.equal(warnings.length, 2)
+
+	// ③ 根本不在 git 仓内（记忆根取默认根时日志不进任何仓的既有口径）
+	const plain = tempRoot(t, 'usage-log-prune-no-git')
+	mkdirSync(plain, { recursive: true })
+	writeFileSync(join(plain, dayFileName(-15)), '{"fixture":true}\n')
+	assert.deepEqual(pruneUsageLog(plain, AT), [], '非 git 目录里的超龄档不删')
+	assert.ok(existsSync(join(plain, dayFileName(-15))))
+	assert.equal(warnings.length, 3)
+})
+
+test('漏传 at 当场抛：appendUsageLine 与 pruneUsageLog 都在入口校验，且不落半行/不误删', (t) => {
+	const root = gitRoot(t, 'usage-log-require-at')
+	const old = join(root, dayFileName(-20))
+	writeFileSync(old, '{"fixture":true}\n')
+	commitAll(root)
+	// 没有校验时 NaN 参与的比较恒为 false：轮转「一个都不删」却毫无声息——同样不可接受
+	assert.throws(() => pruneUsageLog(root, undefined), TypeError, 'prune 入口校验 at')
+	assert.throws(() => pruneUsageLog(root, new Date(Number.NaN)), TypeError, '非法 Date 同样拦下')
+	assert.ok(existsSync(old), '校验落在删除之前：非法 at 一个档都不删')
+	const todayFile = usageLogFile(root, AT, MACHINE)
+	assert.throws(() => appendUsageLine(todayFile, { type: 'call' }), TypeError, '写入缝漏传 at 当场抛（catch 只吞轮转的 IO 失败）')
+	assert.equal(existsSync(todayFile), false, '校验发生在 mkdir/append 之前，不留半行文件')
+})
+
+test('轮转发生在写入时：成功调用落盘顺手清窗口外的日档', (t) => {
+	const root = gitRoot(t, 'usage-log-rotate-write')
+	writeFileSync(join(root, dayFileName(-15)), '{"fixture":true}\n')
+	writeFileSync(join(root, dayFileName(-14)), '{"fixture":true}\n')
+	commitAll(root)
+	handleToolResult(
+		{ name: 'memory', callId: 'c1', arguments: { action: 'lint' } },
+		{ isError: false, value: { ok: true } },
+		{ rootDir: root, toolNames: ['memory'], profile: PROFILE, machine: MACHINE, ms: 5 },
+	)
+	assert.ok(!existsSync(join(root, dayFileName(-15))), '写入这一趟就把 15 天前的档清掉')
+	assert.ok(existsSync(join(root, dayFileName(-14))), '窗口内的档随写入一起留下')
+	assert.equal(readLines(root, MACHINE).length, 1, '当日档照常追加一行')
+})
+
+test('轮转发生在注册时：隔很久才开机的机器不必等第一次工具调用才收旧档', (t) => {
+	const memoryRoot = gitRoot(t, 'usage-log-rotate-subscribe')
+	const logDir = usageLogRoot(memoryRoot)
+	mkdirSync(logDir, { recursive: true })
+	writeFileSync(join(logDir, dayFileName(-15)), '{"fixture":true}\n')
+	writeFileSync(join(logDir, dayFileName(-2)), '{"fixture":true}\n')
+	commitAll(memoryRoot)
+	const stub = stubCtx()
+	subscribeUsageLog(stub.ctx, ['memory'], { memoryRoot, machine: MACHINE })
+	assert.ok(!existsSync(join(logDir, dayFileName(-15))), '订阅时就清掉窗口外的旧档')
+	assert.ok(existsSync(join(logDir, dayFileName(-2))), '窗口内的档保留')
+	assert.deepEqual(stub.warnings, [], '轮转是维护动作，清成功不告警')
+})
+
 test('白名单过滤：名单内落盘、名单外忽略（handleToolResult 直调临时根）', (t) => {
 	const root = tempRoot(t, 'usage-log-whitelist')
 	const names = ['usage_note', 'memory']
-	handleToolResult({ name: 'memory', callId: 'c1', arguments: { action: 'lint' } }, { isError: false, value: { ok: true } }, root, names, PROFILE, MACHINE)
-	handleToolResult({ name: 'read', callId: 'c2', arguments: { path: 'a.md' } }, { isError: false, value: {} }, root, names, PROFILE, MACHINE)
+	const options = { rootDir: root, toolNames: names, profile: PROFILE, machine: MACHINE, ms: 3 }
+	handleToolResult({ name: 'memory', callId: 'c1', arguments: { action: 'lint' } }, { isError: false, value: { ok: true } }, options)
+	handleToolResult({ name: 'read', callId: 'c2', arguments: { path: 'a.md' } }, { isError: false, value: {} }, options)
 	const lines = readLines(root, MACHINE)
 	assert.equal(lines.length, 1, '名单外的宿主原生工具不落盘')
 	assert.equal(lines[0].tool, 'memory')
 	assert.equal(lines[0].callId, 'c1')
 	assert.equal(lines[0].profile, PROFILE)
+	assert.deepEqual(lines[0].argKeys, ['action'], '直调缝同样只落参数键集')
+	assert.equal(lines[0].ms, 3, '直调缝把调用方测好的耗时原样带进事件')
 })
 
 test('订阅落盘：按订阅期的记忆根与机器名落盘，名单内两次调用＋一次手记恰好三行', async (t) => {
@@ -214,17 +387,36 @@ test('订阅落盘：按订阅期的记忆根与机器名落盘，名单内两�
 	const stub = stubCtx()
 	const logDir = usageLogRoot(memoryRoot)
 	subscribeUsageLog(stub.ctx, ['memory', 'usage_note'], { memoryRoot, machine: MACHINE })
+	const onExecute = stub.handlers.get('tools/execute')
+	assert.equal(typeof onExecute, 'function', '计时须挂在 tools/execute 上（tools/result 拿不到开始时刻，ms 只能起收表）')
 	const onResult = stub.handlers.get('tools/result')
 	assert.equal(typeof onResult, 'function', '订阅须挂在 tools/result 上')
-	onResult({ name: 'memory', callId: 'c1', arguments: { action: 'write' } }, { isError: false, value: { ok: true } })
-	onResult({ name: 'pwsh', callId: 'c2', arguments: { command: 'ls' } }, { isError: false, value: {} })
+	// cordis waterfall：监听器不调 next() / 不把 next() 的返回值透传，就是否决整条工具执行链。
+	// 计时是旁路，接线一错（return undefined）会在真宿主里静默否决所有工具调用——这条断言就是那根线
+	const sentinel = { toolCalled: true }
+	const execTiming = { name: 'memory', callId: 'c-timing', arguments: {} }
+	assert.equal(onExecute(execTiming, () => sentinel), sentinel, '监听器须把 next() 的返回值原样透传')
+	// tools/execute 与 tools/result 交来的是同一个执行对象（宿主冻结后原样转交）：计时表按对象取回
+	const exec1 = { name: 'memory', callId: 'c1', arguments: { action: 'write', content: 'x'.repeat(1000) } }
+	onExecute(exec1, () => Promise.resolve())
+	onResult(exec1, { isError: false, value: { ok: true } })
+	const exec2 = { name: 'pwsh', callId: 'c2', arguments: { command: 'ls' } }
+	onExecute(exec2, () => Promise.resolve())
+	onResult(exec2, { isError: false, value: {} })
 	registerUsageNote(stub.ctx, { memoryRoot, machine: MACHINE })
 	await stub.registered[0].execute({ note: '手记：x 因为 y', tool: 'memory', ok: false })
-	onResult({ name: 'usage_note', callId: 'c3', arguments: { note: '手记：x 因为 y' } }, { isError: false, value: { ok: true, file: usageLogFile(logDir, AT, MACHINE) } })
+	const exec3 = { name: 'usage_note', callId: 'c3', arguments: { note: '手记：x 因为 y' } }
+	onExecute(exec3, () => Promise.resolve())
+	onResult(exec3, { isError: false, value: { ok: true, file: usageLogFile(logDir, AT, MACHINE) } })
 	const lines = readLines(logDir, MACHINE)
 	assert.deepEqual(lines.map((line) => line.type), ['call', 'note', 'call'], 'usage_note 自身既落 call 行又落 note 行')
 	assert.deepEqual(lines.map((line) => line.tool), ['memory', 'memory', 'usage_note'])
 	assert.deepEqual(lines.map((line) => line.profile), [PROFILE, PROFILE, PROFILE], '三行的归因键都来自 profileContext.name')
+	const [call1, , call3] = lines
+	assert.deepEqual(call1.argKeys, ['action', 'content'], '成功行只有参数名——1000 字正文不进日志')
+	assert.equal(typeof call1.ms, 'number', '起表后收表，ms 是数字（冻住 Date 不影响 performance.now 的真实耗时）')
+	assert.ok(!('args' in call1) && !('result' in call1), '成功行不带参数值与结果摘要')
+	assert.deepEqual(call3.argKeys, ['note'], '手记工具自身的调用行同样瘦，手记正文只在 note 行')
 	assert.deepEqual(stub.warnings, [])
 })
 
@@ -343,8 +535,11 @@ test('旁路失败只经宿主 logger 显形：写入失败与订阅本身失败
 		() => onResult({ name: 'memory', callId: 'c1', arguments: {} }, { isError: false, value: {} }),
 		'监听器抛错不得冒回宿主调用链',
 	)
-	assert.equal(failing.warnings.length, 1)
-	assert.match(failing.warnings[0], /使用日志写入失败/)
+	// store 被同名文件占住时两处都够不着目录：注册期轮转一条（读不到目录）、写入一条——都只经
+	// logger，都不许冒回调用链；两条各自点名自己的动作，读日志的人分得清是哪一步不顺利
+	assert.equal(failing.warnings.length, 2)
+	assert.match(failing.warnings[0], /旧日档清理失败/)
+	assert.match(failing.warnings[1], /使用日志写入失败/)
 
 	// 订阅本身失败：ctx.on 不在场。参数照真实装配形状给全，否则会先撞上「机器名不合格」那条分支
 	const warnings = []
