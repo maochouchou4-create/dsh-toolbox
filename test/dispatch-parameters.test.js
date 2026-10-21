@@ -31,13 +31,14 @@ test('键集对账：parameters.js 与 core 的名单逐名一致（顺序也同
 	assert.equal(new Set(challengeParamNames()).size, challengeParamNames().length)
 })
 
-test('生命周期 → schema 必填：立项五格全必填，门报只有 batch/subject 必填（tier 从台账回填）', () => {
+test('生命周期 → schema 必填：立项五格全必填，门报只有 batch 必填（subject/tier 都按门分叉）', () => {
 	const startRequires = data.lifecycle.stages.find((stage) => stage.id === '立项').requires
 	assert.deepEqual(requiredOf(task), [...startRequires].sort())
 	const gateRequires = data.lifecycle.stages.find((stage) => stage.id === '门报').requires
-	const derived = gateRequires.filter((field) => !['tier', 'triage', 'intent', 'decisions'].includes(field))
-	assert.deepEqual(requiredOf(challenge), [...derived].sort(), '必填＝requires − 台账可回填集（subject 例外：证伪门要净 diff 命令）')
+	const derived = gateRequires.filter((field) => !['tier', 'triage', 'intent', 'decisions', 'subject'].includes(field))
+	assert.deepEqual(requiredOf(challenge), [...derived].sort(), '必填＝requires − 台账可回填集 − subject（subject 按门分叉：方案证伪从台账回填，证伪门由 core 校验报必传）')
 	assert.ok(!challenge.tier.required, 'tier 必须可缺省——它从台账回填')
+	assert.ok(!challenge.subject.required, 'subject 不做 schema 级必填——必传与否取决于门，在 core 校验层报错')
 })
 
 test('参数覆盖：task/challenge 并集盖住生命周期引用的全部字段（不落空）', () => {
@@ -82,6 +83,6 @@ test('值类型：规模与裁决数字是 number、adjudicate 是 boolean、清
 test('台账参数面：commit/review 各要两格、status 动作要 action（必填唯一）', () => {
 	assert.deepEqual(requiredOf(batch), ['action'])
 	assert.ok(batch.commit && batch.pushed && batch.retro && batch.efficacy)
-	assert.match(batch.retro.description, /销账点|复盘/)
+	assert.match(batch.retro.description, /复盘行（action=review 必填，单行）：本批结论＋下一轮口径/)
 	assert.match(batch.action.description, /commit/)
 })

@@ -75,7 +75,7 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
 		['dispatch/index.js', [
 			'registerDispatchTask', 'registerDispatchChallenge',
-			'registerDispatchBatch', 'registerDispatchLessons', 'configShape',
+			'registerDispatchBatch', 'configShape',
 		]],
 		// 使用日志的手记工具：注册面在 note.js（要 defineTool，故这里只核它对 recorder.js 的四个
 		// 导入名在不在导出面——记事件、求当日文件、求日志根、求根全都经那一处）
@@ -105,10 +105,9 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	const used = new Set([
 		...consumedServices(glue),
 		...consumedServices(readLib('dispatch/index.js')),
-		// 台账与复盘两个逻辑模块今天不消费 ctx.*，仍在扫描面里：它们经装配层拿端口，一旦将来
-		// 自己伸手取服务，少了这两行 DOA 要到运行期才炸
+		// 台账逻辑模块今天不消费 ctx.*，仍在扫描面里：它经装配层拿端口，一旦将来
+		// 自己伸手取服务，少了这行 DOA 要到运行期才炸
 		...consumedServices(readLib('dispatch/batch.js')),
-		...consumedServices(readLib('dispatch/lessons.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
@@ -283,7 +282,6 @@ const NODE_FS_DIRECT = new Map([
 	['dispatch/vocab.js', false],
 	['dispatch/parameters.js', false],
 	['dispatch/batch.js', false],
-	['dispatch/lessons.js', false],
 	['dispatch/data.js', true],
 	['dispatch/index.js', false],
 	['working-dir.js', false],

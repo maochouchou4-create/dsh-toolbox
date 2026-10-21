@@ -33,13 +33,8 @@
       "kind": "复盘",
       "gate": false,
       "requires": [],
-      "uses": ["dispatch_lessons"],
-      "note": "dispatch_batch action=review 写 review 事件（复盘行＋门效能字段），复盘行也是 dispatch_lessons 的销账点。",
-      "point": {
-        "minBatches": 5,
-        "minTiers": 3,
-        "upperBatches": 8
-      }
+      "uses": [],
+      "note": "dispatch_batch action=review 写 review 事件（复盘行＋门效能字段），收官即清该批全部台账行。"
     }
   ]
 }

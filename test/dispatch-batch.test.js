@@ -28,6 +28,7 @@ import {
 	startEvent,
 } from '../lib/dispatch/batch.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
+import { validateChallenge } from '../lib/dispatch/core.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
 import { GATE_LABELS } from '../lib/dispatch/vocab.js'
 import { tempRoot } from './helpers.js'
@@ -170,15 +171,16 @@ test('旧 start（无档位）过 status/list/落账出口：tier 输出必为�
 	})
 })
 
-test('完工批过 status/list/review 出口：next 输出必为字符串占位（MCP 出口校验不容 null）', async (t) => {
+test('完工批过 review 出口：next 输出必为字符串占位；review 收官即清该批台账行', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
 		await appendStartOnce({ port, path, event: startOf('b3') })
 		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b3', gate: GATE_LABELS.challenge, tier: 'M', segment: '净 diff', adopted: 1, now: at(1) }) })
 		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b3', commit: 'def5678', pushed: 'ok' } })
 		const reviewOut = await runBatchAction({ port, path, action: 'review', params: { batch: 'b3', retro: '收官', efficacy: '拦一次' } })
 		assert.equal(reviewOut.next, '完工')
-		const statusOut = await runBatchAction({ port, path, action: 'status', params: { batch: 'b3' } })
-		assert.equal(statusOut.next, '完工')
+		// 收官清账：该批全部行（含刚写的 review 行）移出台账文件，status/list 不再认识它
+		assert.equal(readLines(path).length, 0, 'review 后台账文件无该批行')
+		await assert.rejects(() => runBatchAction({ port, path, action: 'status', params: { batch: 'b3' } }), /没有批次「b3」的 start 事件/)
 		const listOut = await runBatchAction({ port, path, action: 'list' })
 		assert.equal(listOut.rows.every((row) => typeof row.next === 'string'), true)
 	})
@@ -208,6 +210,10 @@ test('回填：台账登记值逐格回填，占位 subject 跳过并提醒，�
 	assert.deepEqual(values.decisions, ['拍板一'])
 	assert.equal(values.tier, 'M')
 	assert.deepEqual(notes, [])
+	// 方案证伪 subject 未传时从台账 start 事件回填，回填结果过得了校验（件3 链路）
+	const merged = mergeBackfill({ args: { batch: 'b1', gate: GATE_LABELS.planChallenge }, state, gate: GATE_LABELS.planChallenge })
+	assert.equal(merged.params.subject, '/path/plan.md')
+	assert.equal(validateChallenge(data, merged.params), GATE_LABELS.planChallenge)
 
 	const challenge = backfillFromBatch(state, GATE_LABELS.challenge)
 	assert.equal(challenge.values.subject, undefined, '证伪门对象是净 diff 命令，不能拿方案路径回填')
@@ -215,6 +221,11 @@ test('回填：台账登记值逐格回填，占位 subject 跳过并提醒，�
 	const placeholder = backfillFromBatch(foldBatch([startOf('b2')], data), GATE_LABELS.planChallenge)
 	assert.equal(placeholder.values.subject, undefined)
 	assert.ok(placeholder.notes.some((note) => note.includes('占位')))
+	// 占位回填跳过 → 校验层报「台账登记是占位/空」指回补记，不静默放行（件3 链路）
+	assert.throws(
+		() => validateChallenge(data, { batch: 'b2', gate: GATE_LABELS.planChallenge, ...placeholder.values }),
+		/台账登记是占位\/空，请传实际方案路径＋批次节指针/,
+	)
 	assert.deepEqual(backfillFromBatch(null, GATE_LABELS.planChallenge), { values: {}, notes: [] })
 })
 
@@ -265,7 +276,7 @@ test('空台账：list／status 都不炸，文案指向 dispatch_task 立项', 
 	})
 })
 
-test('立项落账：首写追加 start，同批重跑只提醒不重复写（台账只追加）', async (t) => {
+test('立项落账：首写追加 start，同批重跑只提醒不重复写', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
 		const event = startOf('b1')
 		const first = await appendStartOnce({ port, path, event })
@@ -295,11 +306,11 @@ test('门报落账：gate 一条一轮不合并；commit/review 追加后状态�
 			params: { batch: 'b1', retro: '本批收', efficacy: '证伪门拦住假值' },
 		})
 		assert.equal(reviewed.next, '完工')
-		assert.match(reviewed.text, /最近复盘：本批收（门效能：证伪门拦住假值）/)
-		assert.equal(readLines(path).length, 5, 'start＋2 gate＋commit＋review 各一行，不重写')
+		assert.match(reviewed.text, /最近复盘：本批收（门效能：证伪门拦住假值）/, 'review 响应仍回放该批一生（内存态，读的是本次事件）')
+		assert.equal(readLines(path).length, 0, 'review 收官即清该批全部行（含刚写的 review 行）')
 
-		status = await runBatchAction({ port, path, action: 'list' })
-		assert.match(status.text, /b1｜M｜已过：立项→门报→提交→复盘｜下一阶段：完工/)
+		const listed = await runBatchAction({ port, path, action: 'list' })
+		assert.doesNotMatch(listed.text, /b1/, '已收官批从 list 消失')
 	})
 })
 

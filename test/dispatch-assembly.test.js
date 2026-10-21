@@ -36,11 +36,10 @@ const {
 	configShape,
 	registerDispatchBatch,
 	registerDispatchChallenge,
-	registerDispatchLessons,
 	registerDispatchTask,
 } = await import('../lib/dispatch/index.js')
 
-const dispatchSource = ['index.js', 'core.js', 'parameters.js', 'batch.js', 'lessons.js', 'data.js', 'vocab.js']
+const dispatchSource = ['index.js', 'core.js', 'parameters.js', 'batch.js', 'data.js', 'vocab.js']
 	.map((file) => readFileSync(join(DISPATCH_DIR, file), 'utf8'))
 	.join('\n')
 
@@ -109,14 +108,13 @@ const taskArgs = (overrides = {}) => ({
 	...overrides,
 })
 
-test('四件工具注册得出来：name／description／parameters／output 都挂在正确的一件上', () => {
+test('三件工具注册得出来：name／description／parameters／output 都挂在正确的一件上', () => {
 	const tools = [
 		mount(registerDispatchTask),
 		mount(registerDispatchChallenge),
 		mount(registerDispatchBatch),
-		mount(registerDispatchLessons),
 	]
-	assert.deepEqual(tools.map((tool) => tool.name), ['dispatch_task', 'dispatch_challenge', 'dispatch_batch', 'dispatch_lessons'])
+	assert.deepEqual(tools.map((tool) => tool.name), ['dispatch_task', 'dispatch_challenge', 'dispatch_batch'])
 	for (const tool of tools) {
 		assert.ok(tool.description.length > 20, `${tool.name} 的描述太短（模型选型靠它）`)
 		assert.ok(tool.parameters && typeof tool.parameters === 'object')
@@ -128,19 +126,18 @@ test('四件工具注册得出来：name／description／parameters／output 都
 	assert.deepEqual(Object.keys(configShape).sort(), ['dispatchDataDir', 'dispatchLedgerPath'])
 })
 
-test('描述面口径：四件各自点名四事件／档位／证伪门，不残留旧四件字样', () => {
+test('描述面口径：三件各自点名四事件／档位／证伪门，不残留旧四件字样', () => {
 	const task = mount(registerDispatchTask)
 	const challenge = mount(registerDispatchChallenge)
 	const batch = mount(registerDispatchBatch)
-	const lessons = mount(registerDispatchLessons)
 	assert.match(task.description, /档位 S\/M\/L/)
 	assert.match(task.description, /start 事件/)
 	assert.match(challenge.description, /证伪门/)
 	assert.match(challenge.description, /gate 事件/)
 	assert.match(batch.description, /start／gate／commit／review/)
-	assert.match(lessons.description, /复盘节奏/)
-	for (const tool of [task, challenge, batch, lessons]) {
-		const retiredNames = [...['plan', 'review', 'build', 'verify'].map((kind) => `dispatch_${kind}`), 'dispatch_advance']
+	assert.match(batch.description, /review 收官即清该批全部行/, '台账口径＝进行中批的工作台')
+	for (const tool of [task, challenge, batch]) {
+		const retiredNames = [...['plan', 'review', 'build', 'verify'].map((kind) => `dispatch_${kind}`), 'dispatch_advance', 'dispatch_lessons']
 		for (const retired of retiredNames) {
 			assert.ok(!tool.description.includes(retired), `${tool.name} 描述里还有 ${retired}`)
 		}
@@ -243,32 +240,43 @@ test('dispatch_challenge：与台账登记冲突的显式参数当场拒绝（�
 	)
 })
 
-test('dispatch_batch：commit／review 追加事件，list 汇总全量批次', async () => {
+test('dispatch_challenge：校验报错回显台账现值（占位 subject 的报错带「（待写）」）', async () => {
+	// 占位登记的批次走方案证伪：subject 按未登记处理不回填，校验必抛——回填摘记（台账现值）
+	// 必须织进报错文案，否则「占位「（待写）」」的提醒随局部变量一起消失，补记线索断一半。
+	const task = mount(registerDispatchTask)
+	await exec(task, taskArgs({ batch: 'smoke-placeholder' }))
+	const challenge = mount(registerDispatchChallenge)
+	await assert.rejects(
+		() => exec(challenge, { batch: 'smoke-placeholder', gate: '方案证伪' }),
+		(error) => {
+			assert.match(error.message, /台账登记是占位\/空/)
+			assert.match(error.message, /台账现值：批次 smoke-placeholder 的 subject 是占位「（待写）」/, '回填摘记织进报错文案')
+			return true
+		},
+	)
+})
+
+test('dispatch_batch：commit 追加事件，review 收官即清该批台账行', async () => {
 	const batch = mount(registerDispatchBatch)
 	const committed = await exec(batch, { action: 'commit', batch: 'smoke-gate', commit: 'abc1234', pushed: 'ok' })
 	assert.match(committed.text, /提交：abc1234／推送 ok/)
+	assert.deepEqual(
+		ledgerLines().filter((event) => event.batch === 'smoke-gate').map((event) => event.action),
+		['start', 'gate', 'commit'],
+	)
 	const reviewed = await exec(batch, { action: 'review', batch: 'smoke-gate', retro: '本批收', efficacy: '证伪门拦住假值' })
 	assert.equal(reviewed.next, '完工')
+	// 收官清账：review 落账成功后台账文件不再有该批的任何行（含刚写的 review 行）
+	assert.deepEqual(ledgerLines().filter((event) => event.batch === 'smoke-gate'), [], 'review 后台账文件无该批行')
+	// 清账只清本批：别批的行（smoke-batch）必须原样保留
 	const list = await exec(batch, { action: 'list' })
-	assert.match(list.text, /smoke-gate｜M｜已过：立项→门报→提交→复盘｜下一阶段：完工/)
+	assert.doesNotMatch(list.text, /smoke-gate/, '已收官批从 list 消失')
 	assert.match(list.text, /smoke-batch｜M/)
-	const events = ledgerLines().filter((event) => event.batch === 'smoke-gate')
-	assert.deepEqual(events.map((event) => event.action), ['start', 'gate', 'commit', 'review'])
 })
 
 test('dispatch_batch：渲染缺 text 即抛内部不变量错误（render 里不读盘、不重算）', () => {
 	const batch = mount(registerDispatchBatch)
 	assert.throws(() => batch.output.render({}, {}), /结构化值不带 text/)
-})
-
-test('dispatch_lessons：只读执行、输出点位统计与建议（review 事件已是销账点）', async () => {
-	const lessons = mount(registerDispatchLessons)
-	const value = await exec(lessons, { force: true })
-	assert.equal(typeof value.due, 'boolean')
-	assert.match(value.stats, /复盘口径：/)
-	assert.match(value.stats, /点位判据：攒 5–8 批/)
-	assert.ok(Array.isArray(value.suggestions) && value.suggestions.length > 0)
-	assert.ok(lessons.output.render({}, value)[0].text.includes(value.suggestions[0]))
 })
 
 test('工作流引导行＝四事件口径（注入块首行随 v2 改版，测试即契约）', () => {

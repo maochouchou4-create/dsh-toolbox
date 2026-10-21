@@ -1,7 +1,7 @@
 # dsh-toolbox
 
 自用工具箱插件：把「本机有用的工具」按深模块结构装进一个包，逐工具隔离注册——
-单个工具初始化失败只丢那一件，不连坐整包。当前六件：
+单个工具初始化失败只丢那一件，不连坐整包。当前五件：
 
 - **memory**：单仓记忆注入（store 顶层＝两机共享条目，`machines/<机器名>/`＝本机私有条目）。
   会话 systemPrompt 索引注入（`memory:index`，order 200），分「共享（跨机同步）」与
@@ -21,21 +21,18 @@
 - **dispatch_challenge**：证伪门／方案证伪的派发与记账（两件之二）。出独立复核 brief：每形态
   一段（角色句＋模板继承的横切判据＋四维判据＋对象＝净 diff 生成命令），只拿任务书与净 diff、
   不读施工汇报、一轮为限；`adjudicate=true` 时同一件工具把 findings 裁决写进 gate 事件（采纳／
-  拒收／双报重叠／漏网／施工段标记）。档位、分诊行、意图、拍板清单未传则从台账回填（`subject`
-  不回填——证伪门要的是净 diff 命令）。
+  拒收／双报重叠／漏网／施工段标记）。档位、分诊行、意图、拍板清单未传则从台账回填；`subject`
+  仅方案证伪从台账 start 事件回填，证伪门必传（缺省报错带命令形状示例）。
 - **dispatch_batch**：批次台账。四事件 `start`/`gate`/`commit`/`review`，一个批次一生记成 JSONL
   追加行，状态从事件现推（`status`/`list`）；`commit` 记提交号与推送结果，`review` 记复盘行＋
-  门效能（也是复盘销账点）。旧六阶段事件按 stage 名归一后标 legacy：能读能算，不参与门禁硬判。
-- **dispatch_lessons**：复盘辅助。读 `review` 事件之后的增量批（无 review 时按全量算），按点位
-  （攒 5–8 批、覆盖 ≥3 档位；阈值单源是 `lifecycle.json` 复盘行的 `point`）判断是否到点，到了
-  出配对规则修订建议草稿（长期零 findings 形态降级／漏网加派／修复轮数收敛／双报重叠趋势；
-  历史统计按规则指纹分组）。只出建议给主会话裁决，不自动改配对表、不落盘（装配层只给它只读端口）。
-- **usage_note**：使用日志的手记口子。本包七件的调用行由订阅层旁路落进记忆仓
+  门效能，review 收官即清该批全部台账行（含刚写的 review 行）。旧六阶段事件按 stage 名归一后
+  标 legacy：能读能算，不参与门禁硬判。
+- **usage_note**：使用日志的手记口子。本包五件的调用行由订阅层旁路落进记忆仓
   `memory/data/usage-log/` 下按天、按机器分片的 jsonl，两种行：**成功行瘦**——只有
   ts/type/tool/callId/ok/agent/profile/`argKeys`（参数键集，不含值）/`ms`（执行耗时），
   memory 写条目的几千字正文不进日志；**失败行胖**——保持既有全量（`args` 值级摘要＋结果摘要
   ＋`error` 整块，宿主 `ToolFailure` 的 `info` 只在这一处留存，两次复盘还原调错现场都靠
-  args）。白名单＝本包七件的注册名现读；文件名 `<日期>.<机器名>.jsonl`，两台机器各写各的
+  args）。白名单＝本包五件的注册名现读；文件名 `<日期>.<机器名>.jsonl`，两台机器各写各的
   文件、git 永不冲突；**14 天轮转**——写入与注册时各清一趟超过窗口的日档，判龄看档名里的
   日期、不看 mtime（同步仓 checkout 会把所有档 mtime 刷新），窗口常量在 recorder 顶部单源、
   不进配置面；删除只对**已提交到 HEAD 的档**开口——untracked 或有未提交改动的档跳过并
@@ -122,9 +119,7 @@ memory 的写改删走宿主自己的 write/edit 工具与 rm，受会话文件�
 
 `dispatch_batch` 的写侧同通道同前置：台账落在 store 下的 `data/` 里（＝agent-data 仓的
 `memory/data/`）。它与记忆同处一仓、同在常用工作区之内，所以记账的门槛与写记忆完全一样
-——记忆根出了工作区的会话里两者一起被拒，不是这个工具多要的一份权限。`dispatch_lessons`
-只读台账，不受这条约束——装配层传给它的端口上压根没有写方法
-（`fs-port.js` 的只读门面），边界是结构性的而不是靠记着别写。
+——记忆根出了工作区的会话里两者一起被拒，不是这个工具多要的一份权限。
 
 同一处 `data/` 里还有使用日志，两族按「记什么」分工而不是按「谁写的」：**批次语义归台账**
 （哪一批、哪一档、过了哪道门、复盘结论——两机共写、状态从事件现推），**调用痕迹归
@@ -181,9 +176,9 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 | 面 | 载体 | 什么时候被读 | 改它要不要重启 |
 |---|---|---|---|
-| 常驻召回面 | 四件工具的 `description`（`dispatch_task`／`dispatch_challenge`／`dispatch_batch`／`dispatch_lessons`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
+| 常驻召回面 | 三件工具的 `description`（`dispatch_task`／`dispatch_challenge`／`dispatch_batch`） | 每个请求都随工具清单进上下文 | 要（改描述＝改代码） |
 | 现读面 | `lib/dispatch/data/` 下五份 JSON（每次调用经 node:fs 现读） | 每次工具调用 | 不要，改 JSON 下次调用即生效 |
-| 追加面 | 台账 `memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_task`/`dispatch_challenge`/`dispatch_batch` 写，四件工具与 `dispatch_lessons` 读 | 不要 |
+| 追加面 | 台账 `memory/data/dispatch-ledger.jsonl`（两机 git 共享，`merge=union`） | `dispatch_task`/`dispatch_challenge`/`dispatch_batch` 写，三件工具读 | 不要 |
 
 现读面五份（v2 骨架）：
 
@@ -199,11 +194,11 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 - `templates.json`：**六键**——任务书骨架（≤15 行）／证伪门／方案证伪／横切判据／拍板卡（≤6 行）／
   门报行。模板里的 `〔…〕` 占位符必须登记在 `data.js` 的 `PLACEHOLDER_REGISTRY`（越表＝加载失败），
   空值整行省略（可选行靠这条省出来）。
-- `lifecycle.json`：**四阶段**（立项／门报／提交／复盘）——阶段词表、各阶段的参数必填清单
-  （`requires`，取值必须在 `PARAM_FIELDS` 里）与**复盘点位判据**（复盘行的 `point`：
-  `minBatches`/`minTiers`/`upperBatches`）的单源。`gate` 列只对「门报」为 true（加载期核）。
+- `lifecycle.json`：**四阶段**（立项／门报／提交／复盘）——阶段词表与各阶段的参数必填清单
+  （`requires`，取值必须在 `PARAM_FIELDS` 里）的单源。`gate` 列只对「门报」为 true（加载期核）。
 - `plan-spec.json`：**例外件**——仅 L 档、且只在设计未定或用户要方案时成文的方案规范
-  （`blocks` 八节＋`checklist` 自查八条），由 `dispatch_task` 在 L 档输出的「方案文档」段直出。
+  （`blocks` 四节＋`checklist` 自查四条），由 `dispatch_task` 在 L 档输出的「方案文档」段直出，
+  末尾带过目指引行（过目对比只进对话，不写进方案文档）。
 
 **跨文件互验（`data.js` 装载期一次做全，任一条对不上即加载失败）**：形态的 `gate` ∈ 门名词表；
 档位门列指向的形态必须存在且 `gate` 与列名一致；「语义域」触发行必须带 `form=安全专项`；三档
@@ -229,9 +224,9 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 `list`／全量 `status` 的历史行里——它们没有分诊档位，按 v2 门禁判只会永远差一道门。读侧可选
 字段缺失＝零值；坏行由读面带行号报错，不静默跳过。
 
-**review 事件的双重身份**：它既是那批的收尾，也是 `dispatch_lessons` 的全仓销账点——增量统计从
-最近一条 review 之后算；无 review 时按全量算（首次复盘前的兼容面）。唯一例外是长期零 findings
-的降级线索跨全量台账累积（销账点只销「裁决待办」不销证据）。
+**review 收官即清账**：review 落账成功后台账文件重写一遍，该批的全部行（含刚写的 review 行）
+移出台账——已完成批不留档，台账只装进行中的批。review 那一趟的响应仍会回放该批一生（读的是
+内存里本次事件），此后 `status`/`list` 不再认识这个批次。
 
 **改规则＝改 JSON，下一次调用即生效，不发版不重启**；需要重启的只有代码改动（宿主按模块代缓存）。
 v2 的参数面**不再用 schema `enum`**：档位/门名/形态 id 的词表校验在 execute 与 core 里做，报错带
@@ -276,13 +271,14 @@ Config 的 `dispatchLedgerPath` 显式路径优先，空串按 `memoryRoot` 推�
 `status` 出告警，不当事故。
 
 四个 action：`commit` 记提交（commit 号＋推送结果，**提交前先 status 查门禁**）、`review` 记复盘
-（复盘行＋门效能，同时是销账点）、`status` 查单批门禁或列在飞批次、`list` 列全量。**状态永远从
-事件现推**，不存状态文件、不另设缓存。台账只追加：`dispatch_task` 出稿自动落 start（同批已登记
-就不重复写），`dispatch_challenge` 裁决时落 gate，`dispatch_batch` 只补 commit/review 两句。
+（复盘行＋门效能，收官即清该批台账行）、`status` 查单批门禁或列在飞批次、`list` 列全量。
+**状态永远从事件现推**，不存状态文件、不另设缓存。进行中的批才是台账的工作台：`dispatch_task`
+出稿自动落 start（同批已登记就不重复写），`dispatch_challenge` 裁决时落 gate，`dispatch_batch`
+只补 commit/review 两句，review 收官该批全部行移出台账文件。
 
 `dispatch_challenge` 传 `batch=` 时，档位／分诊行／意图／拍板清单从 start 回填；显式传参优先，
-与台账说岔即报错（`subject` 例外：证伪门的对象是净 diff 命令，只认显式传值）。台账里出现坏行时
-`status`/`list` 带行号报错。
+与台账说岔即报错（`subject` 仅方案证伪从台账回填，证伪门只认显式传值、缺省报错带命令形状示例）。
+台账里出现坏行时 `status`/`list` 带行号报错。
 
 返回值：给批次名的那一趟连事件一起回（单批有界）；`list` 与不给批次名的 `status` 只带一批一行的
 `rows` 摘要与 `text`（一百分批的 events 是几百 KB 的上下文垃圾）。展示文本在 execute 那一趟算好
@@ -337,14 +333,14 @@ lib/memory/             记忆注入与自检：index.js 装配（只注册注�
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/usage-log/          使用日志与手记工具：recorder.js（订阅 tools/execute＋tools/result 旁路落 store 下 data/usage-log/ 的按天按机器分片 jsonl——成功行瘦（参数键集＋耗时）、失败行胖（args 摘要＋error），写入与注册时按 14 天窗口轮转（只删已提交到 HEAD 的档）；白名单由胶水从 FEATURES 现读传入，直连 node:fs——同步 append 单行＋写前递归建目录，整体 try/catch 只 warn）+ note.js（usage_note 工具＝手记口子，零直连）
 lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场
-lib/dispatch/           跑批工作流 v2 四件工具（两件装配＋台账＋复盘）：index.js 装配（零直连）+ vocab.js（档位/门名/阶段词表单源，零依赖）+ core.js（分诊/任务书/证伪门 brief 组装与渲染纯函数）+ parameters.js（task/challenge/batch 参数面，零直连）+ batch.js（四事件构造/集合式推导/台账读写/回填/展示文本，经包级 fs 端口，零直连）+ lessons.js（跨批统计/点位判定/建议草稿/展示文本，经同一 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与跨文件互验，直连 node:fs）＋ data/（3 形态／3 档位＋3 硬触发／六键模板／四阶段表／八节方案规范）
+lib/dispatch/           跑批工作流 v2 三件工具（两件装配＋台账）：index.js 装配（零直连）+ vocab.js（档位/门名/阶段词表单源，零依赖）+ core.js（分诊/任务书/证伪门 brief 组装与渲染纯函数）+ parameters.js（task/challenge/batch 参数面，零直连）+ batch.js（四事件构造/集合式推导/台账读写/回填/展示文本，review 收官清该批行，经包级 fs 端口，零直连）+ data.js（现读五份数据 JSON 并验形状与跨文件互验，直连 node:fs）＋ data/（3 形态／3 档位＋3 硬触发／六键模板／四阶段表／四节方案规范）
 test/                   node:test 单测（纯函数直测＋端口宿主适配器替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘）
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录那一族
-两件装配＋台账＋复盘，故导出 `registerDispatchTask`/`registerDispatchChallenge`/`registerDispatchBatch`/
-`registerDispatchLessons` 四个注册函数、共用一张 `configShape`——胶水的 FEATURES 表按工具逐条
+两件装配＋台账，故导出 `registerDispatchTask`/`registerDispatchChallenge`/`registerDispatchBatch`
+三个注册函数、共用一张 `configShape`——胶水的 FEATURES 表按工具逐条
 try/catch，一件起不来不连坐另一件）。
 纯函数文件零宿主依赖，可直接单测；含宿主 import 的装配文件由 test/imports.test.js
 静态解析钉住接线（防搬家断链、防 inject 漏声明）。

@@ -10,7 +10,7 @@ import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createHostFsPort, createNodeFsPort, createReadOnlyPort, versionOf } from '../lib/fs-port.js'
+import { createHostFsPort, createNodeFsPort, versionOf } from '../lib/fs-port.js'
 import { tempRoot } from './helpers.js'
 
 let base
@@ -269,16 +269,3 @@ function without(stub, method) {
 	delete copy[method]
 	return copy
 }
-
-test('createReadOnlyPort：只透读三件且冻结，写方法在返回对象上不存在（写路径摸不到而非拒绝写）', async () => {
-	const port = createNodeFsPort()
-	const target = await port.resolve(writeFixture('ro-facade', '只读面\n'))
-	const readOnly = createReadOnlyPort(port)
-	for (const method of ['resolve', 'stat', 'readText']) {
-		assert.equal(typeof readOnly[method], 'function', `读方法 ${method} 须在白名单内透出`)
-	}
-	assert.equal(readOnly.writeText, undefined, '写方法不得出现在只读门面上——「记得别写」是纪律，纪律会松；摸不到才是结构保证')
-	assert.ok(Object.isFrozen(readOnly), '门面须冻结：事后补方法等于把白名单变成摆设')
-	assert.equal(await readOnly.readText(target), '只读面\n')
-	assert.throws(() => readOnly.writeText(target, '越界\n'), TypeError, '门面上调写＝TypeError（undefined is not a function），不是静默成功')
-})

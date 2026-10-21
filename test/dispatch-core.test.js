@@ -125,7 +125,7 @@ test('任务书（M 档）：≤15 行、末行门报、直出可派参数与门
 	const noSubject = assembleTask(data, taskOf({ subject: undefined }))
 	assert.doesNotMatch(noSubject.prompt, /对象（规格正文/, '未传 subject 时对象行整行省略（可选行）')
 	const withSubject = assembleTask(data, taskOf({ subject: '/x/方案.md 的「批2」节' }))
-	assert.match(withSubject.prompt, /对象（规格正文，先读再动工）：\/x\/方案\.md 的「批2」节/, '传了 subject 必进任务书——施工者靠它找规格正文')
+	assert.match(withSubject.prompt, /对象（规格正文）：\/x\/方案\.md 的「批2」节/, '传了 subject 必进任务书——施工者靠它找规格正文')
 	assert.deepEqual(value.workflowArgs, { label: '施工 smoke-batch（M）', prompt: value.prompt })
 	const rendered = renderTaskResult(value)
 	assert.ok(
@@ -143,11 +143,12 @@ test('任务书（S 档）：免任务书不免记账指令，行数更短且不
 	assert.ok(value.prompt.split('\n').length <= 10)
 })
 
-test('任务书（L 档）：附方案规范八块与定稿自查（例外件）', () => {
+test('任务书（L 档）：附方案规范四节与定稿自查（例外件）', () => {
 	const value = assembleTask(data, taskOf({ tier: 'L', triage: 'L｜跨文件重写' }))
 	assert.ok(value.planAppendix.length > 0)
 	assert.match(value.planAppendix, /定稿自查/)
-	assert.match(value.planAppendix, /八、待拍板项/)
+	assert.match(value.planAppendix, /二、方案与落点（按批分组）/)
+	assert.match(value.planAppendix, /过目：交用户过目时在对话里配改前\/改后例子对比一段（不写入本文档）/, '方案模板末尾带过目指引行')
 	const rendered = renderTaskResult(value)
 	assert.match(rendered, /── 方案文档（L 档例外件/)
 })
@@ -250,6 +251,25 @@ test('复核参数校验：占位 subject、未知门、未激活形态、非法
 	assert.equal(validateChallenge(data, challengeOf()), GATE_LABELS.challenge)
 })
 
+test('subject 收口：方案证伪缺 subject 报台账占位/空，证伪门缺 subject 报必传带示例形状', () => {
+	// 方案证伪：subject 未传（台账占位/空被回填跳过后落到这里）→ 指回台账补记
+	assert.throws(
+		() => validateChallenge(data, { batch: 'b1', gate: GATE_LABELS.planChallenge }),
+		/台账登记是占位\/空，请传实际方案路径＋批次节指针/,
+	)
+	// 证伪门：subject 不回填，必传且文案带命令形状示例
+	assert.throws(
+		() => validateChallenge(data, { batch: 'b1', gate: GATE_LABELS.challenge }),
+		/subject 必传：净 diff 生成命令，如 git diff 起点\.\.HEAD/,
+	)
+	// 回填成功形状：subject 一旦补齐（显式或台账回填）两门都放行
+	assert.equal(
+		validateChallenge(data, { batch: 'b1', gate: GATE_LABELS.planChallenge, subject: '/x/方案.md 的「批2」节' }),
+		GATE_LABELS.planChallenge,
+	)
+	assert.equal(validateChallenge(data, { batch: 'b1', gate: GATE_LABELS.challenge, subject: 'git diff main..HEAD' }), GATE_LABELS.challenge)
+})
+
 test('未知参数当场拒绝（不静默丢）：参数名不在声明面即 UnknownParamError', () => {
 	assert.doesNotThrow(() => assertKnownParams('dispatch_task', { batch: 'x' }, ['batch']))
 	assert.throws(
@@ -292,14 +312,14 @@ test('渲染：证伪门 brief 段头与一轮为限声明；裁决分支改成�
 	assert.match(adjudication, /已记门报：批次 smoke-batch｜门 证伪门/)
 	assert.match(adjudication, /采纳 2／拒收 1／双报重叠 0/)
 	assert.match(adjudication, /漏网：漏了迁移脚本/)
-	assert.match(adjudication, /门效能交复盘/)
+	assert.match(adjudication, /门效能字段照记/)
 })
 
-test('方案规范渲染：八块标题＋编号自查', () => {
+test('方案规范渲染：四节标题＋编号自查', () => {
 	const text = renderPlanSpec(data)
 	for (const block of data.planSpec.blocks) assert.ok(text.includes(block.title))
 	assert.match(text, /定稿自查：\n1\. /)
-	assert.match(text, /8\. /)
+	assert.match(text, /4\. /)
 })
 
 test('未写预算时 M 档给提醒（任务书预算行省略，但口径要提示）', () => {

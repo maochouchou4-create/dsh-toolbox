@@ -234,9 +234,9 @@ test('手记行构造：note 上限 500、tool 缺省 usage_note、ok 未给记 
 	assert.equal(tied.tool, 'memory')
 	assert.equal(tied.ok, false)
 	assert.deepEqual(tied.note, { len: 501, head: 'n'.repeat(500) }, '手记上限 500，独立于值级 200')
-	// 工具名直存、不过 summarize：登记名面最长 16 字符（dispatch_lessons），够不到值级上限
-	const longest = 'dispatch_lessons'
-	assert.equal(longest.length, 16)
+	// 工具名直存、不过 summarize：dispatch_challenge 是登记名面最长的一个，够不到值级上限
+	const longest = 'dispatch_challenge'
+	assert.equal(longest.length, 18)
 	assert.equal(usageNoteEvent({ note: 'x', tool: longest }, AT, PROFILE).tool, longest, '工具名直存，不出现 { len, head } 形态')
 })
 

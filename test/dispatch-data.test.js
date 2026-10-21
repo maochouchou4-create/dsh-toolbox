@@ -32,16 +32,16 @@ const COUNT_SNAPSHOT = {
 	hardTriggers: 3,
 	templates: TEMPLATE_KEYS.length,
 	stages: 4,
-	blocks: 8,
-	checklist: 8,
+	blocks: 4,
+	checklist: 4,
 }
 
 /** 模板正文指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
 const TEMPLATE_SNAPSHOT = {
-	任务书骨架: '7216492b749e4e0f',
+	任务书骨架: '0bc5c3f6fc5c68fa',
 	证伪门: '14ef69885dfe0cc6',
 	方案证伪: 'b6474adc91c1cb9f',
-	横切判据: '44fcf5800bdde029',
+	横切判据: '37ec72bac6ddad5e',
 	拍板卡: '4ac0c4f5d0a838e0',
 	门报行: 'dc3c008c9dd64aab',
 }
@@ -57,7 +57,7 @@ test('数据面加载全绿：五份现读、零 issue、零 warning', () => {
 	}
 })
 
-test('条目数快照：三形态／三档位／三硬触发／四阶段／八块方案规范', () => {
+test('条目数快照：三形态／三档位／三硬触发／四阶段／四节方案规范', () => {
 	const { data } = loadDispatchData()
 	assert.deepEqual(
 		{
@@ -93,10 +93,8 @@ test('模板正文指纹：六份模板逐字钉住（改正文＝改规则）',
 test('模板结构不变量：任务书带门报行、横切判据带四信号、门报行是三段式', () => {
 	const { data } = loadDispatchData()
 	assert.match(data.templates['任务书骨架'], /末行门报：〔门报行〕/)
-	assert.match(data.templates['横切判据'], /补偿零件/)
-	assert.match(data.templates['横切判据'], /多处记/)
-	assert.match(data.templates['横切判据'], /人脑规则/)
-	assert.match(data.templates['横切判据'], /入口厚度/)
+	assert.match(data.templates['横切判据'], /设计四信号：按 AGENTS\.md 设计纪律/)
+	assert.match(data.templates['横切判据'], /设计级 finding/)
 	assert.match(data.templates['横切判据'], /1000 行/)
 	for (const part of ['项编号', '结果 PASS/FAIL', '首条失败']) {
 		assert.ok(data.templates['门报行'].includes(part), `门报行缺「${part}」`)
@@ -151,15 +149,13 @@ test('档位表：S/M/L 三行，门列与 taskBook 自洽；硬触发三件各�
 	assert.equal(triggers.get('diff 超阈').threshold, 1000)
 })
 
-test('生命周期四事件：立项→门报→提交→复盘，复盘行是点位单源', () => {
+test('生命周期四事件：立项→门报→提交→复盘，复盘行收官即清账', () => {
 	const { data } = loadDispatchData()
 	const stages = [...data.lifecycle.stages].sort((a, b) => a.order - b.order)
 	assert.deepEqual(stages.map((stage) => stage.id), ['立项', '门报', '提交', '复盘'])
 	assert.deepEqual(stages.map((stage) => stage.kind), LIFECYCLE_KINDS)
 	assert.deepEqual(stages.filter((stage) => stage.gate).map((stage) => stage.id), ['门报'])
-	const retro = stages.find((stage) => stage.point)
-	assert.equal(retro.id, '复盘')
-	assert.deepEqual(retro.point, { minBatches: 5, minTiers: 3, upperBatches: 8 })
+	assert.deepEqual(stages.find((stage) => stage.id === '复盘').note, 'dispatch_batch action=review 写 review 事件（复盘行＋门效能字段），收官即清该批全部台账行。')
 	assert.deepEqual(stages.find((stage) => stage.id === '立项').requires, ['batch', 'tier', 'triage', 'intent', 'anchors'])
 })
 

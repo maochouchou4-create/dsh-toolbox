@@ -19,8 +19,8 @@
  *   各写一遍，目录名各拼各的——测试盘上摆了什么，读用例的人得逐个文件自己认。现读面那份文件名
  *   清单也从生产侧（data.js 的 DATA_FILES）现读，不在本模块手抄。
  *
- * ④台账事件此前 lessons 与 dispatch 两族各造一份同型对象：字段名与生产构造器（batch.js 的
- *   startEvent／advanceEvent）同源，抄一份就多一个「抄件与原件分家」的地方。注意本模块造的是
+ * ④台账事件此前多个文件各造一份同型对象：字段名与生产构造器（batch.js 的
+ *   startEvent）同源，抄一份就多一个「抄件与原件分家」的地方。注意本模块造的是
  *   夹具：batch.test.js 直接 import 生产构造器的那几处不能改调——那些用例验的就是生产构造器
  *   本身，用夹具替身造事件等于把被验对象换掉。而「同形」这件事由 helpers.test.js 对着生产
  *   构造器核键集钉住，不靠这里写注释自觉。
@@ -57,7 +57,6 @@ export const TOOL_NAMES = [
 	'dispatch_task',
 	'dispatch_challenge',
 	'dispatch_batch',
-	'dispatch_lessons',
 	'see_image',
 	'usage_note',
 ]
@@ -202,7 +201,7 @@ export const withLoadedData = (t, edits, run) => withDataDir(t, (dir) => {
 	return run(loadDispatchData(dir))
 })
 
-/* ---------- 台账事件夹具（lessons 与 dispatch 两族共用） ---------- */
+/* ---------- 台账事件夹具（dispatch 族共用） ---------- */
 
 /**
  * 递增时钟：事件时间定序是趋势读法的前提（同刻并列那一档另有专门用例在测）。按写入顺序递增而
