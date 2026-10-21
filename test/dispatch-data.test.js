@@ -38,7 +38,7 @@ const COUNT_SNAPSHOT = {
 
 /** 模板正文指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
 const TEMPLATE_SNAPSHOT = {
-	任务书骨架: '0bc5c3f6fc5c68fa',
+	任务书骨架: '525d2eaef132342f',
 	证伪门: '14ef69885dfe0cc6',
 	方案证伪: 'b6474adc91c1cb9f',
 	横切判据: '37ec72bac6ddad5e',

@@ -148,7 +148,7 @@ test('任务书（L 档）：附方案规范四节与定稿自查（例外件）
 	assert.ok(value.planAppendix.length > 0)
 	assert.match(value.planAppendix, /定稿自查/)
 	assert.match(value.planAppendix, /二、方案与落点（按批分组）/)
-	assert.match(value.planAppendix, /过目：交用户过目时在对话里配改前\/改后例子对比一段（不写入本文档）/, '方案模板末尾带过目指引行')
+	assert.match(value.planAppendix, /过目：交用户过目，认可再施工；对话里呈现方案内容（过目、预览、要点、白话）必配改前\/改后例子对比（不写入本文档）/, '方案模板末尾带过目指引行')
 	const rendered = renderTaskResult(value)
 	assert.match(rendered, /── 方案文档（L 档例外件/)
 })
