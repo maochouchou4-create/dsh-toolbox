@@ -34,12 +34,12 @@ const isoClockIsLater = (fixture, event) => Date.parse(fixture.gate({ batch: 'b'
 test('事件夹具与生产构造器同形：四事件的键集恒等（生产加字段即红，不必等某条用例莫名其妙地红）', () => {
 	const fixture = makeEvent()
 	const now = new Date(Date.UTC(2026, 0, 1))
-	const started = fixture.start('b1', 'L')
+	const started = fixture.start('b1')
 	const gated = fixture.gate({ batch: 'b1', gate: '方案证伪', segment: '方案' })
 	const committed = fixture.commit({ batch: 'b1' })
 	const reviewed = fixture.review({ batch: 'b1' })
-	const realStart = startEvent({ batch: 'b1', tier: 'L', triage: 'L｜夹具分诊', intent: '意图', rules: 'a1b2c3d4', now })
-	const realGate = gateEvent({ batch: 'b1', gate: '方案证伪', tier: 'L', segment: '方案', rules: 'a1b2c3d4', now })
+	const realStart = startEvent({ batch: 'b1', intent: '意图', rules: 'a1b2c3d4', now })
+	const realGate = gateEvent({ batch: 'b1', gate: '方案证伪', segment: '方案', rules: 'a1b2c3d4', now })
 	const realCommit = commitEvent({ batch: 'b1', commit: 'abc1234', pushed: 'ok', now })
 	const realReview = reviewEvent({ batch: 'b1', retro: '本批收', now })
 	// 键集恒等而不是逐字相等：t 是各家的时钟，值必然不同，逐字比会逼夹具去抄生产的时钟口径
@@ -152,9 +152,9 @@ test('seedLedger：一行一事件往返逐字等价，同名再写＝整份替�
 	const path = seedLedger(root, 'ledger', events)
 	assert.equal(readFileSync(path, 'utf8'), events.map((event) => `${JSON.stringify(event)}\n`).join(''), '落盘字节＝事件逐行序列化（尾部带换行：追加时要靠它补分隔）')
 	assert.deepEqual(readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), events, '读回逐字等价')
-	const replaced = [makeEvent().start('b1', 'L')]
+	const replaced = [makeEvent().start('b1')]
 	seedLedger(root, 'ledger', replaced)
-	assert.deepEqual(readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), replaced, '同名再写整份替换：夹具种的是「一份台账」，追加语义由写侧的 appendEvent 管')
+	assert.deepEqual(readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), replaced, '同名再写整份替换：夹具种的是「一份台账」，追加语义由生产的 appendStartOnce／appendGateEvent 管')
 	assert.ok(!existsSync(join(root, 'nothing.jsonl')), '不产多余文件')
 })
 
@@ -177,14 +177,14 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	assert.equal(memoryTree(base, 'no-machine').machineDir, undefined)
 })
 
-test('copyDataFiles：五份逐字节相等（解析过再写的形状对不上就红），跑两遍结果同', (t) => {
+test('copyDataFiles：四份逐字节相等（解析过再写的形状对不上就红），跑两遍结果同', (t) => {
 	const dir = join(tempRoot(t, 'copy-data'), 'data')
 	copyDataFiles(dir)
 	const first = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {
 		assert.ok(bytes.equals(readFileSync(join(DISPATCH_DATA_DIR, file))), `${file} 与盘上逐字节相等：解析再序列化会改缩进与键序，而现读面那些用例比的就是键序敏感的形状`)
 	}
-	assert.deepEqual(DISPATCH_DATA_FILES.length, 5, '现读面五份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
+	assert.deepEqual(DISPATCH_DATA_FILES.length, 4, '现读面四份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
 	copyDataFiles(dir)
 	const second = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {

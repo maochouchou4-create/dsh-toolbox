@@ -5,18 +5,17 @@
       "order": 1,
       "kind": "立项",
       "gate": false,
-      "requires": ["batch", "tier", "triage", "intent", "anchors"],
-      "uses": ["pairing.json", "templates.json"],
-      "note": "dispatch_task 出稿时自动落 start 事件：档位／分诊行／拍板清单＋数据指纹。S 档免任务书不免记账。"
+      "requires": ["batch", "intent", "anchors"],
+      "note": "dispatch_task 出稿时自动落 start 事件：意图／拍板清单＋规则指纹（进工作流＝方案先行）。"
     },
     {
       "id": "门报",
       "order": 2,
       "kind": "门报",
       "gate": true,
-      "requires": ["batch", "tier", "subject"],
-      "uses": ["pairing.json", "templates.json"],
-      "note": "dispatch_challenge 出证伪门/方案证伪 brief；裁决回来时同一工具写 gate 事件（门名／findings 裁决字段／施工段标记）。"
+      "requires": ["batch", "subject"],
+      "gates": ["方案证伪", "证伪门"],
+      "note": "每批固定两道门：方案证伪（施工前，对象＝方案文档）与证伪门（施工后，对象＝净 diff）；安全专项可选追加。dispatch_challenge 出 brief；裁决回来时同一工具写 gate 事件（门名／findings 裁决字段／施工段标记）。"
     },
     {
       "id": "提交",
@@ -24,7 +23,6 @@
       "kind": "提交",
       "gate": false,
       "requires": [],
-      "uses": [],
       "note": "dispatch_batch action=commit 写 commit 事件（commit 号／推送结果）。"
     },
     {
@@ -33,7 +31,6 @@
       "kind": "复盘",
       "gate": false,
       "requires": [],
-      "uses": [],
       "note": "dispatch_batch action=review 写 review 事件（复盘行＋门效能字段），收官即清该批全部台账行。"
     }
   ]

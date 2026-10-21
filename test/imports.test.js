@@ -139,7 +139,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 多件工具写进一行就是「一件起不来，另几件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配四件与识图、手记各占一行，彼此失败原因互不相干——并一行＝逐工具隔离没了；记忆索引注入不占行，见上一条哨兵）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配三件与识图、手记各占一行，彼此失败原因互不相干——并一行＝逐工具隔离没了；记忆索引注入不占行，见上一条哨兵）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
 	// 行形正则锁得住列数，锁不住列里写了什么：FEATURES 曾带第三列 seeImageShape/usageNoteShape，
 	// 两个标识符在胶水里根本没有绑定——apply 一跑就 ReferenceError，整包 DOA（逐工具隔离接不住
 	// 模块加载期错误）。这里逐标识符核绑定面：import 名＋顶层声明名。

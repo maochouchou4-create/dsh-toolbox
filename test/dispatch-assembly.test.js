@@ -98,13 +98,9 @@ const ledgerLines = () =>
 
 const taskArgs = (overrides = {}) => ({
 	batch: 'smoke-batch',
-	tier: 'M',
-	triage: 'M｜锚点全是内部实现符号，未触三硬触发',
-	intent: '把跑批 v2 落地',
+	intent: '把方案先行的立项出稿落地',
 	anchors: ['loadDispatchData', 'SAFETY_CARRIER_IDS'],
 	acceptance: 'npm test',
-	changedFiles: 12,
-	diffLines: 640,
 	...overrides,
 })
 
@@ -126,14 +122,32 @@ test('三件工具注册得出来：name／description／parameters／output 都
 	assert.deepEqual(Object.keys(configShape).sort(), ['dispatchDataDir', 'dispatchLedgerPath'])
 })
 
-test('描述面口径：三件各自点名四事件／档位／证伪门，不残留旧四件字样', () => {
+test('退役参数不回流：三件 output.schema 的属性面没有档位/分诊/预算旧格（变异①参数面半边）', () => {
+	const tools = [
+		mount(registerDispatchTask),
+		mount(registerDispatchChallenge),
+		mount(registerDispatchBatch),
+	]
+	for (const tool of tools) {
+		const declared = Object.keys(tool.output.schema.properties)
+		for (const retired of ['tier', 'triage', 'triageLine', 'diffBudget', 'taskBook', 'planAppendix']) {
+			assert.ok(!declared.includes(retired), `${tool.name} 的 output.schema 还带着 ${retired}`)
+		}
+	}
+	const taskDeclared = Object.keys(mount(registerDispatchTask).output.schema.properties).sort()
+	assert.deepEqual(taskDeclared, ['batch', 'decisionCards', 'gateReportLine', 'prompt', 'text', 'warnings', 'workflowArgs'])
+})
+
+test('描述面口径：task＝方案文档单形态＋start 事件，challenge＝双门＋forms 追加语义，batch＝四事件', () => {
 	const task = mount(registerDispatchTask)
 	const challenge = mount(registerDispatchChallenge)
 	const batch = mount(registerDispatchBatch)
-	assert.match(task.description, /档位 S\/M\/L/)
+	assert.match(task.description, /方案/)
 	assert.match(task.description, /start 事件/)
+	assert.doesNotMatch(task.description, /档位|分诊|S\/M\/L/)
 	assert.match(challenge.description, /证伪门/)
 	assert.match(challenge.description, /gate 事件/)
+	assert.match(challenge.description, /追加/, 'forms 追加语义（点名追加不替换）必须写进描述——选型面要看得见')
 	assert.match(batch.description, /start／gate／commit／review/)
 	assert.match(batch.description, /review 收官即清该批全部行/, '台账口径＝进行中批的工作台')
 	for (const tool of [task, challenge, batch]) {
@@ -144,14 +158,12 @@ test('描述面口径：三件各自点名四事件／档位／证伪门，不�
 	}
 })
 
-test('dispatch_task（M 档）：直出可派参数并自动落 start（档位/分诊行/拍板清单/规则指纹）', async () => {
+test('dispatch_task（单形态）：直出可派参数并自动落 start（意图/拍板清单/规则指纹，无档位格）', async () => {
 	const tool = mount(registerDispatchTask)
 	const value = await exec(tool, taskArgs({ decisions: ['拍板一：四事件'] }))
-	assert.equal(value.tier, 'M')
-	assert.equal(value.taskBook, true)
-	assert.match(value.triageLine, /^分诊：M｜/)
-	assert.deepEqual(value.workflowArgs, { label: '施工 smoke-batch（M）', prompt: value.prompt })
-	assert.ok(value.prompt.includes(value.gateReportLine), '任务书必须带门报行')
+	assert.deepEqual(value.workflowArgs, { label: '方案 smoke-batch', prompt: value.prompt })
+	assert.ok(value.prompt.includes(value.gateReportLine), '登记行末必须带门报行')
+	assert.match(value.prompt, /定稿自查/, '方案骨架（定稿自查清单）进 prompt')
 	assert.match(value.text, /── 派发参数（subagent 直接可用；workflow 用 args\.workflowArgs）──/)
 	const rendered = tool.output.render({}, value)
 	assert.deepEqual(rendered, [{ type: 'text', text: value.text }])
@@ -159,29 +171,15 @@ test('dispatch_task（M 档）：直出可派参数并自动落 start（档位/�
 	const events = ledgerLines()
 	assert.equal(events.length, 1)
 	assert.equal(events[0].action, 'start')
-	assert.equal(events[0].tier, 'M')
+	assert.equal(events[0].intent, '把方案先行的立项出稿落地')
+	assert.equal(events[0].subject, '（待写）')
 	assert.deepEqual(events[0].decisions, ['拍板一：四事件'])
 	assert.match(events[0].rules, /^[0-9a-f]{12}$/)
+	assert.ok(!('tier' in events[0]), 'start 事件不带档位格')
 
 	const again = await exec(tool, taskArgs())
 	assert.ok(again.warnings.some((warning) => warning.includes('已登记（start 存在）')))
 	assert.equal(ledgerLines().length, 1, '重跑出稿不制造重复立项行')
-})
-
-test('dispatch_task（S 档）：免任务书不免记账——start 照落，指令里带升 M 口径', async () => {
-	const tool = mount(registerDispatchTask)
-	const value = await exec(tool, taskArgs({ batch: 'smoke-small', tier: 'S', triage: 'S｜单行改注释' }))
-	assert.equal(value.taskBook, false)
-	assert.match(value.text, /S 档施工指令（免任务书）/)
-	assert.match(value.prompt, /贴不出「现存断言命令＋退出码」＝本批升 M/)
-	assert.equal(ledgerLines().filter((event) => event.batch === 'smoke-small')[0].tier, 'S')
-})
-
-test('dispatch_task：diff 超阈当场拒绝（不降档收），不做半截落账', async () => {
-	const tool = mount(registerDispatchTask)
-	const before = ledgerLines().length
-	await assert.rejects(() => exec(tool, taskArgs({ batch: 'smoke-over', diffLines: 1200 })), /强制升 L/)
-	assert.equal(ledgerLines().length, before, '拒绝路径不写台账')
 })
 
 test('dispatch_challenge：回填台账登记值出 brief（不读施工汇报），出稿不写 gate', async () => {
@@ -191,13 +189,23 @@ test('dispatch_challenge：回填台账登记值出 brief（不读施工汇报�
 	const challenge = mount(registerDispatchChallenge)
 	const value = await exec(challenge, { batch: 'smoke-gate', subject: 'git diff 8a0a01f..HEAD' })
 	assert.equal(value.gate, '证伪门')
-	assert.equal(value.tier, 'M', '档位从台账回填')
-	assert.deepEqual(value.briefs.map((brief) => brief.form), ['证伪门'])
+	assert.deepEqual(value.briefs.map((brief) => brief.form), ['证伪复核'])
 	assert.ok(value.briefs[0].text.includes('不读施工汇报'))
 	assert.equal(value.adjudication.recorded, false)
 	assert.equal(ledgerLines().length, before, '出 brief 不落 gate 事件')
 	const rendered = challenge.output.render({}, value)
 	assert.deepEqual(rendered, [{ type: 'text', text: value.text }])
+})
+
+test('dispatch_challenge：forms 显式点名安全专项＝追加进 brief（变异②靶）', async () => {
+	const task = mount(registerDispatchTask)
+	await exec(task, taskArgs({ batch: 'smoke-safety' }))
+	const challenge = mount(registerDispatchChallenge)
+	const value = await exec(challenge, { batch: 'smoke-safety', subject: 'git diff a..b', forms: ['安全专项'] })
+	assert.deepEqual(value.briefs.map((brief) => brief.form), ['证伪复核', '安全专项'], '缺省标准形态保留，点名的安全专项追加')
+	const safety = value.briefs.find((brief) => brief.form === '安全专项')
+	assert.match(safety.text, /鉴权/)
+	assert.equal(value.workflowArgs.length, 2)
 })
 
 test('dispatch_challenge：adjudicate=true 写 gate 事件（裁决字段＋段标记），落账后状态前进', async () => {
@@ -206,7 +214,7 @@ test('dispatch_challenge：adjudicate=true 写 gate 事件（裁决字段＋段�
 		batch: 'smoke-gate',
 		subject: 'git diff 8a0a01f..HEAD',
 		adjudicate: true,
-		perFormCounts: [{ form: '证伪门', count: 2 }],
+		perFormCounts: [{ form: '证伪复核', count: 2 }],
 		adopted: 2,
 		rejected: 1,
 		overlap: 0,
@@ -215,15 +223,16 @@ test('dispatch_challenge：adjudicate=true 写 gate 事件（裁决字段＋段�
 		segment: '净 diff',
 	})
 	assert.equal(value.adjudication.recorded, true)
-	assert.deepEqual(value.adjudication.forms, ['证伪门'])
+	assert.deepEqual(value.adjudication.forms, ['证伪复核'])
 	assert.match(value.text, /已记门报：批次 smoke-gate｜门 证伪门/)
 	const gates = ledgerLines().filter((event) => event.action === 'gate' && event.batch === 'smoke-gate')
 	assert.equal(gates.length, 1)
 	assert.equal(gates[0].adopted, 2)
 	assert.equal(gates[0].rejected, 1)
-	assert.deepEqual(gates[0].perFormCounts, [{ form: '证伪门', count: 2 }])
+	assert.deepEqual(gates[0].perFormCounts, [{ form: '证伪复核', count: 2 }])
 	assert.equal(gates[0].segment, '净 diff')
 	assert.match(gates[0].rules, /^[0-9a-f]{12}$/)
+	assert.ok(!('tier' in gates[0]), 'gate 事件不带档位格')
 
 	const batch = mount(registerDispatchBatch)
 	const status = await exec(batch, { action: 'status', batch: 'smoke-gate' })
@@ -235,8 +244,23 @@ test('dispatch_challenge：adjudicate=true 写 gate 事件（裁决字段＋段�
 test('dispatch_challenge：与台账登记冲突的显式参数当场拒绝（不许悄悄改口径）', async () => {
 	const challenge = mount(registerDispatchChallenge)
 	await assert.rejects(
-		() => exec(challenge, { batch: 'smoke-gate', subject: 'git diff a..b', tier: 'L' }),
+		() => exec(challenge, { batch: 'smoke-gate', subject: 'git diff a..b', intent: '临时改主意' }),
 		/与批次「smoke-gate」台账里登记的不一致/,
+	)
+})
+
+test('dispatch_task/challenge：退役参数（tier/triage/changedFiles/diffLines）传了就报未知参数', async () => {
+	// 档位改制后这些键已从参数面删除；execute 层的守卫必须当场点名（不是静默忽略），
+	// 否则旧习惯的调用者拿不到「这参数没了」的信号。
+	const task = mount(registerDispatchTask)
+	const challenge = mount(registerDispatchChallenge)
+	await assert.rejects(
+		() => exec(task, taskArgs({ batch: 'smoke-retired', tier: 'M', triage: 'M｜触公开契约', changedFiles: 5, diffLines: 1200 })),
+		/未知参数「tier、triage、changedFiles、diffLines」——本工具没有这个参数/,
+	)
+	await assert.rejects(
+		() => exec(challenge, { batch: 'smoke-retired', subject: 'git diff a..b', tier: 'M' }),
+		/未知参数「tier」.*没有这个参数/,
 	)
 })
 
@@ -271,7 +295,8 @@ test('dispatch_batch：commit 追加事件，review 收官即清该批台账行'
 	// 清账只清本批：别批的行（smoke-batch）必须原样保留
 	const list = await exec(batch, { action: 'list' })
 	assert.doesNotMatch(list.text, /smoke-gate/, '已收官批从 list 消失')
-	assert.match(list.text, /smoke-batch｜M/)
+	assert.match(list.text, /smoke-batch/, '别批的行保留')
+	assert.doesNotMatch(list.text, /smoke-batch｜M/, '批次行不带档位列')
 })
 
 test('dispatch_batch：渲染缺 text 即抛内部不变量错误（render 里不读盘、不重算）', () => {
@@ -279,11 +304,12 @@ test('dispatch_batch：渲染缺 text 即抛内部不变量错误（render 里�
 	assert.throws(() => batch.output.render({}, {}), /结构化值不带 text/)
 })
 
-test('工作流引导行＝四事件口径（注入块首行随 v2 改版，测试即契约）', () => {
+test('工作流引导行＝四事件口径（注入块首行随改版，测试即契约）', () => {
 	assert.ok(WORKFLOW_LINE.includes('立项→门报→提交→复盘'))
 	for (const event of ['start', 'gate', 'commit', 'review']) {
 		assert.ok(WORKFLOW_LINE.includes(event), `引导行要点名事件 ${event}`)
 	}
+	assert.ok(WORKFLOW_LINE.includes('方案文档骨架'), '立项出稿＝方案文档骨架')
 	assert.ok(WORKFLOW_LINE.includes('dispatch_task'))
 	assert.ok(WORKFLOW_LINE.includes('dispatch_challenge'))
 })

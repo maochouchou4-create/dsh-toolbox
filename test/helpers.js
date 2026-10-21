@@ -62,7 +62,7 @@ export const TOOL_NAMES = [
 ]
 
 /**
- * 现读面的五份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
+ * 现读面的四份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
  * 表述，数据面增一份文件时它就少拷一份，而症状不是「少了一个文件」，是某条用例在无关的原因上红
  * （例如临时目录里读不到 plan-spec.json，报的却是「数据形状不合」）。
  */
@@ -171,7 +171,7 @@ export const memoryTree = (base, name, machineId) => {
 
 /* ---------- 现读数据目录（拷真数据 → 改坏 → 断言 → 删） ---------- */
 
-/** 把给定的几份数据拷进目标目录（缺省五份全拷；目录不存在就建），返回该目录。 */
+/** 把给定的几份数据拷进目标目录（缺省四份全拷；目录不存在就建），返回该目录。 */
 export const copyDataFiles = (dir, files = DISPATCH_DATA_FILES) => {
 	mkdirSync(dir, { recursive: true })
 	for (const file of files) writeFileSync(join(dir, file), readFileSync(join(DISPATCH_DATA_DIR, file)))
@@ -220,15 +220,15 @@ export const isoClock = (epochMs = Date.UTC(2026, 0, 1)) => {
  * 逐字同形。做成工厂而不是四个模块级函数，是为了让时钟按「一份夹具一份」计数——两个文件共用
  * 同一个模块级计数器时，两边的先后次序会互相影响，而次序正是这些用例的前提。
  *
- * 计数格的缺省形状跟写侧走（recommended／forms＝串数组、perFormCounts＝[{form,count}]）。
+ * 裁决计数字段的缺省形状跟生产构造器走（recommended／forms＝串数组、perFormCounts＝[{form,count}]）。
  */
 export const makeEvent = () => {
 	const iso = isoClock()
-	const start = (batch, tier = 'M', rules = 'v2', extra = {}) => ({
-		t: iso(), action: 'start', batch, tier, triage: `${tier}｜夹具分诊`, intent: `${batch} 意图`, subject: '（待写）', decisions: [], rules, ...extra,
+	const start = (batch, rules = 'v2', extra = {}) => ({
+		t: iso(), action: 'start', batch, intent: `${batch} 意图`, subject: '（待写）', decisions: [], rules, ...extra,
 	})
-	const gate = ({ batch, gate = '证伪门', tier = 'M', segment = '净 diff', rules = 'v2', recommended = [], forms = [], perFormCounts = [], adopted = 0, rejected = 0, overlap = 0, missed = '', note = '' }) => ({
-		t: iso(), action: 'gate', batch, gate, tier, segment, recommended, forms, perFormCounts, adopted, rejected, overlap, missed, note, rules,
+	const gate = ({ batch, gate = '证伪门', segment = '净 diff', rules = 'v2', recommended = [], forms = [], perFormCounts = [], adopted = 0, rejected = 0, overlap = 0, missed = '', note = '' }) => ({
+		t: iso(), action: 'gate', batch, gate, segment, recommended, forms, perFormCounts, adopted, rejected, overlap, missed, note, rules,
 	})
 	const commit = ({ batch, commit = 'abc1234', pushed = 'ok', note = '' }) => ({
 		t: iso(), action: 'commit', batch, commit, pushed, note,
@@ -239,7 +239,7 @@ export const makeEvent = () => {
 	return { start, gate, commit, review }
 }
 
-/** 落一份台账：一行一事件（与写侧同形，故读侧那条「坏行 fail fast」的契约在用到它的文件里也生效）。 */
+/** 落一份台账：一行一事件（与生产写入口同形，故读侧那条「坏行 fail fast」的契约在用到它的文件里也生效）。 */
 export const seedLedger = (root, name, events) => {
 	const path = join(root, `${name}.jsonl`)
 	writeFileSync(path, events.map((event) => `${JSON.stringify(event)}\n`).join(''))

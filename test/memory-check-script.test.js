@@ -219,8 +219,9 @@ test('段内 title 重名：只由那一项判红，且跨段同名不算（撞�
 	// 只报一次，故这里直接比数组
 	assert.deepEqual(violationIds(stdout), ['segment-title-dup'], `只该由这一项判红：\n${stdout}`)
 	assert.ok(stdout.includes('同题条目') && stdout.includes('topic-0.md') && stdout.includes('topic-1.md'), stdout)
-	// 处置指向 edit 而不是 delete：报出来的两条是各自带正文的现存条目，照着删丢的是内容
-	assert.ok(stdout.includes('不要 delete'), stdout)
+	// 处置指向宿主 edit 而不是 rm：报出来的两条是各自带正文的现存条目，照着删丢的是内容
+	assert.ok(stdout.includes('用宿主 edit 改其中一条的 title 行'), stdout)
+	assert.ok(stdout.includes('不要 rm'), stdout)
 	assert.ok(!stdout.includes('独题条目'), `未撞名的条目不牵进来：\n${stdout}`)
 })
 

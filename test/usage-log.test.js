@@ -549,7 +549,7 @@ test('旁路失败只经宿主 logger 显形：写入失败与订阅本身失败
 	)
 	assert.equal(warnings.length, 1)
 	assert.match(warnings[0], /使用日志订阅失败/)
-	// options 传 null 同样不许抛：这一句在 apply 的逐工具 try 之外，抛出去＝整包九件都不注册
+	// options 传 null 同样不许抛：这一句在 apply 的逐工具 try 之外，抛出去＝整包五件都不注册
 	const broken = stubCtx()
 	assert.doesNotThrow(() => subscribeUsageLog(broken.ctx, ['memory'], null), 'options 为 null 不得抛')
 	assert.equal(broken.warnings.length, 1)
