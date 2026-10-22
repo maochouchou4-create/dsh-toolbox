@@ -26,7 +26,7 @@ import { KIND_ACTIONS, LIFECYCLE_KINDS } from '../lib/dispatch/vocab.js'
 import { DISPATCH_DATA_DIR, editData, editText, withDataDir } from './helpers.js'
 
 /** templates.md 整份正文的指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
-const TEMPLATES_SNAPSHOT = '1a02ea23c803d802'
+const TEMPLATES_SNAPSHOT = 'eab20f2432d4554f'
 
 const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
