@@ -4,14 +4,16 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 ## 开工前
 
-- **改动落点地图（先看这条再找文件）**：派发规则面＝`lib/dispatch/data/` 四份 JSON
-  （forms 形态角色句（安全专项/方案证伪/证伪复核三件）／templates 模板（五键：证伪门/方案证伪/横切判据/拍板卡/门报行）／
-  lifecycle 四事件表（门组合单源＝门报行的 gates 字段）／plan-spec 方案规范）。
-  **数据 JSON 现读不缓存——改完下次 dispatch 调用即生效；要等宿主重启的只有代码（lib/*.js）**。
-  `test/dispatch-data.test.js` 存着模板指纹快照＋「快照键集≡templates
-  键集」对账＋mutation 演示用例，改 templates.json 必须同批同步快照指纹与 `test/dispatch-core.test.js`
-  的结构断言。
-  数据面怎么读、门怎么配、参数面怎么回填在 `README.md`「dispatch 数据资产」节。
+- **改动落点地图（先看这条再找文件）**：派发规则面＝`lib/dispatch/data/` 三份文件
+  （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、两份
+  brief、横切判据、拍板卡、门报行、安全五问（全仓唯一载体）、不做清单／`lifecycle.json`
+  四阶段表（只许 id/order/kind））。
+  **数据文件现读不缓存——改完下次请求（纪律）或下次 dispatch_batch 调用（台账）即生效；要等
+  宿主重启的只有代码（lib/*.js）**。
+  `test/dispatch-data.test.js` 存着 `templates.md` 指纹快照＋八节标题唯一＋安全五问单载体计数
+  断言，改 `templates.md` 必须同批同步快照指纹；`test/dispatch-assembly.test.js` 钉住纪律注入
+  与 lifecycle 的阶段序列互验。
+  数据面怎么读、门怎么记、六个动作怎么用见 `README.md`「dispatch 数据资产」节。
 - **插件改动要在下次启动后才算数**。本仓被宿主按模块代缓存，改完 `lib/` 不会热更新。
   本会话不重启宿主（重启会掐断会话），所以任何「装上了/生效了」的说法都不成立：
   交付时把运行期验证标成**待下次启动验证**，只报你真正验过的。
@@ -70,4 +72,4 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
   `test/imports.test.js` 静态解析钉住导入面与 node:fs 直连的定性表，搬家断链、
   新模块漏定性都会红。
 - 版本号随契约走：工具参数面、注入块结构、frontmatter 契约任一变更都算破坏性变更，
-  minor 位就是破坏位（1.6.0 → 1.7.0），并与 README 的描述同批改。
+  minor 位就是破坏位（1.7.0 → 1.8.0），并与 README 的描述同批改。

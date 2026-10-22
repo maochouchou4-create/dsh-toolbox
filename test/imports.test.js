@@ -60,7 +60,7 @@ function consumedServices(source) {
 test('胶水→工具模块的导入名在目标 export 语句内（防搬家断链）', () => {
 	const glue = readLib('index.js')
 	const imports = parseLocalImports(glue)
-	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/index.js'), '胶水须装配 memory、see_image、dispatch 三模块')
+	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/index.js') && imports.has('./dispatch/discipline.js'), '胶水须装配 memory、see_image、dispatch 台账与纪律注入四个模块')
 	for (const [specifier, names] of imports) {
 		const exported = parseExportNames(readLib(specifier.replace('./', '')))
 		for (const name of names) {
@@ -73,10 +73,8 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
-		['dispatch/index.js', [
-			'registerDispatchTask', 'registerDispatchChallenge',
-			'registerDispatchBatch', 'configShape',
-		]],
+		['dispatch/index.js', ['registerDispatchBatch', 'configShape']],
+		['dispatch/discipline.js', ['registerDiscipline']],
 		// 使用日志的手记工具：注册面在 note.js（要 defineTool，故这里只核它对 recorder.js 的四个
 		// 导入名在不在导出面——记事件、求当日文件、求日志根、求根全都经那一处）
 		['usage-log/note.js', ['registerUsageNote']],
@@ -108,6 +106,7 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 		// 台账逻辑模块今天不消费 ctx.*，仍在扫描面里：它经装配层拿端口，一旦将来
 		// 自己伸手取服务，少了这行 DOA 要到运行期才炸
 		...consumedServices(readLib('dispatch/batch.js')),
+		...consumedServices(readLib('dispatch/discipline.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
@@ -136,6 +135,9 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 意味着 FEATURES 表动它不会红——少这一行 import 哪都在，调用线一断注入就静默死
 	// （症状＝会话里再无记忆块，而无任何报错），故把调用本身钉在源码上
 	assert.ok(stripComments(glue).includes('registerMemory(ctx, config)'), '胶水须独立装配记忆索引注入（registerMemory(ctx, config)）——写侧退役后它只剩注入，调用线一断即静默死')
+	// 纪律注入同理独立装配：注入件不占 FEATURES 行、不进使用日志白名单，FEATURES 表动它不会红。
+	// 调用线一断的症状是「纪律整块静默缺席」（会话照常跑，只是流程没人提），必须钉在源码上
+	assert.ok(stripComments(glue).includes('registerDiscipline(ctx, config)'), '胶水须独立装配跑批纪律注入（registerDiscipline(ctx, config)）——调用线一断纪律即静默缺席')
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 多件工具写进一行就是「一件起不来，另几件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
@@ -278,7 +280,7 @@ const NODE_FS_DIRECT = new Map([
 	['usage-log/note.js', false],
 	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
 	['client.js', false],
-	['dispatch/core.js', false],
+	['dispatch/discipline.js', false],
 	['dispatch/vocab.js', false],
 	['dispatch/parameters.js', false],
 	['dispatch/batch.js', false],

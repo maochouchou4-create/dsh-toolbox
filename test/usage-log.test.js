@@ -182,7 +182,7 @@ test('失败调用行：保持既有全量形态——args 值级摘要与 error
 	const body = 'x'.repeat(500)
 	const args = { batch: 'usage-log', diffLines: 3, body, nested: { deep: 'c'.repeat(201) } }
 	const event = usageCallEvent(
-		{ name: 'dispatch_task', callId: 'call-2', arguments: args },
+		{ name: 'dispatch_batch', callId: 'call-2', arguments: args },
 		{ isError: true, error: { message, info } },
 		AT,
 		PROFILE,
@@ -234,9 +234,9 @@ test('手记行构造：note 上限 500、tool 缺省 usage_note、ok 未给记 
 	assert.equal(tied.tool, 'memory')
 	assert.equal(tied.ok, false)
 	assert.deepEqual(tied.note, { len: 501, head: 'n'.repeat(500) }, '手记上限 500，独立于值级 200')
-	// 工具名直存、不过 summarize：dispatch_challenge 是登记名面最长的一个，够不到值级上限
-	const longest = 'dispatch_challenge'
-	assert.equal(longest.length, 18)
+	// 工具名直存、不过 summarize：dispatch_batch 是登记名面最长的一个，够不到值级上限
+	const longest = 'dispatch_batch'
+	assert.equal(longest.length, 14)
 	assert.equal(usageNoteEvent({ note: 'x', tool: longest }, AT, PROFILE).tool, longest, '工具名直存，不出现 { len, head } 形态')
 })
 

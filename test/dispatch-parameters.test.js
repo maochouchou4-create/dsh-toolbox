@@ -1,85 +1,84 @@
 /**
- * dispatch 参数面（两件装配＋台账一件）：schema 声明是模型选型的唯一依据——它写的取值
- * 清单与必填标注会被原样抄进调用，所以这里钉三件事：键集与 core 名单一字不差、必填标注与
- * 生命周期 requires 对齐、退役参数不得回流（旧四件的 stage/baseBatchType/rootCause 不再有槽位，
- * 档位改制的 tier/triage/changedFiles/diffLines 同样不许回来）。
+ * dispatch 参数面（只剩台账一件）：schema 声明是模型选型的唯一依据——它写的取值清单与必填标注会被
+ * 原样抄进调用，所以这里钉四件事：键集与执行侧接受的字段逐名一致、错键进不了 schema（未知参数守卫
+ * 在 execute 前先拦）、六动作的文案齐全、退役槽位不得回流（两件装配工具连同它们的锚点/拍板卡/裁决
+ * 字段一并退役；旧四件的 stage/baseBatchType/rootCause 与档位改制的 tier/triage 同样不许回来）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-	assertParamCoverage,
-	challengeParamNames,
-	taskParamNames,
-} from '../lib/dispatch/core.js'
-import { batchParameters, challengeParameters, taskParameters } from '../lib/dispatch/parameters.js'
-import { loadDispatchData } from '../lib/dispatch/data.js'
-import { GATE_NAMES, PARAM_FIELDS } from '../lib/dispatch/vocab.js'
+import { batchParameters } from '../lib/dispatch/parameters.js'
+import { GATE_NAMES } from '../lib/dispatch/vocab.js'
 
-const { data } = loadDispatchData()
-const task = taskParameters()
-const challenge = challengeParameters()
 const batch = batchParameters()
 const requiredOf = (parameters) =>
-	Object.entries(parameters)
-		.filter(([, spec]) => spec.required === true)
-		.map(([name]) => name)
-		.sort()
+  Object.entries(parameters)
+    .filter(([, spec]) => spec.required === true)
+    .map(([name]) => name)
+    .sort()
 
-test('键集对账：parameters.js 与 core 的名单逐名一致（顺序也同，模型看到的就是这个序）', () => {
-	assert.deepEqual(Object.keys(task), taskParamNames())
-	assert.deepEqual(Object.keys(challenge), challengeParamNames())
-	assert.equal(new Set(taskParamNames()).size, taskParamNames().length)
-	assert.equal(new Set(challengeParamNames()).size, challengeParamNames().length)
+test('键集与顺序：六个动作的完整参数面，action 永远第一格（模型先看到动作再看到字段）', () => {
+  assert.deepEqual(Object.keys(batch), [
+    'action',
+    'batch',
+    'intent',
+    'subject',
+    'decisions',
+    'gate',
+    'segment',
+    'forms',
+    'recommended',
+    'perFormCounts',
+    'adopted',
+    'rejected',
+    'overlap',
+    'missed',
+    'note',
+    'commit',
+    'pushed',
+    'retro',
+    'efficacy',
+  ])
 })
 
-test('生命周期 → schema 必填：立项三格全必填，门报只有 batch 必填（subject 按门分叉）', () => {
-	const startRequires = data.lifecycle.stages.find((stage) => stage.id === '立项').requires
-	assert.deepEqual([...startRequires].sort(), ['anchors', 'batch', 'intent'])
-	assert.deepEqual(requiredOf(task), [...startRequires].sort())
-	const gateRequires = data.lifecycle.stages.find((stage) => stage.id === '门报').requires
-	const derived = gateRequires.filter((field) => field !== 'subject')
-	assert.deepEqual(requiredOf(challenge), [...derived].sort(), '必填＝requires − 台账可回填集 − subject（subject 按门分叉：方案证伪从台账回填，证伪门由 core 校验报必传）')
-	assert.ok(!challenge.subject.required, 'subject 不做 schema 级必填——必传与否取决于门，在 core 校验层报错')
+test('必填只有 action：其余按动作条件必填（在 execute/batch 层报错，不靠 schema 分叉）', () => {
+  assert.deepEqual(requiredOf(batch), ['action'])
 })
 
-test('参数覆盖：task/challenge 并集盖住生命周期引用的全部字段（不落空）', () => {
-	assert.equal(assertParamCoverage(), true)
-	const declared = new Set([...taskParamNames(), ...challengeParamNames()])
-	for (const field of PARAM_FIELDS) {
-		if (field === 'batch') continue
-		assert.ok(declared.has(field), `PARAM_FIELDS 的 ${field} 没有工具接`)
-	}
+test('动作词表进描述：六个动作全写在 action 说明里且口径为「只落账不判」', () => {
+  for (const action of ['start', 'gate', 'commit', 'review', 'status', 'list']) {
+    assert.ok(batch.action.description.includes(action), `action 说明缺 ${action}`)
+  }
+  assert.match(batch.action.description, /只落账不判/)
 })
 
-test('取值词表进描述：门名两名都写在对应参数说明里（模型照抄不错）', () => {
-	for (const gate of GATE_NAMES) assert.ok(challenge.gate.description.includes(gate))
-	assert.match(challenge.gate.description, /缺省/)
-	assert.ok(batch.action.description.startsWith('commit｜review｜status｜list'))
+test('门名词表进描述：门报的两道门名都写进 gate 参数说明', () => {
+  for (const gate of GATE_NAMES) assert.ok(batch.gate.description.includes(gate))
+  assert.match(batch.gate.description, /必填/)
 })
 
-test('退役参数不得回流：旧四件的阶段/批型/根因槽位与档位改制的旧格一个都不许有', () => {
-	for (const retired of ['stage', 'baseBatchType', 'rootCause', 'tools', 'action', 'planSpec', 'tier', 'triage', 'changedFiles', 'diffLines']) {
-		assert.ok(!(retired in task), `dispatch_task 不该再有 ${retired}`)
-		assert.ok(!(retired in challenge), `dispatch_challenge 不该再有 ${retired}`)
-	}
-	for (const name of ['stage', 'advance', 'gateName', 'perForm', 'tier', 'triage']) {
-		assert.ok(!(name in batch), `dispatch_batch 不该再有 ${name}`)
-	}
+test('退役参数不得回流：两件装配工具的参数与旧四件槽位一个都不许有', () => {
+  for (const retired of ['anchors', 'forbidden', 'budget', 'acceptance', 'decisionCards', 'adjudicate', 'planSpec']) {
+    assert.ok(!(retired in batch), `dispatch_batch 不该再有 ${retired}`)
+  }
+  for (const name of ['stage', 'advance', 'gateName', 'perForm', 'baseBatchType', 'rootCause', 'tier', 'triage', 'changedFiles', 'diffLines']) {
+    assert.ok(!(name in batch), `dispatch_batch 不该再有 ${name}`)
+  }
 })
 
-test('值类型：裁决数字是 number、adjudicate 是 boolean、清单是 array', () => {
-	assert.equal(task.anchors.type, 'array')
-	assert.equal(task.decisionCards.type, 'array')
-	assert.equal(challenge.adjudicate.type, 'boolean')
-	assert.equal(challenge.label, undefined)
-	for (const field of ['adopted', 'rejected', 'overlap']) assert.equal(challenge[field].type, 'number')
-	assert.equal(challenge.perFormCounts.type, 'array')
-	assert.equal(challenge.forms.type, 'array')
+test('值类型：裁决数字是 number、清单是 array、提交与复盘是 string', () => {
+  for (const field of ['adopted', 'rejected', 'overlap']) assert.equal(batch[field].type, 'number')
+  assert.equal(batch.perFormCounts.type, 'array')
+  assert.equal(batch.forms.type, 'array')
+  assert.equal(batch.recommended.type, 'array')
+  assert.equal(batch.decisions.type, 'array')
+  for (const field of ['intent', 'subject', 'segment', 'missed', 'note', 'commit', 'pushed', 'retro', 'efficacy']) {
+    assert.equal(batch[field].type, 'string')
+  }
 })
 
-test('台账参数面：commit/review 各要两格、status 动作要 action（必填唯一）', () => {
-	assert.deepEqual(requiredOf(batch), ['action'])
-	assert.ok(batch.commit && batch.pushed && batch.retro && batch.efficacy)
-	assert.match(batch.retro.description, /复盘行（action=review 必填，单行）：本批结论＋下一轮口径/)
-	assert.match(batch.action.description, /commit/)
+test('台账动作格：commit/review 的必填写法在描述里点明条件', () => {
+  assert.match(batch.commit.description, /action=commit 必填/)
+  assert.match(batch.pushed.description, /action=commit 必填/)
+  assert.match(batch.retro.description, /复盘行（action=review 必填，单行）：本批结论＋下一轮口径/)
+  assert.match(batch.efficacy.description, /门效能/)
 })

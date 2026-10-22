@@ -17,7 +17,7 @@
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { composeMemory, ignoredEntryFiles, readEntryHead, scanSegment, withWorkflowLine } from '../lib/memory/assemble.js'
+import { composeMemory, ignoredEntryFiles, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
 	INDEX_CHAR_BUDGET,
@@ -218,11 +218,7 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 	// 注入块只取块体：装配侧的诊断回调刻意不接——装配侧那一路是自扫的子集——自扫经
 	// listSegmentDirs 覆盖各机器段，装配侧只扫 store 顶层与本机段；接上只会一事两行；
 	// 块却照样算出来、照样被判达标
-	const memoryBlock = composeMemory({ memoryRoot, machine: machineValid ? machine : '' })
-	// 真实注入块＝与注册层同一份拼装（assemble.js 的 withWorkflowLine）：工作流引导行在前、
-	// composeMemory 产出在后。只量 composeMemory 会把首行漏在整块预算外——那行在运行期确实
-	// 进上下文，量漏了它就等于把一块比预算大的块报成达标
-	const block = withWorkflowLine(memoryBlock)
+	const block = composeMemory({ memoryRoot, machine: machineValid ? machine : '' })
 	return {
 		root,
 		memoryRoot,
@@ -232,7 +228,6 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 		segments,
 		entries,
 		issues,
-		memoryBlock,
 		block,
 		machineDir,
 		machineDirExists,
@@ -480,9 +475,9 @@ export function renderReport(site) {
 	// 未给机器 id 时这一栏只数到共享段：说清是「本次装配本就如此」还是「机器名给错了」，
 	// 否则报告里的字符数会被当成全量而误判
 	push()
-	// 行数按内容行计：空树时块体＝引导行＋一个尾换行，直接 split 会把那个尾换行数成一行，
-	// 于是「只剩引导行」被报成两行
-	push(`真实注入块（含工作流引导行；机器 ${site.machineGiven ? site.machine : '未给'}）：${site.block.length} 字符／${site.block.trimEnd().split('\n').length} 行（含规则块与索引）`)
+	// 行数按内容行计：空树时块为空串，行数是 0 而不是 split 出来的那一行
+	const blockLines = site.block === '' ? 0 : site.block.trimEnd().split('\n').length
+	push(`真实注入块（机器 ${site.machineGiven ? site.machine : '未给'}）：${site.block.length} 字符／${blockLines} 行（含规则块与索引）`)
 	if (!site.machineGiven) {
 		// 「只有共享段」在没给机器 id 时是预期形态，但注入块本身也少了本机段与尾行——
 		// 这句话是把「本次量到的不是全量」说清楚，判红的那一项另说
@@ -493,7 +488,7 @@ export function renderReport(site) {
 	)
 	push(`其中写侧纪律 ${WRITING_FILE} 占 ${site.rulesChars} 字符`)
 	push()
-	if (site.memoryBlock.length === 0) push('（记忆内容为空：记忆根未接线，或共享段与本机段都无条目——真实注入块只剩工作流引导行）')
+	if (site.block.length === 0) push('（记忆内容为空：记忆根未接线，或共享段与本机段都无条目——注入块为空，宿主滤除）')
 
 	const violations = collectViolations(site)
 	if (violations.length > 0) {

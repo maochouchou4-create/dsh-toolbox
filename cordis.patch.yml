@@ -1,4 +1,4 @@
-# dsh-toolbox bundle 层：memory＋see_image＋dispatch_task/dispatch_challenge＋dispatch_batch＋dispatch_lessons＋usage_note 七件工具。
+# dsh-toolbox bundle 层：memory 记忆注入＋dispatch 跑批纪律注入（两件注入）与 see_image＋dispatch_batch＋usage_note 三件工具。
 # 工具级配置（memoryRoot/machine/dispatchLedgerPath/visionProvider/visionModel）写各机 profile 的 cordis.patch.yml，不写这里。
 - insert:
     - id: dsh-toolbox

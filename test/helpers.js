@@ -54,17 +54,15 @@ export const FIXTURES_DIR = join(ROOT_DIR, 'test', 'fixtures')
  * FEATURES 表的投影（imports.test 对着源码钉 label 列），这里只是让两处断言指向同一份投影。
  */
 export const TOOL_NAMES = [
-	'dispatch_task',
-	'dispatch_challenge',
 	'dispatch_batch',
 	'see_image',
 	'usage_note',
 ]
 
 /**
- * 现读面的四份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
+ * 现读面的三份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
  * 表述，数据面增一份文件时它就少拷一份，而症状不是「少了一个文件」，是某条用例在无关的原因上红
- * （例如临时目录里读不到 plan-spec.json，报的却是「数据形状不合」）。
+ * （例如临时目录里读不到 discipline.md，报的却是「数据形状不合」）。
  */
 export const DISPATCH_DATA_FILES = DATA_FILES.map((e) => e.file)
 
@@ -171,7 +169,7 @@ export const memoryTree = (base, name, machineId) => {
 
 /* ---------- 现读数据目录（拷真数据 → 改坏 → 断言 → 删） ---------- */
 
-/** 把给定的几份数据拷进目标目录（缺省四份全拷；目录不存在就建），返回该目录。 */
+/** 把给定的几份数据拷进目标目录（缺省三份全拷；目录不存在就建），返回该目录。 */
 export const copyDataFiles = (dir, files = DISPATCH_DATA_FILES) => {
 	mkdirSync(dir, { recursive: true })
 	for (const file of files) writeFileSync(join(dir, file), readFileSync(join(DISPATCH_DATA_DIR, file)))
@@ -200,6 +198,11 @@ export const withLoadedData = (t, edits, run) => withDataDir(t, (dir) => {
 	for (const [file, mutate] of Object.entries(edits ?? {})) editData(dir, file, mutate)
 	return run(loadDispatchData(dir))
 })
+
+/** 改一份文本数据（discipline.md／templates.md）再写回；改坏模板不走 JSON 重写那一套。 */
+export const editText = (dir, file, mutate) => {
+	writeFileSync(join(dir, file), mutate(readFileSync(join(dir, file), 'utf8')))
+}
 
 /* ---------- 台账事件夹具（dispatch 族共用） ---------- */
 

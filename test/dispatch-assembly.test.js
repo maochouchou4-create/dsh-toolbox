@@ -4,7 +4,8 @@
  *
  * 钉的是接线单测照不到的缺口：注册函数把 ctx 传错了地方、execute 里少接一个端口、描述挂在
  * 错的工具上——这些只有真执行一次才现形（历史上装配层整条工具抛 ReferenceError 而全部纯函数
- * 用例全绿）。台账写入也在这里验：start 出稿即落、gate 裁决即落，都是「自动落账」的实现面。
+ * 用例全绿）。台账写入也在这里验：六动作经 execute 落盘；纪律注入块也在这里验「真的注册进了
+ * systemPrompt.context、真的现读数据文件」。
  *
  * hooks 是进程级的，故本文件里注册之后不要再 import 别的宿主相关模块；node --test 每个测试
  * 文件一个进程，互不影响。
@@ -16,8 +17,7 @@ import { registerHooks } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createNodeFsPort } from '../lib/fs-port.js'
-import { WORKFLOW_LINE } from '../lib/memory/assemble.js'
-import { DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
+import { DISPATCH_DATA_DIR, DISPATCH_DIR, FIXTURES_DIR, tempRoot } from './helpers.js'
 
 const STUBBED = new Map([
 	['@deepseek-ai/dsh-tools', join(FIXTURES_DIR, 'host-dsh-tools-stub.mjs')],
@@ -32,14 +32,12 @@ registerHooks({
 	},
 })
 
-const {
-	configShape,
-	registerDispatchBatch,
-	registerDispatchChallenge,
-	registerDispatchTask,
-} = await import('../lib/dispatch/index.js')
+const { configShape, registerDispatchBatch } = await import('../lib/dispatch/index.js')
+const { registerDiscipline } = await import('../lib/dispatch/discipline.js')
+const { loadDispatchData } = await import('../lib/dispatch/data.js')
+const { KIND_ACTIONS, LIFECYCLE_KINDS, GATE_LABELS } = await import('../lib/dispatch/vocab.js')
 
-const dispatchSource = ['index.js', 'core.js', 'parameters.js', 'batch.js', 'data.js', 'vocab.js']
+const dispatchSource = ['index.js', 'parameters.js', 'batch.js', 'data.js', 'vocab.js', 'discipline.js']
 	.map((file) => readFileSync(join(DISPATCH_DIR, file), 'utf8'))
 	.join('\n')
 
@@ -59,19 +57,23 @@ const hostFsOf = () => {
 	}
 }
 
-/** 宿主上下文替身：tools.register 收下定义，fs 走 node 端口，get 返回 undefined＝按需服务取不到（生产同形）。 */
+/** 宿主上下文替身：tools.register 收下定义，systemPrompt.context 收下注入件；get 返回 undefined（生产同形）。 */
 const ctxOf = () => {
 	const registered = []
+	const contexts = []
+	const warnings = []
 	return {
 		ctx: {
 			fs: hostFsOf(),
 			get: () => undefined,
 			inject: () => {},
-			logger: { warn: () => {}, error: () => {} },
-			systemPrompt: { context: () => {} },
+			logger: { warn: (message) => warnings.push(message), error: () => {} },
+			systemPrompt: { context: (definition) => contexts.push(definition) },
 			tools: { register: (definition) => registered.push(definition) },
 		},
 		registered,
+		contexts,
+		warnings,
 	}
 }
 
@@ -96,220 +98,172 @@ const ledgerLines = () =>
 		? readFileSync(ledger, 'utf8').trimEnd().split('\n').filter(Boolean).map((line) => JSON.parse(line))
 		: []
 
-const taskArgs = (overrides = {}) => ({
+const startArgs = (overrides = {}) => ({
+	action: 'start',
 	batch: 'smoke-batch',
 	intent: '把方案先行的立项出稿落地',
-	anchors: ['loadDispatchData', 'SAFETY_CARRIER_IDS'],
-	acceptance: 'npm test',
 	...overrides,
 })
 
-test('三件工具注册得出来：name／description／parameters／output 都挂在正确的一件上', () => {
-	const tools = [
-		mount(registerDispatchTask),
-		mount(registerDispatchChallenge),
-		mount(registerDispatchBatch),
-	]
-	assert.deepEqual(tools.map((tool) => tool.name), ['dispatch_task', 'dispatch_challenge', 'dispatch_batch'])
-	for (const tool of tools) {
-		assert.ok(tool.description.length > 20, `${tool.name} 的描述太短（模型选型靠它）`)
-		assert.ok(tool.parameters && typeof tool.parameters === 'object')
-		assert.equal(typeof tool.output.render, 'function')
-		assert.ok(tool.output.schema)
-	}
-	const retiredAssemblers = ['plan', 'review', 'build', 'verify'].map((kind) => `registerDispatch${kind[0].toUpperCase()}${kind.slice(1)}`)
-	for (const retired of retiredAssemblers) assert.ok(!dispatchSource.includes(retired), `装配层不该再有 ${retired}`)
+test('只装一件台账工具：name／description／parameters／output 都在 dispatch_batch 上，退役装配件全不见', () => {
+	const tool = mount(registerDispatchBatch)
+	assert.equal(tool.name, 'dispatch_batch')
+	assert.ok(tool.description.length > 20, '描述太短（模型选型靠它）')
+	assert.match(tool.description, /start／gate／commit／review／status／list/, '六动作写进描述')
+	assert.match(tool.description, /只记事实/, '台账口径＝只记事实（不设闸、不设提醒）必须写进描述')
+	assert.ok(tool.parameters && typeof tool.parameters === 'object')
+	assert.equal(typeof tool.output.render, 'function')
+	assert.ok(tool.output.schema)
 	assert.deepEqual(Object.keys(configShape).sort(), ['dispatchDataDir', 'dispatchLedgerPath'])
-})
-
-test('退役参数不回流：三件 output.schema 的属性面没有档位/分诊/预算旧格（变异①参数面半边）', () => {
-	const tools = [
-		mount(registerDispatchTask),
-		mount(registerDispatchChallenge),
-		mount(registerDispatchBatch),
-	]
-	for (const tool of tools) {
-		const declared = Object.keys(tool.output.schema.properties)
-		for (const retired of ['tier', 'triage', 'triageLine', 'diffBudget', 'taskBook', 'planAppendix']) {
-			assert.ok(!declared.includes(retired), `${tool.name} 的 output.schema 还带着 ${retired}`)
-		}
-	}
-	const taskDeclared = Object.keys(mount(registerDispatchTask).output.schema.properties).sort()
-	assert.deepEqual(taskDeclared, ['batch', 'decisionCards', 'gateReportLine', 'prompt', 'text', 'warnings', 'workflowArgs'])
-})
-
-test('描述面口径：task＝方案文档单形态＋start 事件，challenge＝双门＋forms 追加语义，batch＝四事件', () => {
-	const task = mount(registerDispatchTask)
-	const challenge = mount(registerDispatchChallenge)
-	const batch = mount(registerDispatchBatch)
-	assert.match(task.description, /方案/)
-	assert.match(task.description, /start 事件/)
-	assert.doesNotMatch(task.description, /档位|分诊|S\/M\/L/)
-	assert.match(challenge.description, /证伪门/)
-	assert.match(challenge.description, /gate 事件/)
-	assert.match(challenge.description, /追加/, 'forms 追加语义（点名追加不替换）必须写进描述——选型面要看得见')
-	assert.match(batch.description, /start／gate／commit／review/)
-	assert.match(batch.description, /review 收官即清该批全部行/, '台账口径＝进行中批的工作台')
-	for (const tool of [task, challenge, batch]) {
-		const retiredNames = [...['plan', 'review', 'build', 'verify'].map((kind) => `dispatch_${kind}`), 'dispatch_advance', 'dispatch_lessons']
-		for (const retired of retiredNames) {
-			assert.ok(!tool.description.includes(retired), `${tool.name} 描述里还有 ${retired}`)
-		}
+	for (const retired of ['registerDispatchTask', 'registerDispatchChallenge', 'dispatch_task', 'dispatch_challenge']) {
+		assert.ok(!dispatchSource.includes(retired), `装配层不该再有 ${retired}`)
 	}
 })
 
-test('dispatch_task（单形态）：直出可派参数并自动落 start（意图/拍板清单/规则指纹，无档位格）', async () => {
-	const tool = mount(registerDispatchTask)
-	const value = await exec(tool, taskArgs({ decisions: ['拍板一：四事件'] }))
-	assert.deepEqual(value.workflowArgs, { label: '方案 smoke-batch', prompt: value.prompt })
-	assert.ok(value.prompt.includes(value.gateReportLine), '登记行末必须带门报行')
-	assert.match(value.prompt, /定稿自查/, '方案骨架（定稿自查清单）进 prompt')
-	assert.match(value.text, /── 派发参数（subagent 直接可用；workflow 用 args\.workflowArgs）──/)
-	const rendered = tool.output.render({}, value)
-	assert.deepEqual(rendered, [{ type: 'text', text: value.text }])
+test('退役参数不回流：output.schema 属性面没有档位/分诊/预算旧格', () => {
+	const tool = mount(registerDispatchBatch)
+	const declared = Object.keys(tool.output.schema.properties)
+	for (const retired of ['tier', 'triage', 'triageLine', 'diffBudget', 'taskBook', 'planAppendix']) {
+		assert.ok(!declared.includes(retired), `output.schema 还带着 ${retired}`)
+	}
+	assert.deepEqual(declared.sort(), ['batch', 'emptyText', 'events', 'next', 'ok', 'rows', 'text'])
+})
 
+test('描述面口径：批台账六动作、review 收官清账、无档位/分诊/两件旧工具', () => {
+	const tool = mount(registerDispatchBatch)
+	assert.match(tool.description, /start／gate／commit／review／status／list/)
+	assert.match(tool.description, /review 收官即清该批全部行/, '台账口径＝进行中批的工作台')
+	assert.doesNotMatch(tool.description, /档位|分诊|S\/M\/L/)
+	for (const retired of ['dispatch_task', 'dispatch_challenge', 'dispatch_advance', 'dispatch_lessons']) {
+		assert.ok(!tool.description.includes(retired), `描述里还有 ${retired}`)
+	}
+})
+
+test('dispatch_batch start：经 execute 真落账（意图/拍板清单/规则指纹/占位 subject），同批重跑不重复', async () => {
+	const tool = mount(registerDispatchBatch)
+	const value = await exec(tool, startArgs({ decisions: ['拍板一：六动作'] }))
+	assert.equal(value.ok, true)
+	assert.equal(value.next, '门报')
+	assert.match(value.text, /已落 start 事件/)
 	const events = ledgerLines()
 	assert.equal(events.length, 1)
 	assert.equal(events[0].action, 'start')
 	assert.equal(events[0].intent, '把方案先行的立项出稿落地')
+	assert.deepEqual(events[0].decisions, ['拍板一：六动作'])
 	assert.equal(events[0].subject, '（待写）')
-	assert.deepEqual(events[0].decisions, ['拍板一：四事件'])
 	assert.match(events[0].rules, /^[0-9a-f]{12}$/)
 	assert.ok(!('tier' in events[0]), 'start 事件不带档位格')
 
-	const again = await exec(tool, taskArgs())
-	assert.ok(again.warnings.some((warning) => warning.includes('已登记（start 存在）')))
-	assert.equal(ledgerLines().length, 1, '重跑出稿不制造重复立项行')
+	const again = await exec(tool, startArgs())
+	assert.match(again.text, /已登记（start 存在）/)
+	assert.equal(ledgerLines().length, 1, '重跑不制造重复立项行')
+	assert.deepEqual(tool.output.render({}, value), [{ type: 'text', text: value.text }])
 })
 
-test('dispatch_challenge：回填台账登记值出 brief（不读施工汇报），出稿不写 gate', async () => {
-	const task = mount(registerDispatchTask)
-	await exec(task, taskArgs({ batch: 'smoke-gate', decisions: ['拍板二'] }))
-	const before = ledgerLines().length
-	const challenge = mount(registerDispatchChallenge)
-	const value = await exec(challenge, { batch: 'smoke-gate', subject: 'git diff 8a0a01f..HEAD' })
-	assert.equal(value.gate, '证伪门')
-	assert.deepEqual(value.briefs.map((brief) => brief.form), ['证伪复核'])
-	assert.ok(value.briefs[0].text.includes('不读施工汇报'))
-	assert.equal(value.adjudication.recorded, false)
-	assert.equal(ledgerLines().length, before, '出 brief 不落 gate 事件')
-	const rendered = challenge.output.render({}, value)
-	assert.deepEqual(rendered, [{ type: 'text', text: value.text }])
-})
-
-test('dispatch_challenge：forms 显式点名安全专项＝追加进 brief（变异②靶）', async () => {
-	const task = mount(registerDispatchTask)
-	await exec(task, taskArgs({ batch: 'smoke-safety' }))
-	const challenge = mount(registerDispatchChallenge)
-	const value = await exec(challenge, { batch: 'smoke-safety', subject: 'git diff a..b', forms: ['安全专项'] })
-	assert.deepEqual(value.briefs.map((brief) => brief.form), ['证伪复核', '安全专项'], '缺省标准形态保留，点名的安全专项追加')
-	const safety = value.briefs.find((brief) => brief.form === '安全专项')
-	assert.match(safety.text, /鉴权/)
-	assert.equal(value.workflowArgs.length, 2)
-})
-
-test('dispatch_challenge：adjudicate=true 写 gate 事件（裁决字段＋段标记），落账后状态前进', async () => {
-	const challenge = mount(registerDispatchChallenge)
-	const value = await exec(challenge, {
-		batch: 'smoke-gate',
-		subject: 'git diff 8a0a01f..HEAD',
-		adjudicate: true,
+test('dispatch_batch gate：门名必须∈词表、缺省段位按门分叉、事件落盘后状态前进', async () => {
+	const tool = mount(registerDispatchBatch)
+	await assert.rejects(
+		() => exec(tool, { action: 'gate', batch: 'smoke-batch', gate: '证伪复核' }),
+		/gate 必须是门名之一（方案证伪／证伪门）/,
+	)
+	const plan = await exec(tool, { action: 'gate', batch: 'smoke-batch', gate: GATE_LABELS.planChallenge })
+	assert.match(plan.text, /已落 gate 事件：批次 smoke-batch｜门 方案证伪｜段 方案/)
+	const final = await exec(tool, {
+		action: 'gate',
+		batch: 'smoke-batch',
+		gate: GATE_LABELS.challenge,
+		segment: '净 diff',
 		perFormCounts: [{ form: '证伪复核', count: 2 }],
 		adopted: 2,
 		rejected: 1,
 		overlap: 0,
-		missed: '',
 		note: '假值一处',
-		segment: '净 diff',
 	})
-	assert.equal(value.adjudication.recorded, true)
-	assert.deepEqual(value.adjudication.forms, ['证伪复核'])
-	assert.match(value.text, /已记门报：批次 smoke-gate｜门 证伪门/)
-	const gates = ledgerLines().filter((event) => event.action === 'gate' && event.batch === 'smoke-gate')
-	assert.equal(gates.length, 1)
-	assert.equal(gates[0].adopted, 2)
-	assert.equal(gates[0].rejected, 1)
-	assert.deepEqual(gates[0].perFormCounts, [{ form: '证伪复核', count: 2 }])
-	assert.equal(gates[0].segment, '净 diff')
-	assert.match(gates[0].rules, /^[0-9a-f]{12}$/)
-	assert.ok(!('tier' in gates[0]), 'gate 事件不带档位格')
-
-	const batch = mount(registerDispatchBatch)
-	const status = await exec(batch, { action: 'status', batch: 'smoke-gate' })
-	assert.equal(status.next, '提交')
-	assert.match(status.text, /门报 1 轮（修复轮数 0；采纳 2／拒收 1／双报重叠 0）/)
-	assert.deepEqual(batch.output.render({}, status), [{ type: 'text', text: status.text }])
+	assert.equal(final.next, '提交')
+	assert.match(final.text, /门报 2 轮（修复轮数 0；采纳 2／拒收 1／双报重叠 0）/)
+	const gates = ledgerLines().filter((event) => event.action === 'gate')
+	assert.equal(gates.length, 2)
+	assert.equal(gates[1].segment, '净 diff')
+	assert.deepEqual(gates[1].perFormCounts, [{ form: '证伪复核', count: 2 }])
+	assert.match(gates[1].rules, /^[0-9a-f]{12}$/)
 })
 
-test('dispatch_challenge：与台账登记冲突的显式参数当场拒绝（不许悄悄改口径）', async () => {
-	const challenge = mount(registerDispatchChallenge)
-	await assert.rejects(
-		() => exec(challenge, { batch: 'smoke-gate', subject: 'git diff a..b', intent: '临时改主意' }),
-		/与批次「smoke-gate」台账里登记的不一致/,
-	)
+test('dispatch_batch status/list：出口恒为字符串字段（MCP 出口校验不容 null）', async () => {
+	const tool = mount(registerDispatchBatch)
+	const status = await exec(tool, { action: 'status', batch: 'smoke-batch' })
+	assert.equal(typeof status.next, 'string')
+	assert.match(status.text, /批次 smoke-batch/)
+	const list = await exec(tool, { action: 'list' })
+	assert.ok(list.rows.length >= 1)
+	assert.ok(list.rows.every((row) => typeof row.next === 'string'))
+	assert.deepEqual(tool.output.render({}, status), [{ type: 'text', text: status.text }])
 })
 
-test('dispatch_task/challenge：退役参数（tier/triage/changedFiles/diffLines）传了就报未知参数', async () => {
-	// 档位改制后这些键已从参数面删除；execute 层的守卫必须当场点名（不是静默忽略），
-	// 否则旧习惯的调用者拿不到「这参数没了」的信号。
-	const task = mount(registerDispatchTask)
-	const challenge = mount(registerDispatchChallenge)
-	await assert.rejects(
-		() => exec(task, taskArgs({ batch: 'smoke-retired', tier: 'M', triage: 'M｜触公开契约', changedFiles: 5, diffLines: 1200 })),
-		/未知参数「tier、triage、changedFiles、diffLines」——本工具没有这个参数/,
-	)
-	await assert.rejects(
-		() => exec(challenge, { batch: 'smoke-retired', subject: 'git diff a..b', tier: 'M' }),
-		/未知参数「tier」.*没有这个参数/,
-	)
-})
-
-test('dispatch_challenge：校验报错回显台账现值（占位 subject 的报错带「（待写）」）', async () => {
-	// 占位登记的批次走方案证伪：subject 按未登记处理不回填，校验必抛——回填摘记（台账现值）
-	// 必须织进报错文案，否则「占位「（待写）」」的提醒随局部变量一起消失，补记线索断一半。
-	const task = mount(registerDispatchTask)
-	await exec(task, taskArgs({ batch: 'smoke-placeholder' }))
-	const challenge = mount(registerDispatchChallenge)
-	await assert.rejects(
-		() => exec(challenge, { batch: 'smoke-placeholder', gate: '方案证伪' }),
-		(error) => {
-			assert.match(error.message, /台账登记是占位\/空/)
-			assert.match(error.message, /台账现值：批次 smoke-placeholder 的 subject 是占位「（待写）」/, '回填摘记织进报错文案')
-			return true
-		},
-	)
-})
-
-test('dispatch_batch：commit 追加事件，review 收官即清该批台账行', async () => {
-	const batch = mount(registerDispatchBatch)
-	const committed = await exec(batch, { action: 'commit', batch: 'smoke-gate', commit: 'abc1234', pushed: 'ok' })
+test('dispatch_batch commit/review：commit 追加事件，review 收官即清该批台账行（别批原样保留）', async () => {
+	const tool = mount(registerDispatchBatch)
+	await exec(tool, startArgs({ batch: 'smoke-keep', intent: '别批' }))
+	const committed = await exec(tool, { action: 'commit', batch: 'smoke-batch', commit: 'abc1234', pushed: 'ok' })
 	assert.match(committed.text, /提交：abc1234／推送 ok/)
 	assert.deepEqual(
-		ledgerLines().filter((event) => event.batch === 'smoke-gate').map((event) => event.action),
-		['start', 'gate', 'commit'],
+		ledgerLines().filter((event) => event.batch === 'smoke-batch').map((event) => event.action),
+		['start', 'gate', 'gate', 'commit'],
 	)
-	const reviewed = await exec(batch, { action: 'review', batch: 'smoke-gate', retro: '本批收', efficacy: '证伪门拦住假值' })
+	const reviewed = await exec(tool, { action: 'review', batch: 'smoke-batch', retro: '本批收', efficacy: '证伪门拦住假值' })
 	assert.equal(reviewed.next, '完工')
-	// 收官清账：review 落账成功后台账文件不再有该批的任何行（含刚写的 review 行）
-	assert.deepEqual(ledgerLines().filter((event) => event.batch === 'smoke-gate'), [], 'review 后台账文件无该批行')
-	// 清账只清本批：别批的行（smoke-batch）必须原样保留
-	const list = await exec(batch, { action: 'list' })
-	assert.doesNotMatch(list.text, /smoke-gate/, '已收官批从 list 消失')
-	assert.match(list.text, /smoke-batch/, '别批的行保留')
-	assert.doesNotMatch(list.text, /smoke-batch｜M/, '批次行不带档位列')
+	assert.deepEqual(ledgerLines().filter((event) => event.batch === 'smoke-batch'), [], 'review 后台账文件无该批行')
+	const list = await exec(tool, { action: 'list' })
+	assert.doesNotMatch(list.text, /smoke-batch/, '已收官批从 list 消失')
+	assert.match(list.text, /smoke-keep/, '别批的行保留')
+})
+
+test('dispatch_batch 未知参数：传了就点名报错，不静默忽略', async () => {
+	const tool = mount(registerDispatchBatch)
+	await assert.rejects(
+		() => exec(tool, startArgs({ tier: 'M', triage: 'M｜触公开契约', changedFiles: 5 })),
+		/未知参数「tier、triage、changedFiles」——本工具没有这个参数/,
+	)
+	await assert.rejects(() => exec(tool, { action: 'start', batch: 'x' }), /intent 必须是非空字符串/)
 })
 
 test('dispatch_batch：渲染缺 text 即抛内部不变量错误（render 里不读盘、不重算）', () => {
-	const batch = mount(registerDispatchBatch)
-	assert.throws(() => batch.output.render({}, {}), /结构化值不带 text/)
+	const tool = mount(registerDispatchBatch)
+	assert.throws(() => tool.output.render({}, {}), /结构化值不带 text/)
 })
 
-test('工作流引导行＝四事件口径（注入块首行随改版，测试即契约）', () => {
-	assert.ok(WORKFLOW_LINE.includes('立项→门报→提交→复盘'))
-	for (const event of ['start', 'gate', 'commit', 'review']) {
-		assert.ok(WORKFLOW_LINE.includes(event), `引导行要点名事件 ${event}`)
+test('纪律注入：注册 name/order 正确，text 现读两文件并渲染模板绝对路径（阶段序与 lifecycle 互验）', () => {
+	const handle = ctxOf()
+	registerDiscipline(handle.ctx, { dispatchDataDir: '' })
+	assert.equal(handle.registered.length, 0, '纪律注入不是工具，不进 tools.register')
+	assert.equal(handle.contexts.length, 1)
+	const block = handle.contexts[0]
+	assert.equal(block.name, 'dispatch:discipline')
+	assert.equal(block.order, 130)
+	assert.equal(typeof block.text, 'function', 'text 必须是现读回调（改纪律不必发版重启）')
+
+	const text = block.text()
+	assert.deepEqual(handle.warnings, [], '真数据加载不该有 warning')
+	assert.ok(text.length > 0, '注入块不能为空（哨兵一：读失败静默缺席是最坏故障）')
+	assert.ok(text.includes(join(DISPATCH_DATA_DIR, 'templates.md')), '模板指针必须是现算的绝对路径')
+	assert.ok(!text.includes('{templates}'), '占位符必须被渲染掉，模型看不到花括号')
+
+	const { data } = loadDispatchData()
+	assert.ok(text.includes(data.discipline.replace('{templates}', join(DISPATCH_DATA_DIR, 'templates.md')).split('\n')[0].replace(/^#\s*/, '# ')), '块体就是 discipline.md 原文（现读）')
+	let last = -1
+	for (const kind of LIFECYCLE_KINDS) {
+		const at = text.indexOf(KIND_ACTIONS[kind] === undefined ? kind : `action=${KIND_ACTIONS[kind]}`)
+		assert.ok(at >= 0 && at > last, `阶段「${kind}」在注入块里的顺序必须与 lifecycle 阶段表一致`)
+		last = at
 	}
-	assert.ok(WORKFLOW_LINE.includes('方案文档骨架'), '立项出稿＝方案文档骨架')
-	assert.ok(WORKFLOW_LINE.includes('dispatch_task'))
-	assert.ok(WORKFLOW_LINE.includes('dispatch_challenge'))
+	for (const [kind, label] of Object.entries({ 方案证伪: GATE_LABELS.planChallenge, 证伪门: GATE_LABELS.challenge })) {
+		assert.ok(text.includes(label), `注入块要点名门「${kind}」`)
+	}
+})
+
+test('纪律注入失败路径：数据目录读不到→text() 空串＋warn 一条（静默缺席要留痕）', () => {
+	const handle = ctxOf()
+	registerDiscipline(handle.ctx, { dispatchDataDir: join(root, 'missing-data') })
+	assert.equal(handle.contexts.length, 1)
+	assert.equal(handle.contexts[0].text(), '')
+	assert.equal(handle.warnings.length, 1)
+	assert.match(handle.warnings[0], /\[dispatch\]/, 'warn 文案带模块前缀，便于宿主日志检索')
 })

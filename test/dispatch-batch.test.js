@@ -1,22 +1,21 @@
 /**
- * 批次台账（四事件）：事件构造、旧事件兼容读、集合式状态推导、回填、台账读写。
+ * 批次台账（六动作）：事件构造、旧事件兼容读、集合式状态推导、台账读写、字段校验。
  *
- * 台账是唯一真相（状态永远从事件现推），所以这里既钉新事件 schema，也钉「旧流程事件读得出来、
- * 但不参与门禁硬判」——旧流程跑过的批不能在新门禁下永远差一道门。
+ * 台账是唯一真相（状态永远从事件现推），且**只记事实**：这里既钉 start/gate 的写入面与形状校验，
+ * 也钉「不设闸、不设提醒」——无门可提交、review 不要求先 commit、折叠视图不出门禁警示。
+ * 旧六阶段 advance 事件读得出来、不参与任何判断（只作归档展示）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
 	BATCH_ACTIONS,
 	appendGateEvent,
 	appendStartOnce,
-	backfillFromBatch,
 	commitEvent,
 	foldBatch,
 	gateEvent,
-	mergeBackfill,
 	normalizeEvent,
 	parseLedger,
 	renderBatchFold,
@@ -28,9 +27,8 @@ import {
 	startEvent,
 } from '../lib/dispatch/batch.js'
 import { loadDispatchData } from '../lib/dispatch/data.js'
-import { validateChallenge } from '../lib/dispatch/core.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
-import { GATE_LABELS } from '../lib/dispatch/vocab.js'
+import { GATE_LABELS, SUBJECT_PLACEHOLDER } from '../lib/dispatch/vocab.js'
 import { tempRoot } from './helpers.js'
 
 const { data, raw } = loadDispatchData()
@@ -42,14 +40,18 @@ const legacyStartOf = (batch, tier = 'L') => ({
 	t: at(0), action: 'start', batch, tier, triage: `${tier}｜旧流程分诊`, intent: `${batch} 旧意图`, subject: '（待写）', decisions: [], rules: 'oldrules00001',
 })
 
-test('四事件构造：start 写占位 subject、gate 带裁决字段、commit/review 各就位', () => {
+test('动作词表：start／gate／commit／review／status／list 六件，顺序固定', () => {
+	assert.deepEqual(BATCH_ACTIONS, ['start', 'gate', 'commit', 'review', 'status', 'list'])
+})
+
+test('事件构造：start 写占位 subject、gate 缺省裁决字段、commit/review 各就位', () => {
 	const start = startOf('b1')
 	assert.deepEqual(start, {
 		t: at(0),
 		action: 'start',
 		batch: 'b1',
 		intent: '方案先行落地',
-		subject: '（待写）',
+		subject: SUBJECT_PLACEHOLDER,
 		decisions: [],
 		rules: 'rule00000001',
 	})
@@ -58,18 +60,22 @@ test('四事件构造：start 写占位 subject、gate 带裁决字段、commit/
 	assert.equal(gate.adopted, 2)
 	assert.deepEqual(gate.perFormCounts, [])
 	assert.equal(gate.segment, '净 diff')
-	assert.equal(commitEvent({ batch: 'b1', commit: 'abc1234', pushed: 'ok' }).action, 'commit')
+	const commit = commitEvent({ batch: 'b1', commit: 'abc1234', pushed: 'ok' })
+	assert.equal(commit.action, 'commit')
+	assert.equal(commit.pushed, 'ok')
 	const review = reviewEvent({ batch: 'b1', retro: '本批收', efficacy: '证伪门拦住一个假值' })
 	assert.equal(review.action, 'review')
 	assert.equal(review.efficacy, '证伪门拦住一个假值')
 })
 
-test('事件归一：新 start 无档位即现役，带档位＝旧事件标 legacy；advance 按阶段名映射', () => {
+test('事件归一：新事件无档位即现役，带档位＝旧事件标 legacy；advance 按阶段名映射', () => {
 	assert.equal(normalizeEvent({ action: 'start', batch: 'b' }).kind, 'start')
 	assert.equal(normalizeEvent({ action: 'start', batch: 'b' }).legacy, false, '新流程不写档位，不带 tier 即现役事件')
-	assert.equal(normalizeEvent({ action: 'start', batch: 'b', tier: 'M' }).legacy, true, '带 tier 的旧 start 标 legacy（历史档位只展示不进门禁）')
+	assert.equal(normalizeEvent({ action: 'start', batch: 'b', tier: 'M' }).legacy, true, '带 tier 的旧 start 标 legacy（历史档位只展示）')
 	assert.equal(normalizeEvent({ action: 'gate', batch: 'b', gate: '证伪门' }).kind, 'gate')
 	assert.equal(normalizeEvent({ action: 'gate', batch: 'b', gate: '证伪门' }).legacy, false)
+	assert.equal(normalizeEvent({ action: 'commit', batch: 'b' }).kind, 'commit')
+	assert.equal(normalizeEvent({ action: 'review', batch: 'b' }).kind, 'review')
 
 	const plan = normalizeEvent({ action: 'advance', batch: 'b', stage: '门一', combo: { 锚点核对: 2 } })
 	assert.equal(plan.kind, 'gate')
@@ -100,16 +106,16 @@ test('台账解析：JSONL／整份数组／fenced 都收，坏行报行号与�
 	assert.throws(() => parseLedger('[1]'), /事件必须是对象/)
 })
 
-test('规则指纹：同字节同指纹、换规则面即换指纹、缺 raw 退回 unknown', () => {
+test('规则指纹：templates.md 原始字节同字节同指纹、换模板即换指纹、缺 raw 退回 unknown', () => {
 	const a = rulesFingerprint(raw)
 	assert.equal(a, rulesFingerprint({ ...raw }))
 	assert.match(a, /^[0-9a-f]{12}$/)
-	const changed = rulesFingerprint({ ...raw, forms: `${raw.forms} ` })
+	const changed = rulesFingerprint({ ...raw, templates: `${raw.templates} ` })
 	assert.notEqual(a, changed)
 	assert.equal(rulesFingerprint(null), 'unknown')
 })
 
-test('状态推导（全流程）：四阶段走完、双门已过、修复轮数与采纳数从事件现算，状态无档位格', () => {
+test('状态推导（全流程）：四阶段走完、修复轮数/采纳数从事件现算、无门禁字段', () => {
 	const events = [
 		startOf('b1'),
 		gateEvent({ batch: 'b1', gate: GATE_LABELS.planChallenge, segment: '方案', now: at(1) }),
@@ -122,22 +128,21 @@ test('状态推导（全流程）：四阶段走完、双门已过、修复轮�
 	assert.equal(state.batch, 'b1')
 	assert.deepEqual(state.stageStates.map((stage) => stage.done), [true, true, true, true])
 	assert.equal(state.next, null)
-	assert.deepEqual(state.gatesAhead, [])
-	assert.deepEqual(state.requiredGates, [GATE_LABELS.planChallenge, GATE_LABELS.challenge], '门组合单源＝lifecycle 门报行的 gates 字段')
 	assert.equal(state.fixRounds, 1, '证伪门 2 轮 − 1 ＝修复轮数 1')
 	assert.deepEqual(state.adoption, { adopted: 4, rejected: 1, overlap: 0 })
 	assert.equal(state.latestCommit.commit, 'abc1234')
 	assert.equal(state.latestReview.retro, '本批收')
 	assert.equal(state.legacyTier, null, '新流程事件不带档位')
-	assert.ok(!('tier' in state) && !('triage' in state), '折叠状态不再带档位/分诊格')
+	assert.ok(!('gatesAhead' in state) && !('requiredGates' in state), '折叠状态不再有门禁推导字段')
 	assert.deepEqual(state.warnings, [])
 })
 
-test('状态推导（只立项）：下一阶段是门报，双门未过给提醒', () => {
+test('状态推导（只立项）：下一阶段门报，不出「门禁未过」提醒（台账只记事实）', () => {
 	const state = foldBatch([startOf('b1')], data)
 	assert.equal(state.next, '门报')
-	assert.deepEqual(state.gatesAhead, [GATE_LABELS.planChallenge, GATE_LABELS.challenge])
-	assert.ok(state.warnings.some((warning) => warning.includes('门禁未过：方案证伪、证伪门')))
+	assert.deepEqual(state.warnings, [])
+	assert.ok(!renderBatchRow(state).includes('门禁'), '批次行不挂门禁提醒')
+	assert.ok(!renderBatchFold(state).includes('门禁'), '折叠视图不挂门禁提醒')
 })
 
 test('双 start：给提醒不抛错（重复立项要人看见）', () => {
@@ -145,7 +150,7 @@ test('双 start：给提醒不抛错（重复立项要人看见）', () => {
 	assert.ok(state.warnings.some((warning) => warning.includes('2 条 start 事件')))
 })
 
-test('旧事件兼容：legacy 门报能读能算，但不参与门禁硬判（不把旧批永远判成差一道门）', () => {
+test('旧事件兼容：legacy 事件能读能算，只作归档展示', () => {
 	const events = [
 		legacyStartOf('b1'),
 		{ action: 'advance', batch: 'b1', stage: '门一', combo: { 锚点核对: 3 }, t: at(1) },
@@ -156,51 +161,25 @@ test('旧事件兼容：legacy 门报能读能算，但不参与门禁硬判（�
 	assert.equal(state.legacyTier, 'L', '旧事件的档位登记只作展示（legacyTier）')
 	assert.ok(state.warnings.some((warning) => warning.includes('含旧事件（legacy）2 条')))
 	assert.equal(state.stageStates.find((stage) => stage.kind === '立项').legacy, true)
-	assert.ok(!state.warnings.some((warning) => warning.includes('门禁未过')), 'legacy 存在时不硬判门禁')
 	assert.equal(state.stageStates.find((stage) => stage.kind === '门报').legacy, true)
-	const fold = renderBatchFold(state)
-	assert.match(fold, /档位（旧事件）：L/, '历史档位在折叠视图里保留展示')
+	assert.match(renderBatchFold(state), /档位（旧事件）：L/, '历史档位在折叠视图里保留展示')
 	assert.match(renderBatchRow(state), /门报（旧）/)
 })
 
 test('旧批（无 start）：先行事件缺立项有提醒，不抛错', () => {
-	const state = foldBatch([
-		{ action: 'advance', batch: 'old', stage: '门二', combo: { 锚点核对: 1 }, t: at(1) },
-	], data)
+	const state = foldBatch([{ action: 'advance', batch: 'old', stage: '门二', combo: { 锚点核对: 1 }, t: at(1) }], data)
 	assert.equal(state.legacyTier, null)
 	assert.ok(state.warnings.some((warning) => warning.includes('没有 start 事件')))
 	assert.equal(typeof state.next, 'string')
 })
 
-test('旧 start 过 status/list/落账出口：不抛错、next 是字符串（MCP 出口校验不容 null）', async (t) => {
-	await withLedger(t, async ({ path, port }) => {
-		await appendStartOnce({ port, path, event: startEvent({ batch: 'b2', intent: '旧批' }) })
-		const statusOut = await runBatchAction({ port, path, action: 'status', params: { batch: 'b2' } })
-		assert.equal(typeof statusOut.next, 'string')
-		const listOut = await runBatchAction({ port, path, action: 'list' })
-		assert.equal(listOut.rows.every((row) => typeof row.next === 'string'), true)
-		await appendStartOnce({ port, path, event: commitEvent({ batch: 'b2', commit: 'abc1234', pushed: 'ok' }) })
-		const commitOut = await runBatchAction({ port, path, action: 'commit', params: { batch: 'b2', commit: 'abc1234', pushed: 'ok' } })
-		assert.equal(typeof commitOut.next, 'string')
-	})
+test('折叠无 data 时按词表兜底：四阶段顺序不变', () => {
+	const state = foldBatch([startOf('b1')])
+	assert.deepEqual(state.stageStates.map((stage) => stage.id), ['立项', '门报', '提交', '复盘'])
+	assert.equal(state.next, '门报')
 })
 
-test('完工批过 review 出口：next 输出必为字符串占位；review 收官即清该批台账行', async (t) => {
-	await withLedger(t, async ({ path, port }) => {
-		await appendStartOnce({ port, path, event: startOf('b3') })
-		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b3', gate: GATE_LABELS.challenge, segment: '净 diff', adopted: 1, now: at(1) }) })
-		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b3', commit: 'def5678', pushed: 'ok' } })
-		const reviewOut = await runBatchAction({ port, path, action: 'review', params: { batch: 'b3', retro: '收官', efficacy: '拦一次' } })
-		assert.equal(reviewOut.next, '完工')
-		// 收官清账：该批全部行（含刚写的 review 行）移出台账文件，status/list 不再认识它
-		assert.equal(readLines(path).length, 0, 'review 后台账文件无该批行')
-		await assert.rejects(() => runBatchAction({ port, path, action: 'status', params: { batch: 'b3' } }), /没有批次「b3」的 start 事件/)
-		const listOut = await runBatchAction({ port, path, action: 'list' })
-		assert.equal(listOut.rows.every((row) => typeof row.next === 'string'), true)
-	})
-})
-
-test('渲染：批次行无档位列，单批折叠含进度、双门禁与门效能', () => {
+test('渲染：批次行无档位列，单批折叠含进度、门报轮数与门效能', () => {
 	const state = foldBatch([
 		startOf('b1'),
 		gateEvent({ batch: 'b1', gate: GATE_LABELS.challenge, segment: '净 diff', adopted: 1, now: at(1) }),
@@ -209,7 +188,6 @@ test('渲染：批次行无档位列，单批折叠含进度、双门禁与门�
 	const row = renderBatchRow(state)
 	assert.match(row, /^b1｜已过：立项→门报→复盘｜下一阶段：提交/, '行首直接是批次与已过阶段，无档位列')
 	assert.match(row, /门报 1 轮（修复轮数 0）/)
-	assert.match(row, /门禁未过：方案证伪/)
 	const fold = renderBatchFold(state)
 	assert.doesNotMatch(fold, /档位/, '新流程事件不带档位，折叠视图也不出档位行')
 	assert.match(fold, /^批次 b1/)
@@ -217,46 +195,6 @@ test('渲染：批次行无档位列，单批折叠含进度、双门禁与门�
 	assert.match(fold, /门报 1 轮（修复轮数 0；采纳 1／拒收 0／双报重叠 0）/)
 	assert.match(fold, /最近复盘：收（门效能：拦住假值）/)
 	assert.match(fold, /下一阶段：提交/)
-})
-
-test('回填：台账登记值逐格回填，占位 subject 跳过并提醒，证伪门不回填 subject', () => {
-	const state = foldBatch([startOf('b1', { subject: '/path/plan.md', decisions: ['拍板一'] })], data)
-	const { values, notes } = backfillFromBatch(state, GATE_LABELS.planChallenge)
-	assert.equal(values.subject, '/path/plan.md')
-	assert.deepEqual(values.decisions, ['拍板一'])
-	assert.ok(!('tier' in values), '回填面不再回填档位')
-	assert.deepEqual(notes, [])
-	// 方案证伪 subject 未传时从台账 start 事件回填，回填结果过得了校验（件2 链路）
-	const merged = mergeBackfill({ args: { batch: 'b1', gate: GATE_LABELS.planChallenge }, state, gate: GATE_LABELS.planChallenge })
-	assert.equal(merged.params.subject, '/path/plan.md')
-	assert.equal(validateChallenge(data, merged.params), GATE_LABELS.planChallenge)
-
-	const challenge = backfillFromBatch(state, GATE_LABELS.challenge)
-	assert.equal(challenge.values.subject, undefined, '证伪门对象是净 diff 命令，不能拿方案路径回填')
-
-	const placeholder = backfillFromBatch(foldBatch([startOf('b2')], data), GATE_LABELS.planChallenge)
-	assert.equal(placeholder.values.subject, undefined)
-	assert.ok(placeholder.notes.some((note) => note.includes('占位')))
-	// 占位回填跳过 → 校验层报「台账登记是占位/空」指回补记，不静默放行（件2 链路）
-	assert.throws(
-		() => validateChallenge(data, { batch: 'b2', gate: GATE_LABELS.planChallenge, ...placeholder.values }),
-		/台账登记是占位\/空，请传实际方案路径＋批次节指针/,
-	)
-	assert.deepEqual(backfillFromBatch(null, GATE_LABELS.planChallenge), { values: {}, notes: [] })
-})
-
-test('回填合并：显式一致通过、显式空值即错、显式与台账冲突即错', () => {
-	const state = foldBatch([startOf('b1', { intent: '登记过的意图' })], data)
-	const ok = mergeBackfill({ args: { batch: 'b1' }, state, gate: GATE_LABELS.challenge })
-	assert.equal(ok.params.intent, '登记过的意图')
-	assert.throws(
-		() => mergeBackfill({ args: { batch: 'b1', intent: '' }, state, gate: GATE_LABELS.challenge }),
-		/显式传了空的 intent/,
-	)
-	assert.throws(
-		() => mergeBackfill({ args: { batch: 'b1', intent: '临时改主意' }, state, gate: GATE_LABELS.challenge }),
-		/与批次「b1」台账里登记的不一致/,
-	)
 })
 
 test('台账路径：显式优先，缺省落 store 下 data/dispatch-ledger.jsonl', () => {
@@ -276,66 +214,88 @@ const withLedger = async (t, run) => {
 
 const readLines = (path) => readFileSync(path, 'utf8').trimEnd().split('\n').filter(Boolean).map((line) => JSON.parse(line))
 
-test('台账动作词表：commit／review／status／list 四件', () => {
-	assert.deepEqual(BATCH_ACTIONS, ['commit', 'review', 'status', 'list'])
-})
-
-test('空台账：list／status 都不炸，文案指向 dispatch_task 立项', async (t) => {
+test('空台账：list／status 都不炸，文案指向 dispatch_batch action=start 立项', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
 		const list = await runBatchAction({ port, path, action: 'list' })
 		assert.deepEqual(list.rows, [])
-		assert.match(list.emptyText, /dispatch_task 出稿即自动立项/)
+		assert.match(list.emptyText, /dispatch_batch action=start 立项/)
 		const status = await runBatchAction({ port, path, action: 'status' })
-		assert.match(status.text, /dispatch_task 出稿即自动立项/)
+		assert.match(status.text, /dispatch_batch action=start 立项/)
 		await assert.rejects(() => runBatchAction({ port, path, action: 'status', params: { batch: 'nope' } }), /没有批次「nope」的 start 事件/)
 	})
 })
 
-test('立项落账：首写追加 start，同批重跑只提醒不重复写', async (t) => {
+test('start 动作：必填 intent、decisions 形状、subject 缺省占位、同批重跑不重复写', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
-		const event = startOf('b1')
-		const first = await appendStartOnce({ port, path, event })
-		assert.match(first, /已落 start 事件/)
-		const second = await appendStartOnce({ port, path, event })
-		assert.match(second, /已登记（start 存在）/)
+		await assert.rejects(() => runBatchAction({ port, path, action: 'start', params: { batch: 'b1' } }), /intent 必须是非空字符串/)
+		await assert.rejects(() => runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'a\nb' } }), /intent 必须是单行/)
+		await assert.rejects(() => runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i', decisions: ['d', ''] } }), /decisions 必须是字符串数组/)
+		const first = await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i', decisions: ['d'] } })
+		assert.match(first.text, /已落 start 事件/)
+		assert.equal(first.next, '门报')
 		assert.equal(readLines(path).length, 1)
-		const status = await runBatchAction({ port, path, action: 'status', params: { batch: 'b1' } })
-		assert.equal(status.next, '门报')
-		assert.ok(!('tier' in status), '台账出口不再带档位格')
+		assert.equal(readLines(path)[0].subject, SUBJECT_PLACEHOLDER, 'subject 未传写占位')
+		const second = await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
+		assert.match(second.text, /已登记（start 存在）/)
+		assert.equal(readLines(path).length, 1, '同批重跑不重复写 start')
 	})
 })
 
-test('门报落账：gate 一条一轮不合并；commit/review 追加后状态前进', async (t) => {
+test('gate 动作：门名必须∈词表；段位缺省按门分叉；两轮不合并、修复轮数现算', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
-		await appendStartOnce({ port, path, event: startOf('b1') })
-		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b1', gate: GATE_LABELS.challenge, segment: '净 diff', adopted: 2, now: at(1) }) })
-		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b1', gate: GATE_LABELS.challenge, segment: '修正轮', adopted: 1, now: at(2) }) })
-		let status = await runBatchAction({ port, path, action: 'status', params: { batch: 'b1' } })
-		assert.match(status.text, /门报 2 轮（修复轮数 1；采纳 3／拒收 0／双报重叠 0）/)
-
-		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b1', commit: 'abc1234', pushed: 'ok' } })
-		const reviewed = await runBatchAction({
-			port,
-			path,
-			action: 'review',
-			params: { batch: 'b1', retro: '本批收', efficacy: '证伪门拦住假值' },
-		})
-		assert.equal(reviewed.next, '完工')
-		assert.match(reviewed.text, /最近复盘：本批收（门效能：证伪门拦住假值）/, 'review 响应仍回放该批一生（内存态，读的是本次事件）')
-		assert.equal(readLines(path).length, 0, 'review 收官即清该批全部行（含刚写的 review 行）')
-
-		const listed = await runBatchAction({ port, path, action: 'list' })
-		assert.doesNotMatch(listed.text, /b1/, '已收官批从 list 消失')
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
+		await assert.rejects(
+			() => runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: '证伪复核' } }),
+			/gate 必须是门名之一（方案证伪／证伪门）/,
+		)
+		const plan = await runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: GATE_LABELS.planChallenge } })
+		assert.match(plan.text, /已落 gate 事件：批次 b1｜门 方案证伪｜段 方案/)
+		await runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: GATE_LABELS.challenge } })
+		const second = await runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: GATE_LABELS.challenge, adopted: 2 } })
+		assert.match(second.text, /门报 3 轮（修复轮数 1；采纳 2／拒收 0／双报重叠 0）/, '证伪门轮数−1＝修复轮数')
+		assert.equal(readLines(path).filter((event) => event.action === 'gate').length, 3, 'gate 一条一轮，不合并')
 	})
 })
 
-test('台账写侧守卫：未立项不能提交、空批次不能提交、多行值即错', async (t) => {
+test('gate 裁决字段形状：清单/计数/perFormCounts 的坏形状当场拒，事件不落半行', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
+		const before = readFileSync(path, 'utf8')
+		for (const params of [
+			{ forms: ['ok', 3] },
+			{ forms: [''] },
+			{ recommended: '证伪复核' },
+			{ adopted: -1 },
+			{ rejected: 1.5 },
+			{ overlap: '2' },
+			{ perFormCounts: [{ form: '证伪复核', count: -2 }] },
+			{ perFormCounts: [{ count: 1 }] },
+			{ missed: 'a\nb' },
+			{ note: 'a\nb' },
+			{ segment: 'a\nb' },
+		]) {
+			await assert.rejects(
+				() => runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: GATE_LABELS.challenge, ...params } }),
+				undefined,
+				`坏形状应拒: ${JSON.stringify(params)}`,
+			)
+		}
+		assert.equal(readFileSync(path, 'utf8'), before, '校验不过不落任何行')
+	})
+})
+
+test('commit/gate 未立项即拒、多行值即拒；未知动作即拒', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
 		await assert.rejects(
 			() => runBatchAction({ port, path, action: 'commit', params: { batch: 'b1', commit: 'a', pushed: 'ok' } }),
 			/未立项（台账无 start 事件）/,
 		)
-		await appendStartOnce({ port, path, event: startOf('b1') })
+		await assert.rejects(
+			() => runBatchAction({ port, path, action: 'gate', params: { batch: 'b1', gate: '证伪门' } }),
+			/未立项（台账无 start 事件）/,
+			'gate 对未立项批放行会留清不掉的孤儿行（review 是唯一清账路径、对无 start 批抛错）',
+		)
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
 		await assert.rejects(
 			() => runBatchAction({ port, path, action: 'commit', params: { batch: 'b1', commit: 'a\nb', pushed: 'ok' } }),
 			/commit 必须是单行/,
@@ -345,15 +305,136 @@ test('台账写侧守卫：未立项不能提交、空批次不能提交、多�
 	})
 })
 
-test('旧事件写入不改写：追加后原有行逐字保留（兼容读的写侧保证）', async (t) => {
+test('无硬闸：无门报也可 commit；未 commit 也可 review（台账只记事实）', async (t) => {
 	await withLedger(t, async ({ path, port }) => {
-		const legacy = JSON.stringify({ t: at(1), action: 'advance', batch: 'old', stage: '门二', combo: { 锚点核对: 2 } })
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'a', intent: '无门直提' } })
+		const commit = await runBatchAction({ port, path, action: 'commit', params: { batch: 'a', commit: 'abc1234', pushed: 'ok' } })
+		assert.equal(commit.ok, true)
+
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b', intent: '不提交直接复盘' } })
+		const review = await runBatchAction({ port, path, action: 'review', params: { batch: 'b', retro: '收', efficacy: 'e' } })
+		assert.equal(review.ok, true)
+	})
+})
+
+test('review 收官即清该批台账行；响应仍回放该批一生（内存态）', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b3', intent: 'i' } })
+		await runBatchAction({ port, path, action: 'gate', params: { batch: 'b3', gate: GATE_LABELS.challenge, adopted: 1 } })
+		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b3', commit: 'def5678', pushed: 'ok' } })
+		const reviewOut = await runBatchAction({ port, path, action: 'review', params: { batch: 'b3', retro: '收官', efficacy: '拦一次' } })
+		assert.equal(reviewOut.next, '完工')
+		assert.match(reviewOut.text, /最近复盘：收官（门效能：拦一次）/)
+		assert.equal(readLines(path).length, 0, 'review 后台账文件无该批行')
+		await assert.rejects(() => runBatchAction({ port, path, action: 'status', params: { batch: 'b3' } }), /没有批次「b3」的 start 事件/)
+		const listOut = await runBatchAction({ port, path, action: 'list' })
+		assert.equal(listOut.rows.length, 0)
+	})
+})
+
+test('旧事件写入不改写：追加后原有行逐字保留', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
 		await appendStartOnce({ port, path, event: startOf('b1') })
 		const before = readFileSync(path, 'utf8')
-		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b1', commit: 'abc1234', pushed: 'ok' } })
+		await appendGateEvent({ port, path, event: gateEvent({ batch: 'b1', gate: GATE_LABELS.challenge, segment: '净 diff' }) })
 		const after = readFileSync(path, 'utf8')
 		assert.ok(after.startsWith(before), '追加不改写既有行')
 		assert.ok(after.endsWith('\n'))
-		assert.equal(after.includes(legacy), false)
 	})
+})
+
+test('status/list 的 next 出口恒为字符串（MCP 出口校验不容 null）', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await appendStartOnce({ port, path, event: startOf('b2') })
+		const statusOut = await runBatchAction({ port, path, action: 'status', params: { batch: 'b2' } })
+		assert.equal(typeof statusOut.next, 'string')
+		const listOut = await runBatchAction({ port, path, action: 'list' })
+		assert.equal(listOut.rows.every((row) => typeof row.next === 'string'), true)
+		const commitOut = await runBatchAction({ port, path, action: 'commit', params: { batch: 'b2', commit: 'abc1234', pushed: 'ok' } })
+		assert.equal(typeof commitOut.next, 'string')
+	})
+})
+
+test('start 可选字段形状：subject 多行拒、decisions 非数组拒（校验不过不落行）', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await assert.rejects(
+			() => runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i', subject: 'a\nb' } }),
+			/subject 必须是单行/,
+		)
+		await assert.rejects(
+			() => runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i', decisions: '拍板一' } }),
+			/decisions 必须是字符串数组/,
+		)
+		await assert.rejects(() => runBatchAction({ port, path, action: 'start', params: { batch: '', intent: 'i' } }), /batch/)
+		assert.equal(existsSync(path) ? readLines(path).length : 0, 0, '校验不过不落半行')
+	})
+})
+
+test('gate 事件保真：显式段位/清单/计数/备注原样落盘，rules 取当趟模板指纹', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
+		await runBatchAction({
+			port,
+			path,
+			action: 'gate',
+			params: {
+				batch: 'b1',
+				gate: GATE_LABELS.planChallenge,
+				segment: '方案 v2',
+				forms: ['方案证伪', '安全专项'],
+				recommended: ['方案证伪'],
+				perFormCounts: [{ form: '方案证伪', count: 3 }],
+				adopted: 2,
+				rejected: 1,
+				overlap: 0,
+				missed: '漏网：无',
+				note: '前提攻击两轮',
+			},
+		})
+		const event = readLines(path).find((line) => line.action === 'gate')
+		assert.equal(event.segment, '方案 v2')
+		assert.deepEqual(event.forms, ['方案证伪', '安全专项'])
+		assert.deepEqual(event.recommended, ['方案证伪'])
+		assert.deepEqual(event.perFormCounts, [{ form: '方案证伪', count: 3 }])
+		assert.equal(event.missed, '漏网：无')
+		assert.equal(event.note, '前提攻击两轮')
+		assert.match(event.rules, /^[0-9a-f]{12}$/)
+	})
+})
+
+test('折叠按门分流：方案证伪多次不推进修复轮数，修复轮数只数证伪门', () => {
+	const events = [
+		startOf('b1'),
+		gateEvent({ batch: 'b1', gate: GATE_LABELS.planChallenge, segment: '方案', now: at(1) }),
+		gateEvent({ batch: 'b1', gate: GATE_LABELS.planChallenge, segment: '方案', now: at(2) }),
+		gateEvent({ batch: 'b1', gate: GATE_LABELS.challenge, segment: '净 diff', now: at(3) }),
+	]
+	const state = foldBatch(events, data)
+	assert.equal(state.fixRounds, 0, '证伪门只有 1 轮 → 修复 0 轮（方案证伪的 2 轮不计入）')
+	assert.equal(state.latestGate.gate, GATE_LABELS.challenge)
+	assert.match(renderBatchRow(state), /门报 3 轮（修复轮数 0）/)
+})
+
+test('渲染：无门报时批次行写「门报：无」，下一阶段恒为字符串', () => {
+	const state = foldBatch([startOf('b1')], data)
+	const row = renderBatchRow(state)
+	assert.match(row, /门报：无/)
+	assert.equal(typeof state.next, 'string')
+})
+
+test('commit 可选字段 note 原样落盘；review 清账后响应仍回放门效能', async (t) => {
+	await withLedger(t, async ({ path, port }) => {
+		await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } })
+		await runBatchAction({ port, path, action: 'commit', params: { batch: 'b1', commit: 'abc1234', pushed: 'ok', note: '分两次推' } })
+		assert.match(readFileSync(path, 'utf8'), /"note":"分两次推"/, 'commit 的 note 要原样落盘（不落＝字段静默丢失）')
+		await runBatchAction({ port, path, action: 'review', params: { batch: 'b1', retro: '收', efficacy: '', note: '复盘附注' } })
+		const lines = readLines(path)
+		assert.equal(lines.length, 0, 'review 清账（review 行随批清掉，门效能由响应文本回放）')
+	})
+})
+
+test('解析：CRLF 台账也收（旧 Windows 机器写出来的行尾）', () => {
+	const line = JSON.stringify(startOf('b1'))
+	const text = `${line}\r\n${JSON.stringify(startOf('b2'))}\r\n`
+	assert.equal(parseLedger(text).length, 2, '行尾多出的 \\r 不该让整份台账解析失败')
 })

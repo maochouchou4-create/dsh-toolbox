@@ -177,14 +177,14 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	assert.equal(memoryTree(base, 'no-machine').machineDir, undefined)
 })
 
-test('copyDataFiles：四份逐字节相等（解析过再写的形状对不上就红），跑两遍结果同', (t) => {
+test('copyDataFiles：三份逐字节相等（文本面逐字节、JSON 面形状敏感），跑两遍结果同', (t) => {
 	const dir = join(tempRoot(t, 'copy-data'), 'data')
 	copyDataFiles(dir)
 	const first = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {
 		assert.ok(bytes.equals(readFileSync(join(DISPATCH_DATA_DIR, file))), `${file} 与盘上逐字节相等：解析再序列化会改缩进与键序，而现读面那些用例比的就是键序敏感的形状`)
 	}
-	assert.deepEqual(DISPATCH_DATA_FILES.length, 4, '现读面四份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
+	assert.deepEqual(DISPATCH_DATA_FILES.length, 3, '现读面三份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
 	copyDataFiles(dir)
 	const second = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {
@@ -192,7 +192,7 @@ test('copyDataFiles：四份逐字节相等（解析过再写的形状对不上�
 	}
 	// 子集那一档：台账读几份就只拷几份，少拷的那些不该被建出来（建出来＝读到的不是「不存在」）
 	const partial = join(tempRoot(t, 'copy-partial'), 'data')
-	copyDataFiles(partial, ['forms.json'])
-	assert.deepEqual(existsSync(join(partial, 'forms.json')), true)
-	assert.deepEqual(existsSync(join(partial, 'plan-spec.json')), false)
+	copyDataFiles(partial, ['lifecycle.json'])
+	assert.deepEqual(existsSync(join(partial, 'lifecycle.json')), true)
+	assert.deepEqual(existsSync(join(partial, 'templates.md')), false)
 })
