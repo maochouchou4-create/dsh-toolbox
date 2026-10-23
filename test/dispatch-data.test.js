@@ -26,7 +26,7 @@ import { KIND_ACTIONS, LIFECYCLE_KINDS } from '../lib/dispatch/vocab.js'
 import { DISPATCH_DATA_DIR, editData, editText, withDataDir } from './helpers.js'
 
 /** templates.md 整份正文的指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
-const TEMPLATES_SNAPSHOT = '9e402644749bbd61'
+const TEMPLATES_SNAPSHOT = '693a1bc7a854aaf6'
 
 const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
@@ -195,8 +195,8 @@ test('数据目录解析：显式目录优先、空串与未配置回落到仓�
 
 test('埋雷体检：模板节标题重复出现（安全专项除外）必红', (t) => {
 	withDataDir(t, (dir) => {
-		editText(dir, 'templates.md', (text) => `${text}\n## 拍板卡\n\n重复的一节。\n`)
-		assert.throws(() => loadDispatchData(dir), /节标题「## 拍板卡」必须恰好出现一次/)
+		editText(dir, 'templates.md', (text) => `${text}\n## 门报行\n\n重复的一节。\n`)
+		assert.throws(() => loadDispatchData(dir), /节标题「## 门报行」必须恰好出现一次/)
 	})
 })
 

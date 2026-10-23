@@ -16,7 +16,7 @@
   进每回合 systemPrompt（`dispatch:discipline`，order 130），不靠调用某件工具才看得见。文本住
   `lib/dispatch/data/discipline.md`，每次请求现读；`{templates}` 由注入代码渲染成
   `lib/dispatch/data/templates.md` 的绝对路径（方案骨架／两份 brief 模板／定稿自查／横切判据／
-  拍板卡／门报行/安全五问都在那一份人读文件里）。读失败只 warn 一条并跳过本回合，不阻断请求。
+  门报行/安全五问都在那一份人读文件里）。读失败只 warn 一条并跳过本回合，不阻断请求。
 - **dispatch_batch**：批次台账，只记事实——不设闸、不设提醒。六个动作：`start`（立项：batch／
   intent 必填，subject 缺省占位）／`gate`（门报：门名必须∈「方案证伪」「证伪门」，记段位、
   形态、裁决与门效能）／`commit`／`review`／`status`（看单批）／`list`。一个批次一生记成 JSONL
@@ -177,7 +177,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
   渲染成 `templates.md` 的绝对路径（路径进每回合的上下文是应答「骨架／brief 在哪儿」的召回面，
   不是说明文字）。
 - `templates.md`：**人读模板单文件**——方案文档规范（骨架四节＋自查四条）、方案证伪 brief、
-  证伪门 brief、横切判据、拍板卡（≤6 行）、门报行、安全专项五问、不做清单。八节标题各恰一次；
+  证伪门 brief、横切判据、门报行、安全专项五问、不做清单。七节标题各恰一次；
   **安全五问全仓只此一处**（锚点落在安全小节内），别处复述五问即加载失败。
 - `lifecycle.json`：**四阶段**（立项／门报／提交／复盘）的单源——只有 `id`／`order`／`kind` 三键，
   `order` 从 1 连续、`kind` 按 order 排出的序列必须与阶段词表（立项→门报→提交→复盘）相等；
