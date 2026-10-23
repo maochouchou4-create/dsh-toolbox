@@ -10,9 +10,7 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
   四阶段表（只许 id/order/kind））。
   **数据文件现读不缓存——改完下次请求（纪律）或下次 dispatch_batch 调用（台账）即生效；要等
   宿主重启的只有代码（lib/*.js）**。
-  `test/dispatch-data.test.js` 存着 `templates.md` 指纹快照＋八节标题唯一＋安全五问单载体计数
-  断言，改 `templates.md` 必须同批同步快照指纹；`test/dispatch-assembly.test.js` 钉住纪律注入
-  与 lifecycle 的阶段序列互验。
+  `templates.md` 的结构守卫在加载期（`lib/dispatch/data.js`）——每请求现读、改坏即红，测试不镜像，**改 `templates.md` 纯改文档、零测试同步**；`test/dispatch-data.test.js` 里模板相关只剩安全五问全仓单载体扫描（另有纪律/阶段表结构互验与埋雷体检）；`test/dispatch-assembly.test.js` 钉住纪律注入与 lifecycle 的阶段序列互验。
   数据面怎么读、门怎么记、六个动作怎么用见 `README.md`「dispatch 数据资产」节。
 - **插件改动要在下次启动后才算数**。本仓被宿主按模块代缓存，改完 `lib/` 不会热更新。
   本会话不重启宿主（重启会掐断会话），所以任何「装上了/生效了」的说法都不成立：

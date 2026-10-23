@@ -1,34 +1,24 @@
 /**
- * dispatch 数据面（两份人读 markdown ＋ 一份阶段表 JSON）的镜像与互验：形状、跨文件绑死、
- * 模板整份指纹、安全五问单载体，外加「改坏必红」的变异演示（埋雷体检内置于测试，nip 在数据面
- * 而不是人脑）。
- *
- * 镜像为什么放这里：这几份文件是规则面，改一个字就改行为；测试不镜像时，改动只在下次注入/调用时
- * 才现形，而那时已经进了生产。指纹只钉「正文有没有变」——逐字副本每次改模板都要抄一遍，抄漏是静默的。
+ * dispatch 数据面（两份人读 markdown ＋ 一份阶段表 JSON）的行为测试：加载全绿冒烟（结构
+ * 校验顺带跑真文件）、跨文件互验、安全五问全仓单载体，外加「改坏必红」的埋雷体检（nip
+ * 在数据面加载校验而不是人脑）。templates.md 的结构守卫在 lib/dispatch/data.js 加载期——
+ * 每请求现读、改坏即红，测试不镜像：改模板正文零测试同步。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
 	DATA_FILES,
 	DISCIPLINE_LINE_LIMIT,
 	DispatchDataError,
-	SAFETY_ANCHORS,
 	SAFETY_SECTION_MARKER,
 	TEMPLATES_PLACEHOLDER,
-	TEMPLATE_SECTIONS,
 	loadDispatchData,
 	resolveDataDir,
 } from '../lib/dispatch/data.js'
 import { KIND_ACTIONS, LIFECYCLE_KINDS } from '../lib/dispatch/vocab.js'
 import { DISPATCH_DATA_DIR, editData, editText, withDataDir } from './helpers.js'
-
-/** templates.md 整份正文的指纹（sha256 前 16 位）：改正文＝改规则，同步更新这里的指纹。 */
-const TEMPLATES_SNAPSHOT = '693a1bc7a854aaf6'
-
-const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
 const REPO_ROOT = join(DISPATCH_DATA_DIR, '..', '..', '..')
 
@@ -62,37 +52,18 @@ test('阶段表：四阶段只有 id/order/kind 三键，顺序与词表逐位�
 	}
 })
 
-test('模板八节骨架：每节标题恰一次且按序出现（缺节＝模板迁移漏内容）', () => {
-	const { data } = loadDispatchData()
-	const headings = data.templates.split('\n').filter((line) => line.startsWith('## '))
-	assert.deepEqual(headings, [...TEMPLATE_SECTIONS.slice(0, 6), headings[6], TEMPLATE_SECTIONS[6]], '节序固定')
-	for (const section of TEMPLATE_SECTIONS) {
-		assert.equal(data.templates.split(section).length - 1, 1, `节标题「${section}」必须恰一次`)
-	}
-	assert.ok(headings[6].startsWith(SAFETY_SECTION_MARKER), '安全专项节排在门报行之后、不做清单之前')
-})
-
-test('模板整份指纹：改正文＝改规则（同步更新 TEMPLATES_SNAPSHOT）', () => {
-	const { data } = loadDispatchData()
-	assert.equal(digestOf(data.templates), TEMPLATES_SNAPSHOT)
-})
-
 test('去渲染占位符语法：模板与纪律正文里不再有〔…〕（模板已变人读文件）', () => {
 	const { data } = loadDispatchData()
 	assert.ok(!data.templates.includes('〔'), 'templates.md 不该再有渲染占位符')
 	assert.ok(!data.discipline.includes('〔'), 'discipline.md 不该再有渲染占位符')
 })
 
-test('安全五问单载体：整节标题全仓只有 templates.md 一处，五问锚点只在小节内', () => {
+test('安全五问单载体：整节标题全仓只有 templates.md 一处', () => {
 	const { data } = loadDispatchData()
 	const safetyHeading = data.templates.split('\n').find((line) => line.startsWith(SAFETY_SECTION_MARKER))
 	assert.ok(safetyHeading, 'templates.md 必须有安全专项整节标题')
 	const offenders = collectMarkdown(REPO_ROOT).filter((path) => readFileSync(path, 'utf8').includes(safetyHeading))
 	assert.deepEqual(offenders, [join(DISPATCH_DATA_DIR, 'templates.md')], '安全五问整节全仓只许一处定义（README/纪律/别的模板复述即红）')
-	const markerAt = data.templates.indexOf(SAFETY_SECTION_MARKER)
-	const sectionEnd = data.templates.indexOf('\n## ', markerAt + 1)
-	const safety = data.templates.slice(markerAt, sectionEnd === -1 ? undefined : sectionEnd)
-	for (const anchor of SAFETY_ANCHORS) assert.ok(safety.includes(anchor), `安全专项节缺五问锚点「${anchor}」`)
 })
 
 test('纪律文本：行数与占位符在限内，四个台账动作按阶段序出现', () => {
