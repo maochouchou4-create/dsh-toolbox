@@ -9,8 +9,9 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { commitEvent, gateEvent, reviewEvent, startEvent } from '../lib/dispatch/batch.js'
 import {
 	DISPATCH_DATA_DIR,
@@ -25,6 +26,8 @@ import {
 	tempRoot,
 	withTempDir,
 } from './helpers.js'
+
+const TEST_DIR = dirname(fileURLToPath(import.meta.url))
 
 const keysOf = (value) => Object.keys(value).sort()
 
@@ -144,6 +147,17 @@ test('临时根脱离 node:test 上下文当场报错：安静建一个没人删
 		const t = { after: () => {} }
 		assert.equal(requireTestContext(t, 'tempRoot'), t)
 	})
+})
+
+test('临时根单源：test/ 下 mkdtempSync 直调仅许 helpers.js', () => {
+	// 扫描面＝本文件所在目录的顶层 .js（fixtures 是 .mjs 不在面内），豁免仅 helpers.js——
+	// 临时目录的唯一合法落点。helpers 注释里「不要再各写一份」的人脑规则拦不住新增，
+	// 换成结构保证。本用例自身也在扫描面内：源码里不得出现「mkdtempSync 后紧跟左括号」
+	// 的字面——正则字面量里 mkdtempSync 后是反斜杠、文案用「直调」措辞，都不满足该形态
+	const offenders = readdirSync(TEST_DIR)
+		.filter((name) => name.endsWith('.js') && name !== 'helpers.js')
+		.filter((name) => /\bmkdtempSync\s*\(/.test(readFileSync(join(TEST_DIR, name), 'utf8')))
+	assert.deepEqual(offenders, [], `临时根必须走 helpers.js 单源（tempRoot／withTempDir），以下文件直调了 mkdtempSync：${offenders.join('、')}`)
 })
 
 test('seedLedger：一行一事件往返逐字等价，同名再写＝整份替换（不是追加）', (t) => {

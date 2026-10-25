@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendStartOnce, runBatchAction } from '../lib/dispatch/batch.js'
 import { createNodeFsPort } from '../lib/fs-port.js'
+import { tempRoot } from './helpers.js'
 
 /** MCP 出口守卫：宿主对工具返回值做 schema＋无损序列化校验——undefined 值键、非有限数、函数都过不去
  *  （JSON.stringify 静默丢 undefined，node 深比较也把「有 undefined 键」与「无该键」视作相等，故必须显式走键）。
@@ -22,16 +22,16 @@ export function assertMcpSafe(value, label) {
   walk(value, '')
 }
 
-test('出口边界：batch 空台账 status/list 返回值 MCP 安全', async () => {
-  const dir = mkdtempSync(join('/tmp', 'boundary-'))
+test('出口边界：batch 空台账 status/list 返回值 MCP 安全', async (t) => {
+  const dir = tempRoot(t, 'boundary')
   const path = join(dir, 'ledger.jsonl')
   const port = createNodeFsPort()
   assertMcpSafe(await runBatchAction({ port, path, action: 'status' }), 'batch.emptyStatus')
   assertMcpSafe(await runBatchAction({ port, path, action: 'list' }), 'batch.emptyList')
 })
 
-test('出口边界：start 全字段/裸字段与重复登记返回值 MCP 安全', async () => {
-  const dir = mkdtempSync(join('/tmp', 'boundary-'))
+test('出口边界：start 全字段/裸字段与重复登记返回值 MCP 安全', async (t) => {
+  const dir = tempRoot(t, 'boundary')
   const path = join(dir, 'ledger.jsonl')
   const port = createNodeFsPort()
   await appendStartOnce({ port, path, event: { action: 'start', batch: 'old', t: '2026-01-01T00:00:00.000Z' } })
@@ -44,8 +44,8 @@ test('出口边界：start 全字段/裸字段与重复登记返回值 MCP 安�
   assertMcpSafe(await runBatchAction({ port, path, action: 'start', params: { batch: 'b1', intent: 'i' } }), 'batch.startDup')
 })
 
-test('出口边界：gate 全字段/裸字段、commit、review、list 返回值 MCP 安全', async () => {
-  const dir = mkdtempSync(join('/tmp', 'boundary-'))
+test('出口边界：gate 全字段/裸字段、commit、review、list 返回值 MCP 安全', async (t) => {
+  const dir = tempRoot(t, 'boundary')
   const path = join(dir, 'ledger.jsonl')
   const port = createNodeFsPort()
   await runBatchAction({ port, path, action: 'start', params: { batch: 'b', intent: 'i', decisions: ['d'] } })

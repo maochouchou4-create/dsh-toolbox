@@ -18,8 +18,8 @@
  *
  * 用法：node scripts/check-memory-index.mjs [记忆根|记忆目录] [机器id]
  * 记忆根默认 ~/.dsh/memory（store＝<记忆根>/memory），机器 id 默认未给（只检共享段，
- * 并在 machines/ 下有条目时判红）。第一个实参给记忆根或记忆目录本身都收：以 /memory
- * 结尾按记忆目录算（root 取其父目录）——注入块头句里的基目录就是记忆目录，照抄也收。
+ * 并在 machines/ 下有条目时判红）。第一个实参给记忆根或记忆目录本身都收：路径末段是
+ * memory 按记忆目录算（root 取其父目录）——注入块头句里的基目录就是记忆目录，照抄也收。
  * 退出码：0＝CHECKS 全部通过；1＝至少一项判红，逐条列出检查项 id。
  */
 import process from 'node:process'

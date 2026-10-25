@@ -16,7 +16,7 @@
  */
 import process from 'node:process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { composeMemory, ignoredEntryFiles, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
 import {
 	BLOCK_CHAR_BUDGET,
@@ -74,7 +74,7 @@ export function readOptions(argv = process.argv, env = process.env) {
 	// memory/memory」的假红；归一只在脚本入口做，resolveRoot 本身保持单形（dispatch 台账与
 	// 使用日志共用它，另一套口径会在那里分家）。环境变量与缺省值保持纯根语义——名字就叫 ROOT。
 	const given = argv[2]
-	const memoryRoot = (isNonBlankString(given) && given.endsWith('/memory') ? dirname(given) : given) || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
+	const memoryRoot = (isNonBlankString(given) && basename(given) === 'memory' ? dirname(given) : given) || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
 	const machine = argv[3] || ''
 	return {
 		memoryRoot,

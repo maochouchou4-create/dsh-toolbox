@@ -525,9 +525,12 @@ test('机器名不合格：手记当场抛（显式请求不许被静默成「�
 })
 
 test('旁路失败只经宿主 logger 显形：写入失败与订阅本身失败都不冒到调用链', (t) => {
-	// 写失败用「store 被一个同名文件占住」造：mkdir 在文件底下建目录必炸，与盘满／权限同一类
+	// 写失败用「usage-log 位被一个同名文件占住」造：占住的是路径最终段，两平台 errno 一致——
+	// readdir 报 ENOTDIR、mkdir(recursive) 报 EEXIST；占住上级在 Windows 上 readdir 报 ENOENT，
+	// 会被生产侧当「目录还没建」静默跳过，注册期那条告警就哑了
 	const memoryRoot = tempRoot(t, 'usage-log-write-fail')
-	writeFileSync(join(memoryRoot, 'memory'), 'not a directory')
+	mkdirSync(join(memoryRoot, 'memory', 'data'), { recursive: true })
+	writeFileSync(join(memoryRoot, 'memory', 'data', 'usage-log'), 'not a directory')
 	const failing = stubCtx()
 	subscribeUsageLog(failing.ctx, ['memory'], { memoryRoot, machine: MACHINE })
 	const onResult = failing.handlers.get('tools/result')
@@ -535,7 +538,7 @@ test('旁路失败只经宿主 logger 显形：写入失败与订阅本身失败
 		() => onResult({ name: 'memory', callId: 'c1', arguments: {} }, { isError: false, value: {} }),
 		'监听器抛错不得冒回宿主调用链',
 	)
-	// store 被同名文件占住时两处都够不着目录：注册期轮转一条（读不到目录）、写入一条——都只经
+	// usage-log 位被同名文件占住时两处都够不着目录：注册期轮转一条（读不到目录）、写入一条——都只经
 	// logger，都不许冒回调用链；两条各自点名自己的动作，读日志的人分得清是哪一步不顺利
 	assert.equal(failing.warnings.length, 2)
 	assert.match(failing.warnings[0], /旧日档清理失败/)
