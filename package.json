@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "1.8.0",
+	"version": "1.9.0",
 	"description": "DSH 个人工具箱：memory（单仓记忆读注入：store 顶层共享、machines/<机器名>/ 本机私有；写改删走宿主工具，离线自检 npm run check:memory）＋dispatch 跑批纪律注入（每回合 systemPrompt 现读 lib/dispatch/data/discipline.md，模板路径渲染成 templates.md；立项→方案证伪→施工→证伪门→提交→复盘）＋see_image（图片交视觉模型转述）＋dispatch_batch（批次台账：start/gate/commit/review/status/list 六动作、只记事实不设闸不设提醒、状态从事件现推、review 收官即清该批行）＋usage_note（使用日志手记：订阅宿主工具调用事件，本包三件按天按机器旁路落记忆仓 memory/data/usage-log/ 的 jsonl——成功行只记参数键集与耗时、失败行保留 args 摘要与 error.info，写入与注册时按 14 天窗口轮转，与批次台账同一仓同步；结构化字段装不下的隐性坑用 note/tool/ok 补记一行）。单包多工具，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",

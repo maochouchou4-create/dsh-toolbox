@@ -6,7 +6,7 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 - **改动落点地图（先看这条再找文件）**：派发规则面＝`lib/dispatch/data/` 三份文件
   （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、两份
-  brief、横切判据、拍板卡、门报行、安全五问（全仓唯一载体）、不做清单／`lifecycle.json`
+  brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单／`lifecycle.json`
   四阶段表（只许 id/order/kind））。
   **数据文件现读不缓存——改完下次请求（纪律）或下次 dispatch_batch 调用（台账）即生效；要等
   宿主重启的只有代码（lib/*.js）**。
@@ -70,4 +70,4 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
   `test/imports.test.js` 静态解析钉住导入面与 node:fs 直连的定性表，搬家断链、
   新模块漏定性都会红。
 - 版本号随契约走：工具参数面、注入块结构、frontmatter 契约任一变更都算破坏性变更，
-  minor 位就是破坏位（1.7.0 → 1.8.0），并与 README 的描述同批改。
+  minor 位就是破坏位（1.8.0 → 1.9.0），并与 README 的描述同批改。
