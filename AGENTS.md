@@ -4,17 +4,19 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 ## 开工前
 
-- **改动落点地图（先看这条再找文件）**：派发规则面＝`lib/dispatch/data/` 三份文件
+- **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/`）＋两件注入件
+  （`lib/memory/` 记忆索引／`lib/dispatch/` 跑批纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
   （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、两份
-  brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单／`lifecycle.json`
-  四阶段表（只许 id/order/kind））。
-  **数据文件现读不缓存——改完下次请求（纪律）或下次 dispatch_batch 调用（台账）即生效；要等
-  宿主重启的只有代码（lib/*.js）**。
-  `templates.md` 的结构守卫在加载期（`lib/dispatch/data.js`）——每请求现读、改坏即红，测试不镜像，**改 `templates.md` 纯改文档、零测试同步**；`test/dispatch-data.test.js` 里模板相关只剩安全五问全仓单载体扫描（另有纪律/阶段表结构互验与埋雷体检）；`test/dispatch-assembly.test.js` 钉住纪律注入与 lifecycle 的阶段序列互验。
-  数据面怎么读、门怎么记、六个动作怎么用见 `README.md`「dispatch 数据资产」节。
-- **插件改动要在下次启动后才算数**。本仓被宿主按模块代缓存，改完 `lib/` 不会热更新。
-  本会话不重启宿主（重启会掐断会话），所以任何「装上了/生效了」的说法都不成立：
-  交付时把运行期验证标成**待下次启动验证**，只报你真正验过的。
+  brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单）。
+  **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
+  `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／≤14 行／`{templates}` 恰一次）；
+  `templates.md` 的结构断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
+  ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
+  注入的注册形状。
+  数据面怎么读见 `README.md`「dispatch 数据资产」节。
+- **插件改动：新会话即新代，宿主不必重启**。宿主（web 形态）对插件 `lib/*.js` 逐会话导入：
+  宿主进程不重启，新起会话（含 subagent）即加载盘上当前代码；运行中会话保持旧代到它结束。
+  本会话不重启宿主（重启会掐断会话）；交付时报实际验到的，运行中会话的旧代行为不归本批背书。
 - 先读 `README.md` 的对应小节：写侧的文件策略边界（哪些动作受会话策略围栏）、
   索引与条目契约（预算与 frontmatter 两键），都在那里，代码注释不重复它。
 
@@ -59,11 +61,11 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
 
 ## 硬边界
 
-- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（memory 写侧已随工具退役，现由 dispatch 的
-  台账与复盘件消费），它是写侧唯一的 I/O 通道：契约、守卫、错误码
-  （`FS_SANDBOX_DENIED`/`FS_STALE_VERSION`）、原子发布都不许为图省事削弱或绕过；
-  dispatch 侧要读写落盘就走端口方法（`resolve/stat/readText/writeText`），别直调
-  `node:fs`。这条边界的口径是**整个本地导入闭包**：给消费端模块加一行 `import node:fs`
+- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（写侧工具已随改版退役，现消费方＝迁移脚本
+  `scripts/migrate-frontmatter.mjs` 与单测），它是写侧唯一的 I/O 通道：契约、守卫、错误码
+  （`FS_STALE_VERSION`/`FS_NOT_OBSERVED`/`FS_NOT_REGULAR_FILE`）、原子发布都不许为图省事削弱或绕过；
+  要落盘就走端口方法（`resolve/stat/readText/writeText`），别直调 `node:fs`。
+  这条边界的口径是**整个本地导入闭包**：给消费端模块加一行 `import node:fs`
   同样算绕门（`test/imports.test.js` 的闭包断言就为此存在，逐文件定性表管不到那一跳）。
 - `lib/memory/` 下除装配层（`index.js`）外一律零宿主依赖，可直接单测；
   `lib/see-image/vision.js` 同。新增文件按这条规则就位，不要维护枚举清单。

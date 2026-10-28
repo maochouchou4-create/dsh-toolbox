@@ -60,7 +60,7 @@ function consumedServices(source) {
 test('胶水→工具模块的导入名在目标 export 语句内（防搬家断链）', () => {
 	const glue = readLib('index.js')
 	const imports = parseLocalImports(glue)
-	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/index.js') && imports.has('./dispatch/discipline.js'), '胶水须装配 memory、see_image、dispatch 台账与纪律注入四个模块')
+	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/discipline.js'), '胶水须装配 memory、see_image 与纪律注入三个模块')
 	for (const [specifier, names] of imports) {
 		const exported = parseExportNames(readLib(specifier.replace('./', '')))
 		for (const name of names) {
@@ -73,11 +73,7 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
-		['dispatch/index.js', ['registerDispatchBatch', 'configShape']],
 		['dispatch/discipline.js', ['registerDiscipline']],
-		// 使用日志的手记工具：注册面在 note.js（要 defineTool，故这里只核它对 recorder.js 的四个
-		// 导入名在不在导出面——记事件、求当日文件、求日志根、求根全都经那一处）
-		['usage-log/note.js', ['registerUsageNote']],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -102,17 +98,10 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// see-image/vision.js），DOA 要到运行期才炸，而这条用例正是提前拦住它的那道
 	const used = new Set([
 		...consumedServices(glue),
-		...consumedServices(readLib('dispatch/index.js')),
-		// 台账逻辑模块今天不消费 ctx.*，仍在扫描面里：它经装配层拿端口，一旦将来
-		// 自己伸手取服务，少了这行 DOA 要到运行期才炸
-		...consumedServices(readLib('dispatch/batch.js')),
 		...consumedServices(readLib('dispatch/discipline.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
-		// 使用日志两侧：recorder 经 ctx.get('profileContext') 取 profile 归因名、note 经 ctx.tools 注册自身
-		...consumedServices(readLib('usage-log/recorder.js')),
-		...consumedServices(readLib('usage-log/note.js')),
 		...consumedServices(readLib('working-dir.js')),
 	])
 	for (const service of used) {
@@ -124,24 +113,18 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	for (const service of declared) {
 		assert.ok(used.has(service), `inject 声明了 '${service}' 但无模块消费——多余的 DOA 风险/约束噪音`)
 	}
-	// 反向钉住按需取用的识别：上面那个 continue 会把「正则退化成永不命中」伪装成
-	// 「没问题」，而这正是本用例的立身之本（少声明＝DOA）
-	assert.ok(used.has('sandboxPolicy'), "dispatch/index.js 的 ctx.get('sandboxPolicy') 须被服务引用扫描识别到（ctx.get 形态，非注入面消费）")
-
-	for (const file of ['see-image/index.js', 'dispatch/index.js', 'usage-log/note.js']) {
-		assert.ok(readLib(file).includes('ctx.tools.register'), `${file} 须注册自身工具`)
-	}
-	// 记忆索引注入的装配哨兵：它不是工具（不占 FEATURES 行、不进使用日志白名单），独立装配
+	assert.ok(readLib('see-image/index.js').includes('ctx.tools.register'), 'see-image/index.js 须注册自身工具')
+	// 记忆索引注入的装配哨兵：它不是工具（不占 FEATURES 行），独立装配
 	// 意味着 FEATURES 表动它不会红——少这一行 import 哪都在，调用线一断注入就静默死
 	// （症状＝会话里再无记忆块，而无任何报错），故把调用本身钉在源码上
 	assert.ok(stripComments(glue).includes('registerMemory(ctx, config)'), '胶水须独立装配记忆索引注入（registerMemory(ctx, config)）——写侧退役后它只剩注入，调用线一断即静默死')
-	// 纪律注入同理独立装配：注入件不占 FEATURES 行、不进使用日志白名单，FEATURES 表动它不会红。
+	// 纪律注入同理独立装配：注入件不占 FEATURES 行，FEATURES 表动它不会红。
 	// 调用线一断的症状是「纪律整块静默缺席」（会话照常跑，只是流程没人提），必须钉在源码上
 	assert.ok(stripComments(glue).includes('registerDiscipline(ctx, config)'), '胶水须独立装配跑批纪律注入（registerDiscipline(ctx, config)）——调用线一断纪律即静默缺席')
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 多件工具写进一行就是「一件起不来，另几件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
-	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（装配三件与识图、手记各占一行，彼此失败原因互不相干——并一行＝逐工具隔离没了；记忆索引注入不占行，见上一条哨兵）；名单的另一处消费方（dispatch-assembly 的注册名自查）共用 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
+	assert.deepEqual(features.map(([label]) => label), TOOL_NAMES, 'FEATURES 的标签集＝本包登记的工具面（识图占一行；记忆索引注入不占行，见上一条哨兵）；名单的另一处真相源在 test/helpers.js 的 TOOL_NAMES，两处同读一份投影，改名或加件不会只红一处')
 	// 行形正则锁得住列数，锁不住列里写了什么：FEATURES 曾带第三列 seeImageShape/usageNoteShape，
 	// 两个标识符在胶水里根本没有绑定——apply 一跑就 ReferenceError，整包 DOA（逐工具隔离接不住
 	// 模块加载期错误）。这里逐标识符核绑定面：import 名＋顶层声明名。
@@ -162,35 +145,9 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 		if (declaredKeywords.has(token)) continue
 		assert.ok(bound.has(token), `FEATURES 里的标识符 ${token} 在本文件没有绑定（import 名或顶层声明）——表读得动，apply 一跑就 ReferenceError，整包 DOA`)
 	}
-	// 使用日志白名单与落点参数的单源哨兵：apply 必须从 FEATURES 表现读 label 列。手抄回一份数组（哪怕
-	// 当时内容正确）就是第二份真相源——加一件工具时它静默漏记，而症状是「日志里少一件工具的调用」，
-	// 与「白名单没生效」长得一样却是另一处改漏。
-	assert.ok(glue.includes('subscribeUsageLog(ctx, FEATURES.map'), '使用日志的白名单须从 FEATURES 的 label 列现读，不得手抄工具名数组')
-	// 落点两键按**去注释后的整段逐字**核：只看前缀的话，把两键注释掉、或给 machine 加 `?? 'unbound'`
-	// 兜底、或换序都照样绿，而这三件事恰好都是本设计明令禁止的（注释掉＝整场不记、兜底＝造第三种
-	// 机器段值）。整段逐字匹配让任一处变形都翻红
-	const glueCode = stripComments(glue)
-	assert.ok(
-		glueCode.includes('subscribeUsageLog(ctx, FEATURES.map(([label]) => label), { memoryRoot: config.memoryRoot, machine: config.machine })'),
-		'胶水调用 subscribeUsageLog 时须原样传 { memoryRoot: config.memoryRoot, machine: config.machine }（注释掉的、加兜底的、换序的都不认）',
-	)
 	const glueImports = [...parseLocalImports(glue).values()].flat()
 	for (const [label, register] of features) {
 		assert.ok(glueImports.includes(register), `FEATURES 的 ${label} 指向 ${register}，而胶水没 import 它——apply 时撞 undefined，try/catch 接不住`)
-	}
-})
-
-test('store 数据域前缀单源：data 段名只许出现在 memory-root.js 的 storeDataDir 里', () => {
-	// 「台账与日志同父目录」是复盘一处读齐两族的前提，而它成立只靠一件事：两个消费方拼同一段前缀。
-	// 各拼一次的话，某天有人把日志挪到 data/usage 或 data/logs，台账却还在 data/，症状是复盘
-	// 读到的日志永远缺一台机器——路径没报错、文件也在，只是不在一处。这条哨兵把「各拼一次」判红
-	const single = 'memory-root.js'
-	assert.ok(stripComments(readLib(single)).includes('join(resolveRoot(memoryRoot).store, \'data\')'), `${single} 的 storeDataDir 须是 data 段名的唯一出处`)
-	for (const file of ['dispatch/batch.js', 'usage-log/recorder.js', 'usage-log/note.js']) {
-		assert.ok(
-			!stripComments(readLib(file)).includes('\'data\''),
-			`${file} 自拼了 store 下的 data 段——那一段前缀的单一出处是 ${single} 的 storeDataDir`,
-		)
 	}
 })
 
@@ -257,10 +214,7 @@ test('浏览器半的依赖面哨兵：client.js 静态 require 的每件都在�
  *
  * 表只回答「每个文件各自直不直」。各 true 行的理由各是各的：读侧的失控读与段扫描
  * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件），fs-port.js 是
- * 端口本尊（node 实现就在这里），recorder 是使用日志唯一写盘处，data.js 读数据面。
- *
- * 共享机制也算一张表里的行：head-read.js 的头读由读侧 assemble 与离线自检共用，它直连
- * 是「头读必须先于整读」这一职责本身，不算旁路。
+ * 端口本尊（node 实现就在这里），data.js 读数据面。
  */
 const NODE_FS_DIRECT = new Map([
 	['memory/frontmatter.js', false],
@@ -274,31 +228,17 @@ const NODE_FS_DIRECT = new Map([
 	['see-image/index.js', false],
 	// 识图路由内缝：与 vision.js 同款零宿主依赖的纯模块，值判据走 value.js
 	['see-image/route.js', false],
-	// 使用日志：recorder 是这条旁路唯一的写盘处（mkdir＋appendFileSync 同步追加），
-	// note 只把事件交给它——两处各写一遍建目录与追加就是同一件事有两个源头
-	['usage-log/recorder.js', true],
-	['usage-log/note.js', false],
 	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
 	['client.js', false],
 	['dispatch/discipline.js', false],
-	['dispatch/vocab.js', false],
-	['dispatch/parameters.js', false],
-	['dispatch/batch.js', false],
 	['dispatch/data.js', true],
-	['dispatch/index.js', false],
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
-	['param-guard.js', false],
 	['memory-root.js', false],
 	['fs-port.js', true],
 	['fs-guard.js', false],
-	['head-read.js', true],
 	['index.js', false],
-	// schema 形状工厂：三族工具共用的 object/stringList 构造处，纯数据形状、零 I/O——
-	// 把它漏登记的话，「新增文件漏定性」那条承诺对它就不成立，而它恰好是三族输出 schema
-	// 汇进去的那一格
-	['tool-schema.js', false],
 ])
 
 /**
@@ -306,7 +246,7 @@ const NODE_FS_DIRECT = new Map([
  * 覆盖只到一部分时，「新增文件漏定性」就只在那部分成立，文档承诺比机器口径宽，
  * 读到的人会以为全仓都有牙。
  */
-const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch', 'usage-log']
+const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch']
 
 /**
  * node:fs 的同步调用面：全量符号集（fs 同步 API，含 openSync/readSync/closeSync 这类
@@ -359,7 +299,7 @@ test('lib/ 各模块的 node:fs 直连按文件判定（读侧与端口本尊显
 		if (direct) {
 			// 「必须」是反方向的那一半：只有它，文件哪天悄悄改走别的路（或多出新的直连模块）
 			// 才会红；没有它，单向禁令分不出「设计变更」与「漏改」
-			assert.ok(imports > 0, `${file} 按设计直连 node:fs（读侧失控读与段扫描、端口本尊、日志追加、数据面读取各是自己的理由），导入面却没有登记`)
+			assert.ok(imports > 0, `${file} 按设计直连 node:fs（读侧失控读与段扫描、端口本尊、数据面读取各是自己的理由），导入面却没有登记`)
 			assert.ok(calls > 0, `${file} 登记了 node:fs 直连却一个调用也没有——导入面与实际用法脱节，这条判定对它空转`)
 		} else {
 			assert.equal(imports, 0, `${file} 出现 node:fs 导入——它登记为零直连（该经端口的经端口，装配层由宿主能力代劳）`)

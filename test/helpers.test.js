@@ -1,77 +1,25 @@
 /**
  * 夹具自身的单测（node:test，零宿主依赖）：共用件一旦自己漂了，它服务的那二十几个文件会一起
- * 在与被测对象无关的原因上红，而症状（某个用例读不到目录、事件少一个字段）指向的是夹具不是
- * 生产。所以夹具也守自己那份契约：事件与生产构造器同形、临时根两种时序都活到该活的那一刻、
- * 守卫当场抛、拷贝逐字节相等。
- *
- * 这里刻意**不**断言「夹具照抄了生产」的字面全文，只断言两件事：键集恒等（生产加字段即红），
- * 以及生产构造器自己那份的缺省形态。前者是漂移的信号，后者是夹具敢自己造事件的前提。
+ * 在与被测对象无关的原因上红，而症状（某个用例读不到目录）指向的是夹具不是生产。所以夹具
+ * 也守自己那份契约：临时根两种时序都活到该活的那一刻、守卫当场抛、拷贝逐字节相等。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { commitEvent, gateEvent, reviewEvent, startEvent } from '../lib/dispatch/batch.js'
 import {
 	DISPATCH_DATA_DIR,
 	DISPATCH_DATA_FILES,
 	copyDataFiles,
-	isoClock,
-	makeEvent,
 	memoryTree,
 	removeTempRoot,
 	requireTestContext,
-	seedLedger,
 	tempRoot,
 	withTempDir,
 } from './helpers.js'
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url))
-
-const keysOf = (value) => Object.keys(value).sort()
-
-/** 两份夹具各自内部是否仍然严格递增（各造两条，比第 2 条比第 1 条晚）。 */
-const isoClockIsLater = (fixture, event) => Date.parse(fixture.gate({ batch: 'b' }).t) > Date.parse(event.t)
-
-test('事件夹具与生产构造器同形：四事件的键集恒等（生产加字段即红，不必等某条用例莫名其妙地红）', () => {
-	const fixture = makeEvent()
-	const now = new Date(Date.UTC(2026, 0, 1))
-	const started = fixture.start('b1')
-	const gated = fixture.gate({ batch: 'b1', gate: '方案证伪', segment: '方案' })
-	const committed = fixture.commit({ batch: 'b1' })
-	const reviewed = fixture.review({ batch: 'b1' })
-	const realStart = startEvent({ batch: 'b1', intent: '意图', rules: 'a1b2c3d4', now })
-	const realGate = gateEvent({ batch: 'b1', gate: '方案证伪', segment: '方案', rules: 'a1b2c3d4', now })
-	const realCommit = commitEvent({ batch: 'b1', commit: 'abc1234', pushed: 'ok', now })
-	const realReview = reviewEvent({ batch: 'b1', retro: '本批收', now })
-	// 键集恒等而不是逐字相等：t 是各家的时钟，值必然不同，逐字比会逼夹具去抄生产的时钟口径
-	for (const [label, fixtureEvent, realEvent] of [
-		['start', started, realStart],
-		['gate', gated, realGate],
-		['commit', committed, realCommit],
-		['review', reviewed, realReview],
-	]) {
-		assert.deepEqual(keysOf(fixtureEvent), keysOf(realEvent), `${label} 事件键集漂了：夹具 ${JSON.stringify(keysOf(fixtureEvent))} vs 生产 ${JSON.stringify(keysOf(realEvent))}`)
-		assert.equal(fixtureEvent.action, realEvent.action, `${label} 的 action 是读侧 fold 的分派键`)
-	}
-	// 一份夹具一份时钟：两份夹具的第一条事件时间戳**相同**——各自从同一起点数。若改成模块级
-	// 共享计数器，第二份夹具的起点就取决于本文件里前面造过几条事件，次序不再是「本夹具写了几条」
-	// 而是「这份文件跑到哪儿了」，趋势读法那些用例跟着漂
-	const other = makeEvent()
-	assert.equal(other.start('b').t, started.t, '两份夹具的时钟各自从同一起点数，互不影响')
-	assert.ok(isoClockIsLater(other, started), '而各自内部仍然严格递增')
-})
-
-test('isoClock 按写入顺序递增：事件定序靠它，取真实时间会让「哪条在前」随跑动快慢变', () => {
-	const iso = isoClock()
-	const first = iso()
-	const second = iso()
-	assert.ok(Date.parse(second) > Date.parse(first), `两次 tick 必须严格递增：${first} → ${second}`)
-	// 起点固定：真时间会让同一份夹具在不同机器上排出不同次序
-	assert.ok(first.startsWith('2026-01-01T'), `起点是定档的那一天而不是真时间：${first}`)
-	assert.match(first, /\+00:00$/, '带显式时区偏移：台账那一列的契约')
-})
 
 test('withTempDir：同步回调走同步路径（返回原值、返回前已删），异步回调活到它跑完那一刻', async (t) => {
 	// 同步形态：套一层 promise 就把「收尾发生在返回前」这件事改掉了——调用方在同一个 tick 里
@@ -150,7 +98,7 @@ test('临时根脱离 node:test 上下文当场报错：安静建一个没人删
 })
 
 test('临时根单源：test/ 下 mkdtempSync 直调仅许 helpers.js', () => {
-	// 扫描面＝本文件所在目录的顶层 .js（fixtures 是 .mjs 不在面内），豁免仅 helpers.js——
+	// 扫描面＝本文件所在目录的顶层 .js（非 .js 的文件不在面内），豁免仅 helpers.js——
 	// 临时目录的唯一合法落点。helpers 注释里「不要再各写一份」的人脑规则拦不住新增，
 	// 换成结构保证。本用例自身也在扫描面内：源码里不得出现「mkdtempSync 后紧跟左括号」
 	// 的字面——正则字面量里 mkdtempSync 后是反斜杠、文案用「直调」措辞，都不满足该形态
@@ -158,18 +106,6 @@ test('临时根单源：test/ 下 mkdtempSync 直调仅许 helpers.js', () => {
 		.filter((name) => name.endsWith('.js') && name !== 'helpers.js')
 		.filter((name) => /\bmkdtempSync\s*\(/.test(readFileSync(join(TEST_DIR, name), 'utf8')))
 	assert.deepEqual(offenders, [], `临时根必须走 helpers.js 单源（tempRoot／withTempDir），以下文件直调了 mkdtempSync：${offenders.join('、')}`)
-})
-
-test('seedLedger：一行一事件往返逐字等价，同名再写＝整份替换（不是追加）', (t) => {
-	const root = tempRoot(t, 'seed-ledger')
-	const events = [makeEvent().start('b1'), makeEvent().gate({ batch: 'b1' })]
-	const path = seedLedger(root, 'ledger', events)
-	assert.equal(readFileSync(path, 'utf8'), events.map((event) => `${JSON.stringify(event)}\n`).join(''), '落盘字节＝事件逐行序列化（尾部带换行：追加时要靠它补分隔）')
-	assert.deepEqual(readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), events, '读回逐字等价')
-	const replaced = [makeEvent().start('b1')]
-	seedLedger(root, 'ledger', replaced)
-	assert.deepEqual(readFileSync(path, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), replaced, '同名再写整份替换：夹具种的是「一份台账」，追加语义由生产的 appendStartOnce／appendGateEvent 管')
-	assert.ok(!existsSync(join(root, 'nothing.jsonl')), '不产多余文件')
 })
 
 test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出一棵没人预期的树）', (t) => {
@@ -191,22 +127,22 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	assert.equal(memoryTree(base, 'no-machine').machineDir, undefined)
 })
 
-test('copyDataFiles：三份逐字节相等（文本面逐字节、JSON 面形状敏感），跑两遍结果同', (t) => {
+test('copyDataFiles：两份逐字节相等（文本面逐字节），跑两遍结果同', (t) => {
 	const dir = join(tempRoot(t, 'copy-data'), 'data')
 	copyDataFiles(dir)
 	const first = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {
 		assert.ok(bytes.equals(readFileSync(join(DISPATCH_DATA_DIR, file))), `${file} 与盘上逐字节相等：解析再序列化会改缩进与键序，而现读面那些用例比的就是键序敏感的形状`)
 	}
-	assert.deepEqual(DISPATCH_DATA_FILES.length, 3, '现读面三份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
+	assert.deepEqual(DISPATCH_DATA_FILES.length, 2, '现读面两份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
 	copyDataFiles(dir)
 	const second = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
 	for (const [file, bytes] of first) {
 		assert.ok(second.get(file).equals(bytes), `${file} 拷两遍结果同（幂等：第二遍别把第一遍改坏）`)
 	}
-	// 子集那一档：台账读几份就只拷几份，少拷的那些不该被建出来（建出来＝读到的不是「不存在」）
+	// 子集那一档：只拷几份就只建那几份，少拷的那些不该被建出来（建出来＝读到的不是「不存在」）
 	const partial = join(tempRoot(t, 'copy-partial'), 'data')
-	copyDataFiles(partial, ['lifecycle.json'])
-	assert.deepEqual(existsSync(join(partial, 'lifecycle.json')), true)
-	assert.deepEqual(existsSync(join(partial, 'templates.md')), false)
+	copyDataFiles(partial, ['templates.md'])
+	assert.deepEqual(existsSync(join(partial, 'templates.md')), true)
+	assert.deepEqual(existsSync(join(partial, 'discipline.md')), false)
 })

@@ -71,8 +71,8 @@ export const SECTION_LENGTH_RED = 60
 export function readOptions(argv = process.argv, env = process.env) {
 	// 实参双形都收：记忆根（store＝<根>/memory）或记忆目录本身（…/memory，root 取其父目录）。
 	// 注入块头句给人看的基目录就是记忆目录，照抄那条路径是最自然的用法，不该换来「路径叠成
-	// memory/memory」的假红；归一只在脚本入口做，resolveRoot 本身保持单形（dispatch 台账与
-	// 使用日志共用它，另一套口径会在那里分家）。环境变量与缺省值保持纯根语义——名字就叫 ROOT。
+	// memory/memory」的假红；归一只在脚本入口做，resolveRoot 本身保持单形（消费方只有离线自检
+	// 这一处——它算出的根必须与注入侧同口径，否则检的不是注入装进去的那一份）。环境变量与缺省值保持纯根语义——名字就叫 ROOT。
 	const given = argv[2]
 	const memoryRoot = (isNonBlankString(given) && basename(given) === 'memory' ? dirname(given) : given) || env.DSH_MEMORY_ROOT || DEFAULT_MEMORY_ROOT
 	const machine = argv[3] || ''

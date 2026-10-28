@@ -1,7 +1,7 @@
 /**
- * 测试夹具的共用件：条目正文模板、临时根、记忆树、现读数据目录、台账事件。
+ * 测试夹具的共用件：条目正文模板、临时根、记忆树、现读数据目录。
  *
- * 收口理由分四层，每层都对着一种「两边各自都对、于是没人发现」的分家：
+ * 收口理由分三层，每层都对着一种「两边各自都对、于是没人发现」的分家：
  *
  * ①条目正文模板（frontmatter 两键加正文）此前多个测试文件各写一份逐字相同的它（写侧退役后
  *   现消费方＝memory-core／memory-check-script）。frontmatter 是契约且在收紧（恰好两键），模板一分
@@ -19,17 +19,12 @@
  *   各写一遍，目录名各拼各的——测试盘上摆了什么，读用例的人得逐个文件自己认。现读面那份文件名
  *   清单也从生产侧（data.js 的 DATA_FILES）现读，不在本模块手抄。
  *
- * ④台账事件此前多个文件各造一份同型对象：字段名与生产构造器（batch.js 的
- *   startEvent）同源，抄一份就多一个「抄件与原件分家」的地方。注意本模块造的是
- *   夹具：batch.test.js 直接 import 生产构造器的那几处不能改调——那些用例验的就是生产构造器
- *   本身，用夹具替身造事件等于把被验对象换掉。而「同形」这件事由 helpers.test.js 对着生产
- *   构造器核键集钉住，不靠这里写注释自觉。
  */
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadDispatchData, DATA_FILES } from '../lib/dispatch/data.js'
+import { DATA_FILES } from '../lib/dispatch/data.js'
 
 export const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
@@ -38,29 +33,24 @@ export const entry = (title, description, body = '正文') => `---\ntitle: ${tit
 /** 仓根：下面几个常量都由它派生，而它自己没人直接用——导出就等于给「派生值另有消费者」留一个口子。 */
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const LIB_DIR = join(ROOT_DIR, 'lib')
-export const DISPATCH_DIR = join(LIB_DIR, 'dispatch')
+const DISPATCH_DIR = join(LIB_DIR, 'dispatch')
 export const DISPATCH_DATA_DIR = join(DISPATCH_DIR, 'data')
 export const SCRIPTS_DIR = join(ROOT_DIR, 'scripts')
-export const FIXTURES_DIR = join(ROOT_DIR, 'test', 'fixtures')
 
-/* ---------- 本包登记的工具名（装配面与使用日志白名单共用的那份名单） ---------- */
+/* ---------- 本包登记的工具名（接线自查的那份名单） ---------- */
 
 /**
  * 本包登记的工具名，逐字同 lib/index.js 的 FEATURES 表 label 列（顺序也同）。
  *
- * 两个消费方都读它、不许各自手抄：使用日志的白名单＝FEATURES 的 label 列现读（label≡工具名是
- * 白名单生效的前提），接线与装配两条自查按注册结果核名单。两处各写一份时，加一件工具只会红一
- * 处，另一处静默放行——症状是日志里少一件工具的调用，而 schema 自查照样全绿。名单本身仍是
- * FEATURES 表的投影（imports.test 对着源码钉 label 列），这里只是让两处断言指向同一份投影。
+ * 名单本身是 FEATURES 表的投影（imports.test 对着源码钉 label 列）：在这里另手抄一份独立数组，
+ * 就等于给「本包有哪些工具」留了第二个真相源——加一件工具时它静默漏一项，而 schema 自查照样全绿。
  */
 export const TOOL_NAMES = [
-	'dispatch_batch',
 	'see_image',
-	'usage_note',
 ]
 
 /**
- * 现读面的三份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
+ * 现读面的两份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
  * 表述，数据面增一份文件时它就少拷一份，而症状不是「少了一个文件」，是某条用例在无关的原因上红
  * （例如临时目录里读不到 discipline.md，报的却是「数据形状不合」）。
  */
@@ -169,7 +159,7 @@ export const memoryTree = (base, name, machineId) => {
 
 /* ---------- 现读数据目录（拷真数据 → 改坏 → 断言 → 删） ---------- */
 
-/** 把给定的几份数据拷进目标目录（缺省三份全拷；目录不存在就建），返回该目录。 */
+/** 把给定的几份数据拷进目标目录（缺省两份全拷；目录不存在就建），返回该目录。 */
 export const copyDataFiles = (dir, files = DISPATCH_DATA_FILES) => {
 	mkdirSync(dir, { recursive: true })
 	for (const file of files) writeFileSync(join(dir, file), readFileSync(join(DISPATCH_DATA_DIR, file)))
@@ -183,68 +173,7 @@ export const copyDataFiles = (dir, files = DISPATCH_DATA_FILES) => {
  */
 export const withDataDir = (t, run) => withTempDir(t, 'dispatch-data', (dir) => run(copyDataFiles(dir)))
 
-/**
- * 改一份 JSON 再写回。刻意只从磁盘文本重新解析、不复用任何一次加载返回的对象：复用的话，
- * 「改文件后下次调用取新值」那条用例就会被自己写回的那份缓存喂绿。
- */
-export const editData = (dir, file, mutate) => {
-	const value = JSON.parse(readFileSync(join(dir, file), 'utf8'))
-	mutate(value)
-	writeFileSync(join(dir, file), JSON.stringify(value))
-}
-
-/** withDataDir 的加载版：按 edits（{文件名: mutator}）改坏一份真数据，把加载结果交给 run。 */
-export const withLoadedData = (t, edits, run) => withDataDir(t, (dir) => {
-	for (const [file, mutate] of Object.entries(edits ?? {})) editData(dir, file, mutate)
-	return run(loadDispatchData(dir))
-})
-
 /** 改一份文本数据（discipline.md／templates.md）再写回；改坏模板不走 JSON 重写那一套。 */
 export const editText = (dir, file, mutate) => {
 	writeFileSync(join(dir, file), mutate(readFileSync(join(dir, file), 'utf8')))
-}
-
-/* ---------- 台账事件夹具（dispatch 族共用） ---------- */
-
-/**
- * 递增时钟：事件时间定序是趋势读法的前提（同刻并列那一档另有专门用例在测）。按写入顺序递增而
- * 不取真实时间——真时间会让「哪条事件在前」随跑动的快慢变。
- */
-export const isoClock = (epochMs = Date.UTC(2026, 0, 1)) => {
-	let tick = 0
-	return () => {
-		tick += 1
-		return new Date(epochMs + tick).toISOString().replace('Z', '+00:00')
-	}
-}
-
-/**
- * 一份事件夹具：字段名与生产构造器（batch.js 的 startEvent／gateEvent／commitEvent／reviewEvent）
- * 逐字同形。做成工厂而不是四个模块级函数，是为了让时钟按「一份夹具一份」计数——两个文件共用
- * 同一个模块级计数器时，两边的先后次序会互相影响，而次序正是这些用例的前提。
- *
- * 裁决计数字段的缺省形状跟生产构造器走（recommended／forms＝串数组、perFormCounts＝[{form,count}]）。
- */
-export const makeEvent = () => {
-	const iso = isoClock()
-	const start = (batch, rules = 'v2', extra = {}) => ({
-		t: iso(), action: 'start', batch, intent: `${batch} 意图`, subject: '（待写）', decisions: [], rules, ...extra,
-	})
-	const gate = ({ batch, gate = '证伪门', segment = '净 diff', rules = 'v2', recommended = [], forms = [], perFormCounts = [], adopted = 0, rejected = 0, overlap = 0, missed = '', note = '' }) => ({
-		t: iso(), action: 'gate', batch, gate, segment, recommended, forms, perFormCounts, adopted, rejected, overlap, missed, note, rules,
-	})
-	const commit = ({ batch, commit = 'abc1234', pushed = 'ok', note = '' }) => ({
-		t: iso(), action: 'commit', batch, commit, pushed, note,
-	})
-	const review = ({ batch, retro = '本批收', efficacy = '', note = '' }) => ({
-		t: iso(), action: 'review', batch, retro, efficacy, note,
-	})
-	return { start, gate, commit, review }
-}
-
-/** 落一份台账：一行一事件（与生产写入口同形，故读侧那条「坏行 fail fast」的契约在用到它的文件里也生效）。 */
-export const seedLedger = (root, name, events) => {
-	const path = join(root, `${name}.jsonl`)
-	writeFileSync(path, events.map((event) => `${JSON.stringify(event)}\n`).join(''))
-	return path
 }
