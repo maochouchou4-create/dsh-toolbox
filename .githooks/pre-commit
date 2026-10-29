@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+/**
+ * 版本号的结构保证：lib/ 有改动的提交必须带一个新版本号。市场的更新判定只认仓库
+ * package.json 的 version（dshmarket/lib/updates.js 的 gitVersionUpdate），版本不动就只显示
+ * 「有新提交（未发版）」，更新按钮永远不出来——靠记性补版本号已经忘过不止一次，所以放进钩子。
+ *
+ * 一次性启用（每个克隆一次）：git config core.hooksPath .githooks
+ * 判定与单测在 scripts/bump-version.mjs、scripts/version.mjs，本文件只转发，不重复逻辑。
+ * 真要不升：git commit --no-verify（市场那边这次改动就不算一个可装版本）。
+ */
+import process from 'node:process'
+import { execFileSync } from 'node:child_process'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+execFileSync(process.execPath, [join(root, 'scripts', 'bump-version.mjs'), '--staged'], { stdio: 'inherit' })

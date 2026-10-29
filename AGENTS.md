@@ -73,3 +73,8 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
   新模块漏定性都会红。
 - 版本号随契约走：工具参数面、注入块结构、frontmatter 契约任一变更都算破坏性变更，
   minor 位就是破坏位（1.8.0 → 1.9.0），并与 README 的描述同批改。
+- 版本号不靠记性：市场判「有没有新东西可装」只读仓库 `package.json` 的 `version`（与已装版本比），
+  版本不动就只显示「有新提交（未发版）」。`.githooks/pre-commit` 于是把「动了 `lib/**` 而版本与 HEAD
+  相同」的提交自动 patch 升一位并进同一次提交（壳 `scripts/bump-version.mjs`／判定 `scripts/version.mjs`／
+  单测 `test/bump-version.test.js`）；破坏性改动依上一条先 `npm run bump -- minor` 再提交，钩子见版本已变
+  就不碰。**新克隆一次性启用：`git config core.hooksPath .githooks`**——没启用就是不跑，等于回到靠记性。

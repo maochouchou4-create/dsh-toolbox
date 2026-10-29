@@ -38,7 +38,8 @@
 	],
 	"scripts": {
 		"test": "node --test",
-		"check:memory": "node scripts/check-memory-index.mjs"
+		"check:memory": "node scripts/check-memory-index.mjs",
+		"bump": "node scripts/bump-version.mjs"
 	},
 	"engines": {
 		"node": ">=18",
