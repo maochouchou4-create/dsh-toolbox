@@ -46,6 +46,7 @@ brief 正文（每形一份，按行拼装）：
 本批意图：<本批意图一句话>
 拍板清单（不得重开）：<逐条原文>
 对象（方案原文路径或批次节指针）：<方案文档绝对路径＋批次节>
+回执：完整报告用你的 write 工具落盘（/tmp/falsify-门一-<形>.md），return 只回一行 JSON——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话）、报告路径；findings 空数组＋green 也照回。
 
 ## 复核形态词表（选形单源：保底每批必派，其余按触发列「改了什么派什么」）
 
@@ -107,6 +108,7 @@ brief 正文（每形一份，按行拼装）：
 本批意图：<本批意图一句话>
 拍板清单（不得重开）：<逐条原文>
 对象（净 diff 生成命令，照它生成要审的 diff，不接受施工者转述）：<git diff 起点..HEAD>
+回执：完整报告用你的 write 工具落盘（/tmp/falsify-门二-<形>.md），return 只回一行 JSON——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话）、报告路径；findings 空数组＋green 也照回。
 
 ## 横切判据
 
