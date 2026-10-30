@@ -201,7 +201,7 @@ plugin_manager install_bundle D:\code\repos\dsh-toolbox
   可反复跑（已合规条目不动）；单仓化后全部记忆都在 agent-data 仓里，改写与删除都进 git，
   要回退走版本控制，脚本不再自己另存备份。
 - 数据面自检：`npm test` 里 `test/dispatch-data.test.js` 对本包数据资产做断言——加载全绿冒烟
-  （data.js 的纪律三守卫顺带跑真文件）、**模板骨架结构**（骨架七节＋安全专项节各恰一次、安全五问整节与锚点
+  （data.js 的纪律三守卫顺带跑真文件）、**模板骨架结构**（骨架八节＋安全专项节各恰一次、安全五问整节与锚点
   只在安全小节内）、**安全五问全仓单载体**（按节标题计数，别处复述即红）、守卫行为测试
   （埋雷体检，含「改坏模板不挡加载、由测试红」一条）；`test/dispatch-assembly.test.js` 钉住
   纪律注入的注册形状（名称/order/thunk 非空）。

@@ -6,11 +6,11 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 
 - **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/`）＋两件注入件
   （`lib/memory/` 记忆索引／`lib/dispatch/` 跑批纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
-  （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、两份
+  （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、三份
   brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单）。
   **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
   `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／≤14 行／`{templates}` 恰一次）；
-  `templates.md` 的结构断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
+  `templates.md` 的结构断言（骨架八节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
   ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
   注入的注册形状。
   数据面怎么读见 `README.md`「dispatch 数据资产」节。
@@ -25,7 +25,7 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
 契约散在三处，**改一处必须同改其余处**：注入装配面 `lib/memory/index.js`（注册与
 描述词）、判定与派生 `lib/memory/naming.js`（条目名与保留名判定）与
 `lib/memory/frontmatter.js`（frontmatter 契约与索引行派生）、跨仓的书写规范
-`/home/nvse/code/repos/agent-data/memory/WRITING.md`（每轮随索引注入进上下文的写侧
+`D:\code\repos\agent-data\memory\WRITING.md`（每轮随索引注入进上下文的写侧
 纪律）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
 常量（防膨胀两条线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
 两处各抄一份。

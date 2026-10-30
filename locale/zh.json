@@ -1,6 +1,6 @@
 {
 	"meta": {
 		"title": "DSH 工具箱",
-		"description": "个人工具集：一件工具＋两件注入件。see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型）；memory 单仓记忆索引注入（store 顶层两机共享，machines/<机器名>/ 本机私有）；dispatch 跑批纪律注入（每回合现读 discipline.md，模板路径渲染成 templates.md；需求→方法拍板→方案→过目→方案证伪→开工令→施工→证伪门→提交→删方案）。"
+		"description": "个人工具集：一件工具＋两件注入件。see_image 视觉转述（经宿主 LLM 通道把图交给视觉模型）；memory 单仓记忆索引注入（store 顶层两机共享，machines/<机器名>/ 本机私有）；dispatch 跑批纪律注入（每回合现读 discipline.md，模板路径渲染成 templates.md；需求→方法→出方案→方案证伪（自动派）→开工令→施工→证伪门→提交→删方案）。"
 	}
 }
