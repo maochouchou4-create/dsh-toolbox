@@ -118,9 +118,11 @@ test('versionOf：五段纳秒级版本串（少一段守卫就漏），且与�
 	// 验过守卫」不等于守卫真的在比同一份版本
 	const port = createNodeFsPort()
 	assert.equal((await port.stat(await port.resolve(path))).version, version)
-	// 改一个字节版本必变：纳秒精度缺了的话同长度覆写可能看不出变化，守卫就漏了
+	// 改一个字节后版本不回退即可。纳秒同刻两次写在 Windows 时钟刻度下不可分（实测偶红），
+	// 硬要求「必不同」是向文件系统讨要它不保证的精度；守卫语义收口为 mtimeNs 不减小
 	writeFileSync(path, '乙\n', 'utf8')
-	assert.notEqual(versionOf(statSync(path, { bigint: true })), version)
+	const after = versionOf(statSync(path, { bigint: true })).split(':')
+	assert.ok(BigInt(after[3]) >= BigInt(parts[3]), `mtimeNs 不得回退（改前 ${parts[3]}，改后 ${after[3]}）`)
 })
 
 test('createNodeFsPort：stat 的失败只吞 ENOENT/ENOTDIR，其余原样上抛（不得一律当 absent）', async () => {

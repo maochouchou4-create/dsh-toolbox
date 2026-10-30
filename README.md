@@ -143,7 +143,7 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 `templates.md` 九节标题各恰一次（八个骨架节＋安全专项节）；**安全五问全仓只此一处**（锚点落在安全小节内），别处复述由
 `test/dispatch-data.test.js` 判红。
 
-**加载期只守纪律三条**（`data.js`）：非空、≤14 行、`{templates}` 恰一次，任一条对不上即加载
+**加载期只守纪律两条**（`data.js`）：非空、`{templates}` 恰一次，任一条对不上即加载
 失败。模板的骨架结构（骨架八节＋安全专项节各恰一次、五问锚点只在安全小节内）由 `test/dispatch-data.test.js`
 断言——它不挡加载：手滑改坏模板时纪律照常注入，红的是那条测试、指回改坏处。纪律注入读失败
 只 warn 一条并跳过本回合，不阻断请求。
@@ -201,7 +201,7 @@ plugin_manager install_bundle D:\code\repos\dsh-toolbox
   可反复跑（已合规条目不动）；单仓化后全部记忆都在 agent-data 仓里，改写与删除都进 git，
   要回退走版本控制，脚本不再自己另存备份。
 - 数据面自检：`npm test` 里 `test/dispatch-data.test.js` 对本包数据资产做断言——加载全绿冒烟
-  （data.js 的纪律三守卫顺带跑真文件）、**模板骨架结构**（骨架八节＋安全专项节各恰一次、安全五问整节与锚点
+  （data.js 的纪律两守卫顺带跑真文件）、**模板骨架结构**（骨架八节＋安全专项节各恰一次、安全五问整节与锚点
   只在安全小节内）、**安全五问全仓单载体**（按节标题计数，别处复述即红）、守卫行为测试
   （埋雷体检，含「改坏模板不挡加载、由测试红」一条）；`test/dispatch-assembly.test.js` 钉住
   纪律注入的注册形状（名称/order/thunk 非空）。
@@ -221,7 +221,7 @@ lib/memory-root.js      记忆根默认值与归一、根 → store 落点、错
 lib/memory/             记忆注入与自检：index.js 装配（只注册注入，无工具）+ core/frontmatter/patterns/naming/assemble/segments 纯模块（写侧 write/delete/lint/params 已随工具退役删除）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场
-lib/dispatch/           跑批纪律注入（一件注入件）：discipline.js（纪律注入：每请求现读 discipline.md 并渲染 templates.md 绝对路径，零直连）+ data.js（现读两份数据文件，加载期只验纪律三条，直连 node:fs）＋ data/（discipline.md 跑批纪律／templates.md 模板单文件＋安全五问单载体）
+lib/dispatch/           跑批纪律注入（一件注入件）：discipline.js（纪律注入：每请求现读 discipline.md 并渲染 templates.md 绝对路径，零直连）+ data.js（现读两份数据文件，加载期只验纪律两条，直连 node:fs）＋ data/（discipline.md 跑批纪律／templates.md 模板单文件＋安全五问单载体）
 test/                   node:test 单测（纯函数直测＋注入/装配层宿主替身＋共享原语直测＋接线静态解析）
 scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘）
 ```

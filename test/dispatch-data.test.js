@@ -1,11 +1,10 @@
 /**
- * dispatch 数据面（两份人读 markdown）的行为测试：加载全绿冒烟（纪律三守卫顺带跑真文件）、
+ * dispatch 数据面（两份人读 markdown）的行为测试：加载全绿冒烟（纪律两守卫顺带跑真文件）、
  * 模板骨架结构（骨架八节＋安全专项节按整行等值各恰一次／安全五问整节与锚点只此一处）、
  * 安全五问全仓单载体，外加「改坏必红」的埋雷体检。
  *
  * 模板的结构守卫落在这里而不是加载期：手滑改坏 templates.md 时纪律仍照常注入（fail-safe
- * 不静默缺席），本文件显式红、指回改坏的那一处。加载期只剩纪律三条——非空／≤14 行／
- * `{templates}` 恰一次。
+ * 不静默缺席），本文件显式红、指回改坏的那一处。加载期只剩纪律两条——非空／`{templates}` 恰一次。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -13,7 +12,6 @@ import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
 	DATA_FILES,
-	DISCIPLINE_LINE_LIMIT,
 	DispatchDataError,
 	TEMPLATES_PLACEHOLDER,
 	loadDispatchData,
@@ -98,10 +96,8 @@ test('安全五问单载体：整节标题全仓只有 templates.md 一处', () 
 	assert.deepEqual(offenders, [join(DISPATCH_DATA_DIR, 'templates.md')], '安全五问整节全仓只许一处定义（README/纪律/别的模板复述即红）')
 })
 
-test('纪律文本：行数与占位符在限内', () => {
+test('纪律文本：占位符恰一处', () => {
 	const { data } = loadDispatchData()
-	const lines = data.discipline.replace(/\n$/, '').split('\n').length
-	assert.ok(lines <= DISCIPLINE_LINE_LIMIT, `纪律 ${lines} 行超 ${DISCIPLINE_LINE_LIMIT} 行上限`)
 	assert.equal(data.discipline.split(TEMPLATES_PLACEHOLDER).length - 1, 1, '模板路径占位必须恰一处')
 })
 
@@ -118,13 +114,6 @@ test('埋雷体检：模板骨架改坏——结构断言必红，加载期不�
 
 		editText(dir, 'templates.md', (text) => `${text}\n鉴权：横切里顺手提一句五问。\n`)
 		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /在安全专项小节之外也出现了/)
-	})
-})
-
-test('埋雷体检：纪律超行数——数据面必红', (t) => {
-	withDataDir(t, (dir) => {
-		editText(dir, 'discipline.md', (text) => `${text}${Array.from({ length: DISCIPLINE_LINE_LIMIT }, (_, i) => `- 补行 ${i}`).join('\n')}\n`)
-		assert.throws(() => loadDispatchData(dir), /超过 14 行上限/)
 	})
 })
 

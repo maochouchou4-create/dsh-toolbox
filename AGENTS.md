@@ -9,7 +9,7 @@ DSH 插件包。README 是人读的能力与边界说明；本文件是改这个
   （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、三份
   brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单）。
   **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
-  `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／≤14 行／`{templates}` 恰一次）；
+  `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／`{templates}` 恰一次）；
   `templates.md` 的结构断言（骨架八节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
   ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
   注入的注册形状。
