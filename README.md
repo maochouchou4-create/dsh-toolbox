@@ -13,11 +13,11 @@ dispatch 跑批纪律）：
 - **see_image**：把图片交给视觉模型转述成文字（先逐字转写可见文字，再按图型
   结构化描述），兜「图在磁盘上但当前会话模型看不见像素」的场景。两个入口：
   `path`（磁盘文件）与 `attachment`（会话占位符 hex，见下节）。
-- **dispatch 纪律注入**：跑批工作流（需求→方法拍板→方案→过目→方案证伪→开工令→施工→证伪门→
+- **dispatch 纪律注入**：跑批工作流（需求→方法→出方案→方案证伪（自动派）→开工令→施工→证伪门→
   提交→删方案）的纪律与模板指针进每回合 systemPrompt（`dispatch:discipline`，order 130），
   不靠调用某件工具才看得见。文本住 `lib/dispatch/data/discipline.md`，每次请求现读；
   `{templates}` 由注入代码渲染成 `lib/dispatch/data/templates.md` 的绝对路径（方案骨架／
-  两份 brief 模板／定稿自查／横切判据／门报行/安全五问都在那一份人读文件里）。读失败只
+  三份 brief 模板／定稿自查／横切判据／门报行/安全五问都在那一份人读文件里）。读失败只
   warn 一条并跳过本回合，不阻断请求。
 
 ## memory 的索引与条目契约
@@ -138,13 +138,13 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 | 文件 | 是什么 | 什么时候被读 |
 |---|---|---|
 | `discipline.md` | 跑批纪律全文——流程顺序、角色分工、两道门的位置与停点 | 每回合随注入块进上下文（`dispatch:discipline`，order 130） |
-| `templates.md` | 人读模板单文件——方案规范、方案证伪 brief、复核形态词表、证伪门 brief、横切判据、门报行、安全专项五问、不做清单 | 注入块把它的绝对路径渲染进纪律（`{templates}` 恰一处）；写方案、派复核时照抄对应节 |
+| `templates.md` | 人读模板单文件——方案规范、方案证伪 brief、复核形态词表、施工派单 brief、证伪门 brief、横切判据、门报行、安全专项五问、不做清单 | 注入块把它的绝对路径渲染进纪律（`{templates}` 恰一处）；写方案、派复核时照抄对应节 |
 
-`templates.md` 八节标题各恰一次（七个骨架节＋安全专项节）；**安全五问全仓只此一处**（锚点落在安全小节内），别处复述由
+`templates.md` 九节标题各恰一次（八个骨架节＋安全专项节）；**安全五问全仓只此一处**（锚点落在安全小节内），别处复述由
 `test/dispatch-data.test.js` 判红。
 
 **加载期只守纪律三条**（`data.js`）：非空、≤14 行、`{templates}` 恰一次，任一条对不上即加载
-失败。模板的骨架结构（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内）由 `test/dispatch-data.test.js`
+失败。模板的骨架结构（骨架八节＋安全专项节各恰一次、五问锚点只在安全小节内）由 `test/dispatch-data.test.js`
 断言——它不挡加载：手滑改坏模板时纪律照常注入，红的是那条测试、指回改坏处。纪律注入读失败
 只 warn 一条并跳过本回合，不阻断请求。
 
@@ -155,8 +155,8 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 委派形态的固定口径（用户拍板，规则不外置到 memory 或批清单）：**复核固定走 workflow**——每路
 brief 一个子代理、喂 `parallel` 攒齐一次返回；**施工与修正轮走独立 subagent**——单批单 agent，
-回报可针对性追问。brief 文本不再由工具装配：主会话按 `templates.md` 的两份 brief 模板手写每路
-prompt（角色句＋横切判据＋判据＋对象命令，只拿方案文档或净 diff、不读施工汇报、一轮为限），
+回报可针对性追问。brief 文本不再由工具装配：主会话按 `templates.md` 的 brief 模板手写每路 prompt（门一/门二门位 brief＋施工派单 brief；
+角色句＋横切判据＋判据＋对象命令，只拿方案文档或净 diff、不读施工汇报、一轮为限），
 拼进 workflow 的 `args` 由脚本分派：
 
 ```js
@@ -177,7 +177,7 @@ prompt（角色句＋横切判据＋判据＋对象命令，只拿方案文档�
 ## 安装（本地仓直装）
 
 ```text
-plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
+plugin_manager install_bundle D:\code\repos\dsh-toolbox
 ```
 
 然后重启 dsh web（宿主模块代缓存：替换/装卸已装包不换模块代，必须重启才激活）。
@@ -193,7 +193,7 @@ plugin_manager install_bundle /home/nvse/code/repos/dsh-toolbox
   `machines/<id>/` 不存在也判红（配了机器名却没有私有目录——先做条目迁移，见
   `agent-data-sync.md` 的「记忆仓直连」节）。只有共享段的记忆根（还没分机器段）未给第二个
   实参不算错，命令末尾会提示未给机器 id。家机正确形态：
-  `npm run check:memory -- D:\code\agent-data home`
+  `npm run check:memory -- D:\code\repos\agent-data home`
   （扫 store 顶层与 `machines/<id>/` 两段，按注入侧同一份判定验预算、frontmatter 契约、
   段内 title 重名与条目内 ## 节重名；接参 `[记忆根] [机器id]`；覆盖项见命令末尾自报名单）。
 - 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
