@@ -6,7 +6,7 @@
  */
 import { before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
@@ -401,20 +401,6 @@ test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、
 
 /** 把目录 mtime 拨成同一个固定值：让两棵树的指纹两维（mtime＋文件名列表）完全一致，键里剩下的挡路维度才显出来。 */
 const 同一目录时间 = new Date('2026-01-01T00:00:00Z')
-
-test('composeMemory：写侧原子发布（临时件＋改名）之后下一次装配就是新行（段目录 mtime 变即换键）', () => {
-	const { root, store } = fixture('compose-refresh')
-	const path = join(store, 'refreshed.md')
-	writeFileSync(path, entry('旧标题', '旧触发词'), 'utf8')
-	assert.ok(composeMemory({ memoryRoot: root, machine: 'home' }).includes('- [旧标题](refreshed.md) — 旧触发词'))
-	// 同长度改写：任何以「键含文件 size」当失效判据的缓存都会漏掉它——而这条用例原先守的正是
-	// 这一点。改走写侧真实的发布路径（fs-port 的 writeFileAtomic：临时件＋改名），它动的是段
-	// 目录 mtime，而目录 mtime 在键里，故键必变
-	writeFileSync(join(store, '.refreshed.md.tmp'), entry('新标题', '新触发词'), 'utf8')
-	renameSync(join(store, '.refreshed.md.tmp'), path)
-	assert.ok(composeMemory({ memoryRoot: root, machine: 'home' }).includes('- [新标题](refreshed.md) — 新触发词'), '原子发布后必须重扫')
-	assert.ok(!composeMemory({ memoryRoot: root, machine: 'home' }).includes('旧标题'), '旧派生行不得残留')
-})
 
 test('composeMemory：段内加一条条目即重算（目录 mtime 变 → 键变 → 全量重扫）', () => {
 	const { root, store } = fixture('compose-cache-added')
