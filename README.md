@@ -196,10 +196,6 @@ plugin_manager install_bundle D:\code\repos\dsh-toolbox
   `npm run check:memory -- D:\code\repos\agent-data home`
   （扫 store 顶层与 `machines/<id>/` 两段，按注入侧同一份判定验预算、frontmatter 契约、
   段内 title 重名与条目内 ## 节重名；接参 `[记忆根] [机器id]`；覆盖项见命令末尾自报名单）。
-- 老布局条目迁移：`node scripts/migrate-frontmatter.mjs <记忆根>` 默认 dry-run，逐条打印
-  将要做什么（含「这批文件会把 CRLF 行尾整篇归一为 LF」）；确认后加 `--apply` 才落盘。脚本
-  可反复跑（已合规条目不动）；单仓化后全部记忆都在 agent-data 仓里，改写与删除都进 git，
-  要回退走版本控制，脚本不再自己另存备份。
 - 数据面自检：`npm test` 里 `test/dispatch-data.test.js` 对本包数据资产做断言——加载全绿冒烟
   （data.js 的纪律两守卫顺带跑真文件）、**模板骨架结构**（骨架八节＋安全专项节各恰一次、安全五问整节与锚点
   只在安全小节内）、**安全五问全仓单载体**（按节标题计数，别处复述即红）、守卫行为测试
@@ -215,15 +211,15 @@ lib/index.js            胶水：工具走 FEATURES 表、两件注入各自 try
 lib/paths.js            跨工具族的路径原语（目前只有 ~ 展开）。落 lib 根是因为记忆根与附件存区两条来路都要它，而它是文件系统约定不是记忆约定——留在 lib/memory/ 就越了那层自述的界
 lib/value.js            跨工具族的值判据原语（isNonBlankString：非空白的字符串才算「给了」）。落 lib 根同理由：Config 回退、脚本入参判定、宿主注入的路径校验问的是同一个问题
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
-lib/fs-port.js          包级 fs 端口的 node 半：原子发布、写前守卫（仅当不存在／版本比对）与错误码归一（词表见 fs-guard.js）；消费方＝迁移脚本 scripts/migrate-frontmatter.mjs 与单测
-lib/fs-guard.js         文件系统守卫与错误码词表（端口与迁移脚本共用一份，零 node:fs——并进端口会把直连拖进写侧模块的本地导入闭包，「写侧 I/O 只经端口」当场失效）
-lib/memory-root.js      记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 族注入：离线自检与迁移脚本要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们
+lib/fs-port.js          包级 fs 端口的 node 半：原子发布、写前守卫（仅当不存在／版本比对）与错误码归一（词表见 fs-guard.js）；生产消费方已随迁移脚本退役，现消费方＝单测
+lib/fs-guard.js         文件系统守卫与错误码词表（端口与读侧探针共用一份，零 node:fs——并进端口会把直连拖进写侧模块的本地导入闭包，「写侧 I/O 只经端口」当场失效）
+lib/memory-root.js      记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 族注入：离线自检要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们
 lib/memory/             记忆注入与自检：index.js 装配（只注册注入，无工具）+ core/frontmatter/patterns/naming/assemble/segments 纯模块（写侧 write/delete/lint/params 已随工具退役删除）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
 lib/client.js           浏览器半：插件页里的「识图路由」卡片（注册 plugins.bundle.config 槽，选路由保存即生效）。经典脚本形态——宿主按静态模块表收走、JSX 与构建都不在场
 lib/dispatch/           跑批纪律注入（一件注入件）：discipline.js（纪律注入：每请求现读 discipline.md 并渲染 templates.md 绝对路径，零直连）+ data.js（现读两份数据文件，加载期只验纪律两条，直连 node:fs）＋ data/（discipline.md 跑批纪律／templates.md 模板单文件＋安全五问单载体）
 test/                   node:test 单测（纯函数直测＋注入/装配层宿主替身＋共享原语直测＋接线静态解析）
-scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动；migrate-frontmatter.mjs：老布局条目迁到 frontmatter 两键（默认 dry-run，`--apply` 才落盘）
+scripts/                checks.mjs：注入块自检的检查项数组与现场采集（可单测）；check-memory-index.mjs：跑上面那份数组的薄壳，末尾自报覆盖清单，不依赖宿主启动
 ```
 
 每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录只有

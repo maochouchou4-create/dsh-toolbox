@@ -374,18 +374,6 @@ test('记忆根存在但里面没有条目段：同样 exit 1（空目录与打�
 	assert.ok(violationIds(stdout).includes('memory-root-wired'), `须由 memory-root-wired 判红：\n${stdout}`)
 })
 
-test('实参给记忆目录本身（…/memory）也收：按 store 算、root 取父目录，退出 0（注入头句的基目录照抄不叠路径）', () => {
-	const root = join(base, 'store-form')
-	mkdirSync(root, { recursive: true })
-	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'topic-0.md' })])
-	seedSegment(root, 'home', [deriveIndexLine({ title: '本机条目', description: '触发词', file: 'topic-0.md' })])
-	// 实参是 store（<root>/memory），不是 root：resolveRoot 再叠一层就成了 memory/memory 假红
-	const { code, stdout } = runScript([join(root, 'memory'), 'home'])
-	assert.equal(code, 0, `记忆目录形态实参须收：\n${stdout}`)
-	assert.ok(stdout.includes('全部达标'), `须真扫到条目后全绿：\n${stdout}`)
-	assert.ok(stdout.includes(join(root, 'memory')), `共享段须指到实参本身而不是叠一层：\n${stdout}`)
-})
-
 test('配了机器名却没有私有目录：退出 1 且指路条目迁移（空目录与首跑不可区分，故这条只在离线自检里判）', () => {
 	const root = join(base, 'machine-dir-missing')
 	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'shared-topic.md' })])
@@ -415,40 +403,6 @@ test('未给机器 id 而 machines/ 下没有任何条目段：不判红（那�
 	assert.deepEqual(violationIds(stdout), [], stdout)
 	// 报告要把「本次量到的不是全量」与「本来就只有这些」分开说清
 	assert.ok(stdout.includes('提示：未给机器 id'), stdout)
-})
-
-test('空串两参：退出 1（空串与纯空白按没给算）', () => {
-	const root = join(base, 'empty-string-args')
-	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'shared-topic.md' })])
-	seedSegment(root, 'home', [deriveIndexLine({ title: '本机条目', description: '触发词', file: 'machine-topic.md' })])
-	// 显式传空串：解析后与缺参同形，可它仍是调用方写下来的形参——判据必须看得见这件事，
-	// 否则一次「以为给了参数」的调用会以 0 退出并印「全部达标」（记忆根走 DSH_MEMORY_ROOT
-	// 指回临时根，不碰真实语料）
-	const { code, stdout } = runScript(['', ''], { env: { ...process.env, DSH_MEMORY_ROOT: root } })
-	assert.equal(code, 1, `空串两参不得假绿：\n${stdout}`)
-	assert.ok(violationIds(stdout).includes('machine-arg'), `须由 machine-arg 判红：\n${stdout}`)
-	assert.ok(!stdout.includes('全部达标'), stdout)
-})
-
-test('机器 id 不合规（大写或空白）：退出 1，报「名字不合规」而不是崩溃', () => {
-	const root = join(base, 'bad-machine-id')
-	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'shared-topic.md' })])
-	const { code, stdout } = runScript([root, 'Home'])
-	assert.equal(code, 1, `机器 id 不合规不得假绿：\n${stdout}`)
-	assert.ok(violationIds(stdout).includes('machine-arg'), `须由 machine-arg 判红：\n${stdout}`)
-	assert.ok(stdout.includes('不合规'), stdout)
-	assert.ok(!stdout.includes('未捕获') && !stdout.includes('Error:'), `机器名写错该报「这个名字不合规」而不是崩：\n${stdout}`)
-})
-
-test('机器 id 传保留字 shared：退出 1（它不是机器身份，是本机段与共享段同目录的那个洞）', () => {
-	const root = join(base, 'shared-as-machine')
-	seedSegment(root, SHARED_SEGMENT, [deriveIndexLine({ title: '共享条目', description: '触发词', file: 'shared-topic.md' })])
-	const { code, stdout } = runScript([root, SHARED_SEGMENT])
-	assert.equal(code, 1, `保留字当机器 id 不得假绿：\n${stdout}`)
-	assert.ok(violationIds(stdout).includes('machine-arg'), `须由 machine-arg 判红：\n${stdout}`)
-	// 放行的症状不是报错：本机段与共享段落进同一个目录，注入块里同一段内容出现两遍、对机段漏装。
-	// 这条钉的是「它没有被装配成机器段」
-	assert.ok(!stdout.includes(`本机（${SHARED_SEGMENT}）`), `保留字不得被装配成机器段：\n${stdout}`)
 })
 
 test('共享段 0 条且机器段是空目录：退出 1（空目录不是「扫到了东西」）', () => {

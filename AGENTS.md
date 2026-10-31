@@ -61,8 +61,7 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
 
 ## 硬边界
 
-- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（写侧工具已随改版退役，现消费方＝迁移脚本
-  `scripts/migrate-frontmatter.mjs` 与单测），它是写侧唯一的 I/O 通道：契约、守卫、错误码
+- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（写侧工具与老布局迁移脚本均已退役，现消费方＝单测），它是写侧唯一的 I/O 通道：契约、守卫、错误码
   （`FS_STALE_VERSION`/`FS_NOT_OBSERVED`/`FS_NOT_REGULAR_FILE`）、原子发布都不许为图省事削弱或绕过；
   要落盘就走端口方法（`resolve/stat/readText/writeText`），别直调 `node:fs`。
   这条边界的口径是**整个本地导入闭包**：给消费端模块加一行 `import node:fs`
