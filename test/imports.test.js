@@ -213,8 +213,7 @@ test('浏览器半的依赖面哨兵：client.js 静态 require 的每件都在�
  * 登记，而登记是有人看着的显式动作。
  *
  * 表只回答「每个文件各自直不直」。各 true 行的理由各是各的：读侧的失控读与段扫描
- * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件），fs-port.js 是
- * 端口本尊（node 实现就在这里），data.js 读数据面。
+ * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件），data.js 读数据面。
  */
 const NODE_FS_DIRECT = new Map([
 	['memory/frontmatter.js', false],
@@ -236,7 +235,6 @@ const NODE_FS_DIRECT = new Map([
 	['paths.js', false],
 	['value.js', false],
 	['memory-root.js', false],
-	['fs-port.js', true],
 	['fs-guard.js', false],
 	['index.js', false],
 ])

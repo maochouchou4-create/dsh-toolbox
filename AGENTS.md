@@ -61,11 +61,6 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
 
 ## 硬边界
 
-- 写侧 I/O 端口＝`lib/` 根的 `fs-port.js`（写侧工具与老布局迁移脚本均已退役，现消费方＝单测），它是写侧唯一的 I/O 通道：契约、守卫、错误码
-  （`FS_STALE_VERSION`/`FS_NOT_OBSERVED`/`FS_NOT_REGULAR_FILE`）、原子发布都不许为图省事削弱或绕过；
-  要落盘就走端口方法（`resolve/stat/readText/writeText`），别直调 `node:fs`。
-  这条边界的口径是**整个本地导入闭包**：给消费端模块加一行 `import node:fs`
-  同样算绕门（`test/imports.test.js` 的闭包断言就为此存在，逐文件定性表管不到那一跳）。
 - `lib/memory/` 下除装配层（`index.js`）外一律零宿主依赖，可直接单测；
   `lib/see-image/vision.js` 同。新增文件按这条规则就位，不要维护枚举清单。
   `test/imports.test.js` 静态解析钉住导入面与 node:fs 直连的定性表，搬家断链、

@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "2.1.4",
+	"version": "2.1.5",
 	"description": "DSH 个人工具箱：memory（单仓记忆读注入：store 顶层共享、machines/<机器名>/ 本机私有；写改删走宿主工具，离线自检 npm run check:memory）＋dispatch 跑批纪律注入（每回合 systemPrompt 现读 lib/dispatch/data/discipline.md，模板路径渲染成 templates.md；需求→方法→出方案→方案证伪（自动派）→开工令→施工→证伪门→提交→删方案）＋see_image（图片交视觉模型转述）。一件工具＋两件注入件，逐工具隔离激活。",
 	"license": "MIT",
 	"type": "module",

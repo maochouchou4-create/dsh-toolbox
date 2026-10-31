@@ -211,8 +211,7 @@ lib/index.js            胶水：工具走 FEATURES 表、两件注入各自 try
 lib/paths.js            跨工具族的路径原语（目前只有 ~ 展开）。落 lib 根是因为记忆根与附件存区两条来路都要它，而它是文件系统约定不是记忆约定——留在 lib/memory/ 就越了那层自述的界
 lib/value.js            跨工具族的值判据原语（isNonBlankString：非空白的字符串才算「给了」）。落 lib 根同理由：Config 回退、脚本入参判定、宿主注入的路径校验问的是同一个问题
 lib/working-dir.js      会话活目录的取用收口（工具执行与注入两条路径读同一处 session.header.cwd，理由见文件内注释）。落 lib 根因为两个工具族都要它
-lib/fs-port.js          包级 fs 端口的 node 半：原子发布、写前守卫（仅当不存在／版本比对）与错误码归一（词表见 fs-guard.js）；生产消费方已随迁移脚本退役，现消费方＝单测
-lib/fs-guard.js         文件系统守卫与错误码词表（端口与读侧探针共用一份，零 node:fs——并进端口会把直连拖进写侧模块的本地导入闭包，「写侧 I/O 只经端口」当场失效）
+lib/fs-guard.js         错误码词表与错误族标识（codedFsError：code 取宿主 FsErrorCode 词表、name 固定 FsPortError 为族标识；读侧探针 assemble 造 read-error 用，零 node:fs）
 lib/memory-root.js      记忆根默认值与归一、根 → store 落点、错误文案归一（零 node:fs）。落 lib 根因为要它的不止 memory 族注入：离线自检要的是「这个根归一成什么样」而不是「记忆怎么装配」，留在 memory/ 等于把整个 memory 族的 I/O 拖进它们
 lib/memory/             记忆注入与自检：index.js 装配（只注册注入，无工具）+ core/frontmatter/patterns/naming/assemble/segments 纯模块（写侧 write/delete/lint/params 已随工具退役删除）。逐文件谁直连 node:fs 见 test/imports.test.js 的判定表，别照抄本文档的枚举
 lib/see-image/          识图工具：index.js 装配（零直连）+ route.js（识图路由现读内缝：volatile 句柄取值＋空白回落出厂路由，零直连）+ vision.js（嗅探/终态映射，直连 node:fs）
