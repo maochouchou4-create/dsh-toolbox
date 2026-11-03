@@ -2,7 +2,7 @@
  * see_image 内缝单测（node:test，零宿主依赖）：魔数嗅探＋流终态映射＋附件占位符解析
  * （标识归一／存区根解析／前缀定位对象）＋两个编排函数（入口定位、转写取正文）
  * ＋识图路由现读（route.js 的句柄取值与回落）。端到端识图质量不在此层（需活宿主＋
- * 视觉模型，验收口径见 README）。
+ * 视觉模型，验收口径见仓级 AGENTS.md）。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

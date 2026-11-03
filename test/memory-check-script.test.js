@@ -428,7 +428,7 @@ test('段里只有非 kebab 名的 .md：判红指向改名而不是指路接线
 	assert.equal(code, 1, `一条条目都没扫到不得假绿：\n${stdout}`)
 	assert.ok(violationIds(stdout).includes('memory-root-wired'), `须由接线那项判红：\n${stdout}`)
 	assert.ok(stdout.includes('1 个非 kebab 名的 .md 未计入'), `判红要指向改名：\n${stdout}`)
-	assert.ok(!stdout.includes('先接线（见 README）'), `线是接上的，再指路接线等于让人去修一条没坏的线：\n${stdout}`)
+	assert.ok(!stdout.includes('先接线（见本仓 AGENTS.md）'), `线是接上的，再指路接线等于让人去修一条没坏的线：\n${stdout}`)
 	// 段表那一行把「条目文件」列少掉的那块钱说出去向，读者才对得上盘上的文件数
 	assert.ok(stdout.includes('1 个文件因非 kebab 名未进索引'), `段表须报出被命名判据挡掉的那些：\n${stdout}`)
 })

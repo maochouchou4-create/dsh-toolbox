@@ -266,7 +266,7 @@ export const CHECKS = [
 				]
 			}
 			return [
-				`记忆根下扫到 0 条条目：${site.root.store} 顶层与 machines/ 下各段都没有 kebab 名的 .md——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见 README），或把第一个实参指向真正在用的记忆根`,
+				`记忆根下扫到 0 条条目：${site.root.store} 顶层与 machines/ 下各段都没有 kebab 名的 .md——本次一份条目都没扫，报成「${CHECKS.length} 项检查全过」与空跑同形。先接线（见本仓 AGENTS.md），或把第一个实参指向真正在用的记忆根`,
 			]
 		},
 	},

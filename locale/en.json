@@ -1,6 +1,6 @@
 {
 	"meta": {
 		"title": "DSH Toolbox",
-		"description": "Personal tool pack: one tool plus two injections. see_image (vision model transcription via host LLM channel); memory index injection (the store root holds machine-shared entries, machines/<machine>/ holds machine-private ones); workflow discipline injection (discipline.md is read on every request and the template path is rendered into templates.md; requirement → approach sign-off → plan → review → plan challenge → go-ahead → build → falsification gate → commit → delete the plan)."
+		"description": "Personal tool pack: see_image vision transcription, memory index injection, dispatch discipline injection."
 	}
 }
