@@ -153,11 +153,13 @@ MODEL_DOES_NOT_SUPPORT_IMAGES，客户端 toast「当前模型不支持图片」
 
 ## 派发口径（批量派发）
 
-委派形态的固定口径（用户拍板，规则不外置到 memory 或批清单）：**复核固定走 workflow**——每路
-brief 一个子代理、喂 `parallel` 攒齐一次返回；**施工与修正轮走独立 subagent**——单批单 agent，
-回报可针对性追问。brief 文本不再由工具装配：主会话按 `templates.md` 的 brief 模板手写每路 prompt（门一/门二门位 brief＋施工派单 brief；
-角色句＋横切判据＋判据＋对象命令，只拿方案文档或净 diff、不读施工汇报、一轮为限），
-拼进 workflow 的 `args` 由脚本分派：
+委派形态口径（用户拍板 2026-11-03：删 workflow 强制）：**默认独立 subagent**——施工、修正轮、
+多路复核都单批单 agent、后台派发（run_in_background），派完结束回合等完工通知；多路复核＝并行
+后台逐只派发，通知逐只收，可对单只 send_message 追问补报；修正轮优先 send_message 回原施工者续聊。
+**workflow 只在用户点名或需多阶段编排（如 map→judge 流水线）时用。**
+brief 文本不装配：主会话按 `templates.md` 的 brief 模板手写每路 prompt（门一/门二门位 brief＋施工派单 brief；
+角色句＋横切判据＋判据＋对象命令，只拿方案文档或净 diff、不读施工汇报、一轮为限）。
+用 workflow 扇出时，brief 拼进 `args` 由脚本分派：
 
 ```js
   const briefs = args.briefs; // [{form, text}]，主会话按模板手写后放进 workflow args
@@ -168,8 +170,7 @@ brief 一个子代理、喂 `parallel` 攒齐一次返回；**施工与修正轮
 ```
 
 判活看 out 是否为 null——agent 失败是返回 null 不是抛错；聚合后按 ok 分流，失败路收进
-`failed_routes` 别静默丢。施工单与修正轮不走此路：独立 subagent 后台派发（run_in_background），
-派完结束回合等完工通知；修正轮优先 send_message 回原施工者续聊。
+`failed_routes` 别静默丢。
 
 一个坑（实测踩过）：workflow 返回值严格 JSON 校验——成功分支不要带 `error: undefined` 这类
 字段，整趟直接拒。
