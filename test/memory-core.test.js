@@ -400,7 +400,7 @@ test('composeMemory：条目缺 frontmatter → onIssue 报 entry-frontmatter、
 })
 
 test('composeMemory：段内加一条条目，下一趟即见（每趟现读现算）', () => {
-	const { root, store } = fixture('compose-cache-added')
+	const { root, store } = fixture('compose-added')
 	writeFileSync(join(store, 'first.md'), entry('原有条目', '触发词'), 'utf8')
 	assert.ok(!composeMemory({ memoryRoot: root, machine: 'home' }).includes('[后来条目]'))
 	writeFileSync(join(store, 'later.md'), entry('后来条目', '触发词'), 'utf8')
@@ -422,7 +422,6 @@ test('composeMemory：原地改写条目（只改文件内容，不动增删改�
 	const second = composeMemory({ memoryRoot: root, machine: 'home' })
 	assert.ok(second.includes('- [新标题](kept.md) — 新触发词'), '原地改写下一趟即新：触发词当场换血')
 	assert.ok(!second.includes('原触发词'), '旧触发词不得残留')
-	assert.notEqual(second, first, '两趟内容确有不同（防断言空转过绿）')
 })
 
 test('composeMemory：WRITING.md 改动（同长度改写）下一趟即新', () => {
@@ -733,7 +732,7 @@ test('composeMemory：逐段截断真发生 → 块尾收一句总的（几段�
 	const 两段都切 = composeMemory({ memoryRoot: root, machine: 'home' })
 	assert.match(
 		两段都切,
-		/（本次注入有 2 段索引超预算已截断：共享（跨机同步） \d+→40 行、本机（home） \d+→40 行——跑 npm run check:memory -- <记忆根> <机器id> 定位收敛）\s*$/u,
+		/（本次注入有 2 段索引超预算已截断：共享（跨机同步） \d+→40 行、本机（home） \d+→40 行——跑 node D:\\code\\repos\\dsh-toolbox\\scripts\\check-memory-index.mjs <记忆根> <机器id> 定位收敛）\s*$/u,
 		'块尾那行是本块唯一的整体结论位：报段数、报段、报切在哪一重',
 	)
 

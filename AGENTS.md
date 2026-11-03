@@ -94,7 +94,7 @@ test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-me
 
 ```text
 npm test            # exit 0 且 pass 数不低于改前
-npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmatter 契约与段内 title 重名（改记忆侧才跑）
+node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs <记忆根> <机器id>   # 记忆索引预算、frontmatter 契约与段内 title 重名（改记忆侧才跑）
 ```
 
 `npm test` 三类面：零宿主依赖层直测（纯函数＋node 适配器真 I/O，跑临时目录）、注入/装配层的
@@ -109,7 +109,7 @@ npm run check:memory -- <记忆根> <机器id>   # 记忆索引预算、frontmat
   本机段整段缺失——空跑，该命令以 1 退出并说明该带什么；给了机器 id 而
   `machines/<id>/` 不存在也以 1 退出（配了机器名却没有私有目录，先做条目迁移）。
   只有共享段的记忆根未给第二参不算错，命令末尾会提示未给机器 id。
-  覆盖项以脚本自报为准（`npm run check:memory`
+  覆盖项以脚本自报为准（`node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs`
   末尾逐项打印 id／判据／守的常量）——本文件不再手抄清单，脚本一改就会与手抄的那份分家。
 - **超线先收敛**：新增或改写记忆条目后若整块超定档，先并／删条目、精修 `WRITING.md`
   散文；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
