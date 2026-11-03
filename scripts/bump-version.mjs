@@ -67,11 +67,9 @@ function main(argv) {
 		const next = bumpVersion(current, 'patch')
 		writeVersion(next)
 		gitOutput(['add', '--', 'package.json'])
-		// 路径限定提交（git commit <路径>）不吃索引，版本会落盘但不进这次提交——不静默。
-		if (!stagedPaths().includes('package.json')) {
-			console.error(`[版本] 已升到 ${next}，但这次提交带路径限定，版本号不在里面；git add package.json 后 git commit --amend。`)
-			return
-		}
+		// 坑：路径限定提交（git commit <路径>）在钩子跑完后会把不在路径内的索引项还原——版本
+		// 已进提交树，但提交后暂存区会留一份旧版本号的降级残留（status 显示 MM package.json），
+		// 下次提交前须 git restore --staged package.json；钩子期内看不到那步还原，拦不住。
 		console.log(`[版本] lib/ 有改动、版本未动：${current} → ${next}（已并入本次提交）`)
 		console.log('       破坏性改动（工具参数面／注入块结构／frontmatter 契约）应升 minor：先 npm run bump -- minor 再提交，钩子见版本已变就不碰。')
 		return
