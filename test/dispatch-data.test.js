@@ -1,6 +1,6 @@
 /**
  * dispatch 数据面（两份人读 markdown）的行为测试：加载全绿冒烟（纪律两守卫顺带跑真文件）、
- * 模板骨架结构（骨架八节＋安全专项节按整行等值各恰一次／安全五问整节与锚点只此一处）、
+ * 模板骨架结构（骨架七节＋安全专项节按整行等值各恰一次／安全五问整节与锚点只此一处）、
  * 安全五问全仓单载体，外加「改坏必红」的埋雷体检。
  *
  * 模板的结构守卫落在这里而不是加载期：手滑改坏 templates.md 时纪律仍照常注入（fail-safe
@@ -34,7 +34,6 @@ const TEMPLATE_SECTIONS = [
 	'## 施工派单 brief（施工前，对象＝方案文档施工段）',
 	'## 证伪门 brief（施工提交后、推送前，对象＝净 diff）',
 	'## 横切判据',
-	'## 门报行',
 	'## 不做清单（形态口径）',
 ]
 
@@ -78,7 +77,7 @@ test('数据面加载全绿：两份现读、零 issue', () => {
 	assert.deepEqual(Object.keys(loaded.data).sort(), DATA_FILES.map((entry) => entry.name).sort())
 })
 
-test('模板骨架：骨架八节＋安全专项节各恰一次（整行等值）、五问锚点只此一处', () => {
+test('模板骨架：骨架七节＋安全专项节各恰一次（整行等值）、五问锚点只此一处', () => {
 	assertTemplateShape(loadDispatchData().data.templates)
 })
 
@@ -149,8 +148,8 @@ test('数据目录解析：显式目录优先、空串与未配置回落到仓�
 
 test('埋雷体检：模板节标题重复出现必红', (t) => {
 	withDataDir(t, (dir) => {
-		editText(dir, 'templates.md', (text) => `${text}\n## 门报行\n\n重复的一节。\n`)
-		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /节标题「## 门报行」必须恰好出现一次/)
+		editText(dir, 'templates.md', (text) => `${text}\n## 不做清单（形态口径）\n\n重复的一节。\n`)
+		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /节标题「## 不做清单（形态口径）」必须恰好出现一次/)
 	})
 })
 
@@ -163,10 +162,10 @@ test('埋雷体检：安全专项节出现两次必红（单载体是硬约束�
 
 test('埋雷体检：节标题被改写（原文只剩子串）必红——计数是整行等值，不是子串', (t) => {
 	withDataDir(t, (dir) => {
-		editText(dir, 'templates.md', (text) => text.replace(/^## 门报行$/m, '## 门报行（旧版）'))
-		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /节标题「## 门报行」必须恰好出现一次（实为 0 次）/)
+		editText(dir, 'templates.md', (text) => text.replace(/^## 不做清单（形态口径）$/m, '## 不做清单（形态口径）（旧版）'))
+		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /节标题「## 不做清单（形态口径）」必须恰好出现一次（实为 0 次）/)
 
-		editText(dir, 'templates.md', (text) => text.replace(/^## 门报行（旧版）$/m, '## 门报行'))
+		editText(dir, 'templates.md', (text) => text.replace(/^## 不做清单（形态口径）（旧版）$/m, '## 不做清单（形态口径）'))
 		editText(dir, 'templates.md', (text) => text.replace(/^## 安全专项五问.*$/m, '## 安全专项五问（旧版）'))
 		assert.throws(() => assertTemplateShape(loadDispatchData(dir).data.templates), /安全专项整节/)
 	})

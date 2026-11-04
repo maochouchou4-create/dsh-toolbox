@@ -8,10 +8,10 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 - **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/`）＋两件注入件
   （`lib/memory/` 记忆索引／`lib/dispatch/` 跑批纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
   （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、三份
-  brief、形态词表、横切判据、门报行、安全五问（全仓唯一载体）、不做清单）。
+  brief、形态词表、横切判据、安全五问（全仓唯一载体）、不做清单）。
   **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
   `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／`{templates}` 恰一次）；
-  `templates.md` 的结构断言（骨架八节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
+  `templates.md` 的结构断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
   ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
   注入的注册形状。纪律注入读失败只 warn 一条并跳过本回合，不阻断请求。
 - **插件改动：新会话即新代，宿主不必重启**。宿主（web 形态）对插件 `lib/*.js` 逐会话导入：
