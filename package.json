@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "2.2.0",
+	"version": "2.2.1",
 	"description": "DSH 个人工具箱：see_image 识图转述＋memory 记忆索引注入＋dispatch 跑批纪律注入。",
 	"license": "MIT",
 	"type": "module",
