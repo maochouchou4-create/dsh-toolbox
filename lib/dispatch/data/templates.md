@@ -51,7 +51,7 @@ brief 正文（每形一份，按行拼装）：
 本批意图：<本批意图一句话>
 拍板清单（不得重开）：<逐条原文>
 对象（方案原文路径或批次节指针）：<方案文档绝对路径＋批次节>
-回执：完整报告用你的 write 工具落盘（`$env:TEMP\falsify-门一-<形>.md`），return 只回一行 JSON——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话）、报告路径；findings 空数组＋green 也照回。
+回执：return 直接回完整报告——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话＋锚点＋复跑命令）；无 findings 的 green 也照回。
 
 ## 复核形态词表（选形单源：保底每批必派，其余按触发列「改了什么派什么」）
 
