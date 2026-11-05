@@ -125,7 +125,7 @@ brief 正文（每形一份，按行拼装）：
 拍板清单（不得重开）：<逐条原文>
 对象（净 diff 生成命令，照它生成要审的 diff，不接受施工者转述）：<git diff 起点..HEAD>
 附（主会话原树实测，派发前贴入）：<验收命令逐条＋exit code＋关键输出段>
-回执：完整报告用你的 write 工具落盘（`$env:TEMP\falsify-门二-<形>.md`），return 只回一行 JSON——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话）、报告路径；findings 空数组＋green 也照回。
+回执：return 直接回完整报告——形名、verdict（red|yellow|green）、findings 逐条（级别＋一句话＋锚点＋复跑命令）；无 findings 的 green 也照回。
 
 ## 横切判据
 
