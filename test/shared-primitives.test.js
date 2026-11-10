@@ -1,6 +1,6 @@
 /**
- * 共享原语的直接单测（node:test，零宿主依赖、零 IO）：跨工具族收敛出来的那几个判据原语
- * 与遍历，各自的行为契约在这里钉住。
+ * 共享原语的直接单测（node:test，零宿主依赖、零 IO）：跨工具族收敛出来的那几个判据原语、
+ * 遍历与告警去重工厂，各自的行为契约在这里钉住。
  *
  * 为什么不用动作层的用例间接覆盖：动作层的用例只验「经过这些原语之后发生了什么」，验不到
  * 原语本身的口径——行号差一位、判据在某类退化输入上换了答案，两边都可能照样全绿。收敛成
@@ -12,6 +12,7 @@ import { INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
 import { nonEmptyOrDefault } from '../lib/memory-root.js'
 import { forEachWikilinkMatch, styleWarnings } from '../lib/memory/patterns.js'
 import { resolveActiveCwd } from '../lib/working-dir.js'
+import { makeWarnOnce } from '../lib/warn-once.js'
 
 test('forEachWikilinkMatch：行号从 1 起，同行多匹配与跨行各自对位', () => {
 	/** 跑一遍并收集 (原始串, 行号)。 */
@@ -99,4 +100,23 @@ test('resolveActiveCwd：无 agent 返回 undefined，有 agent 取会话 header
 	// 症状出现在几层之外，最难查
 	assert.throws(() => resolveActiveCwd({}), /session\.header/)
 	assert.throws(() => resolveActiveCwd({ session: {} }), /session\.header/)
+})
+
+test('makeWarnOnce：同消息只报一次，新消息各自报，两工厂互不串状态', () => {
+	const seen = []
+	const warnOnce = makeWarnOnce((message) => seen.push(message))
+	// 同一消息：状态没变就不刷屏
+	warnOnce('接线缺失')
+	warnOnce('接线缺失')
+	assert.deepEqual(seen, ['接线缺失'])
+	// 状态迁移产生新消息，自然再报——dedup 键是文本，不是「报过一次就哑」
+	warnOnce('接线缺失（另一处）')
+	assert.deepEqual(seen, ['接线缺失', '接线缺失（另一处）'])
+	// 去重集闭在工厂里：前缀由调用方闭进日志函数，两个工厂对同一消息各自报一次
+	const other = []
+	const second = makeWarnOnce((message) => other.push(`[memory] ${message}`))
+	second('接线缺失')
+	second('接线缺失')
+	assert.deepEqual(other, ['[memory] 接线缺失'])
+	assert.deepEqual(seen, ['接线缺失', '接线缺失（另一处）'])
 })

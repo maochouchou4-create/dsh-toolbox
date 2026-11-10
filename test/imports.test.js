@@ -236,6 +236,7 @@ const NODE_FS_DIRECT = new Map([
 	['value.js', false],
 	['memory-root.js', false],
 	['fs-guard.js', false],
+	['warn-once.js', false],
 	['index.js', false],
 ])
 
