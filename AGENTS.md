@@ -63,6 +63,7 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 lib/index.js            胶水：工具走 FEATURES 表、两件注入各自 try/catch 隔离；configShape 并集
 lib/paths.js            跨工具族路径原语（~ 展开）
 lib/value.js            跨工具族值判据原语（isNonBlankString）
+lib/warn-once.js        告警去重工厂（makeWarnOnce：两件注入共用「同消息只报一次」）
 lib/working-dir.js      会话活目录收口（session.header.cwd，工具与注入同读一处）
 lib/fs-guard.js         错误码词表与族标识（codedFsError，零 node:fs）
 lib/memory-root.js      记忆根默认值/归一、store 落点、错误文案归一（零 node:fs）
@@ -133,3 +134,6 @@ node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs <记忆根> <机�
   相同」的提交自动 patch 升一位并进同一次提交（壳 `scripts/bump-version.mjs`／判定 `scripts/version.mjs`／
   单测 `test/bump-version.test.js`）；破坏性改动依上一条先 `npm run bump -- minor` 再提交，钩子见版本已变
   就不碰。**新克隆一次性启用：`git config core.hooksPath .githooks`**——没启用就是不跑，等于回到靠记性。
+- `.githooks/pre-push` 同一条启用（同一个 hooksPath）：push 前自动跑全量 `npm test`，
+  不绿不放行——完成标准第一条由它结构保证；绕过＝`git push --no-verify`（这次 push
+  的代码没被测试背书）。

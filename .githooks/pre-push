@@ -1,0 +1,5 @@
+#!/bin/sh
+# push 闸：全量测试不绿不放行——「完成标准＝npm test 绿」从人脑规则升成结构保证。
+# 与 pre-commit 同目录，启用同一条：git config core.hooksPath .githooks（每克隆一次）。
+# 真要绕过：git push --no-verify（这次 push 的代码就没被测试背书）。
+exec npm test
