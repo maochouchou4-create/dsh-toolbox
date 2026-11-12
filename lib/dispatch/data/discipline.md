@@ -12,7 +12,7 @@
 
 - 分工形态：方案前的调查与材料阅读主会话亲自做；施工／验证链／直查／多路复核一律派 subagent，修法＋锚点＋验证命令必须主会话给全，不让子代理自己想怎么做。多路＝并行后台逐只派发、完工通知逐只收，可对单只 send_message 追问。workflow 只在用户点名或需多阶段编排时用（编排坑：`parallel()` 只吃零参函数——map 回调里直接调 agent() 即抛 `item 0 is not a function`，须写 `() => agent(...)`）。
 - 派 subagent 必点名模型与强度（workflow 的 agent() 同规）：provider/model 一律显式点名，取值＝cordis.patch.yml `subagent-model-selection-settings` allowedModels 现值（省略＝继承父路线且继承不受 allowedModels 拦＝绕开用户指定路线，禁止省略）；reasoning_effort 按活计自点名，档位现查，不写死映射。
-- 异步总则（仅主会话）：预估超一分钟的工作（测试/构建/长命令/复核/子代理/workflow）一律异步发出，完工通知到达后收；等待方式自选（用户随时可打断）。subagent 与 workflow 的 agent() 内部相反：长命令一律前台跑完，起了后台 job 须回合内收完——回合结束＝job 消亡。
+- 子代理命令纪律（subagent 与 workflow 的 agent() 内部）：长命令一律前台跑完；起了后台 job 须回合内收完——回合结束＝job 消亡。
 - 命令卫生：测试/长命令输出重定向 /tmp 下再看，勿用 grep/tail 管道包裹（吃 exit code）；后台任务停止后清理残留进程；整理/迁移禁止 rm 迁入目标目录（跨设备 mv 不可恢复）。
 - 调试与回归：调试看与动＝playwright-cli 交互式（attach 会话＋run-code 现场驱动、现场读结果）；造数＝现成原语单行调用（gui-test db_common/probe_common）；一次性调试脚本（手写壳文件、自造探针 js）不写。跑全量/回归（full_regression、b 系冒烟、e2e 批）前先清场：关掉本会话开的调试会话、杀掉自起临时服务（代理/静态站）、登出调试期间登过的测试账号（同账号在线会抢登录态与布场指派→e2e 假红）；e2e 跑批窗口内保持清场——禁开调试会话、禁改 renderer 源码。
 
