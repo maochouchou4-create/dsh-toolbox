@@ -100,6 +100,18 @@ test('纪律文本：占位符恰一处', () => {
 	assert.equal(data.discipline.split(TEMPLATES_PLACEHOLDER).length - 1, 1, '模板路径占位必须恰一处')
 })
 
+/** 纪律字节预算：注入块每回合在场，防无界膨胀（数值＝现文实测 6.1KB＋约 4KB 余量，够再装两三条；超线先收敛内容，不自动抬线）。 */
+const DISCIPLINE_MAX_BYTES = 10000
+
+test('纪律文本：字节预算（超线先收敛内容再加规则，确需抬线在 commit 写明新实测值与理由）', () => {
+	const { data } = loadDispatchData()
+	const bytes = Buffer.byteLength(data.discipline, 'utf8')
+	assert.ok(
+		bytes <= DISCIPLINE_MAX_BYTES,
+		`discipline.md 实测 ${bytes}B 超预算 ${DISCIPLINE_MAX_BYTES}B——先收敛内容，不自动抬线`,
+	)
+})
+
 test('埋雷体检：模板骨架改坏——结构断言必红，加载期不拦（纪律照常注入）', (t) => {
 	withDataDir(t, (dir) => {
 		assert.doesNotThrow(() => assertTemplateShape(loadDispatchData(dir).data.templates), '拷来的真数据先要过结构断言')

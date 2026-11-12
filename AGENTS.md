@@ -6,12 +6,12 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 ## 开工前
 
 - **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/`）＋两件注入件
-  （`lib/memory/` 记忆索引／`lib/dispatch/` 跑批纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
-  （`discipline.md` 跑批纪律全文，每回合注入／`templates.md` 人读模板单文件：方案规范、三份
+  （`lib/memory/` 记忆索引／`lib/dispatch/` 工作流纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
+  （`discipline.md` 工作类流程规则全文——日常工作形态＋决策级跑批流程，AGENTS.md 只留行为契约；每回合注入／`templates.md` 人读模板单文件：方案规范、三份
   brief、形态词表、横切判据、安全五问（全仓唯一载体）、不做清单）。
   **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
   `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／`{templates}` 恰一次）；
-  `templates.md` 的结构断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内）在 `test/dispatch-data.test.js`
+  `templates.md` 的结构断言与纪律字节预算断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内、discipline.md 字节预算 10KB 上限）在 `test/dispatch-data.test.js`
   ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
   注入的注册形状。纪律注入读失败只 warn 一条并跳过本回合，不阻断请求。
 - **插件改动：新会话即新代，宿主不必重启**。宿主（web 形态）对插件 `lib/*.js` 逐会话导入：
@@ -36,7 +36,7 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
   修法＝改撞名条目的 frontmatter title 键（title 与文件名本就是两回事），不是删条目。
 - 写侧围栏：memory 写改删走宿主 write/edit/rm，受会话文件策略围栏——记忆根在工作区之外时写记忆
   才要求 `danger-full-access`；两机记忆根都指 agent-data 仓、落在常用工作区内，常规会话不受围栏
-  影响。跑批纪律不写盘：批次的记账落在记忆条目，插件没有第二份过程数据档。
+  影响。工作流不写盘：批次的记账落在记忆条目，插件没有第二份过程数据档。
 
 ## see_image 通道
 
@@ -70,7 +70,7 @@ lib/memory-root.js      记忆根默认值/归一、store 落点、错误文案�
 lib/memory/             记忆注入＋自检：index.js 装配；core/frontmatter/patterns/naming/assemble/segments 纯模块
 lib/see-image/          识图工具：index.js 装配＋route.js 路由现读＋vision.js 嗅探/终态映射（直连 node:fs）
 lib/client.js           浏览器半：插件页「识图路由」卡（经典脚本、createElement、无构建）
-lib/dispatch/           跑批纪律注入：discipline.js＋data.js（加载守卫）＋data/（discipline.md／templates.md）
+lib/dispatch/           工作流纪律注入：discipline.js＋data.js（加载守卫）＋data/（discipline.md／templates.md）
 test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-memory-index.mjs 薄壳
 ```
 
