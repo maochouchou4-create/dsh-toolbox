@@ -310,19 +310,19 @@ test('description 带日期戳：只由那一项判红（判据问 patterns 单�
 	assert.ok(!violationIds(stdout).includes('entry-index-line'), stdout)
 })
 
-test('单条字符数超失控保护：只由那一项判红（超线注入侧会截断丢尾）', () => {
+test('单条字符数超体量红线：只由那一项判红（超线＝该收敛或拆条的膨胀形态）', () => {
 	const root = join(base, 'runaway')
 	mkdirSync(root, { recursive: true })
 	seedSegment(root, SHARED_SEGMENT, [])
 	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
-	// 字符数由常量推：正文比失控保护还长就必超（frontmatter 只占几十字符）。正文是单行
-	// 长串，行数黄线不沾、节长红线不沾——deepEqual 钉的正是「只有失控那一项判红」
+	// 字符数由常量推：正文比体量红线还长就必超（frontmatter 只占几十字符）。正文是单行
+	// 长串，行数黄线不沾、节长红线不沾——deepEqual 钉的正是「只有体量红线那一项判红」
 	seedRaw(root, 'home', 'huge.md', `---\ntitle: 失控条目\ndescription: 触发词\n---\n\n${'字'.repeat(RUNAWAY_CEILING)}\n`)
 	const { code, stdout } = runScript([root, 'home'])
 	assert.equal(code, 1, `失控条目须以 1 退出：\n${stdout}`)
 	assert.deepEqual(violationIds(stdout), ['entry-runaway'], `只该由这一项判红：\n${stdout}`)
 	assert.ok(stdout.includes('huge.md'), stdout)
-	assert.ok(stdout.includes(`超失控保护 ${RUNAWAY_CEILING}`), stdout)
+	assert.ok(stdout.includes(`超体量红线 ${RUNAWAY_CEILING}`), stdout)
 })
 
 test('黄线只提示不判红：正文行数过黄线时退出 0 且「全部达标」，提示段单独列出', () => {

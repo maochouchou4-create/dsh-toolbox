@@ -9,9 +9,9 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, RUNAWAY_CEILING, applyIndexBudget } from '../lib/memory/core.js'
+import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, applyIndexBudget } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, resolveRoot } from '../lib/memory-root.js'
-import { HEAD_CHUNK_BYTES, composeMemory, readCapped, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
+import { HEAD_CHUNK_BYTES, composeMemory, readEntryHead, scanSegment } from '../lib/memory/assemble.js'
 import { FRONTMATTER_HEAD_MAX_BYTES } from '../lib/memory/frontmatter.js'
 import { isEntryName } from '../lib/memory/naming.js'
 import { readOptions } from '../scripts/checks.mjs'
@@ -57,39 +57,6 @@ test('跨入口根解析同形：显式空串经脚本入参回落后与 resolve
 	assert.equal(script.machineGiven, false, '机器 id 同理：空串按没给算')
 	assert.deepEqual(resolveRoot(script.memoryRoot), resolveRoot(''), '脚本入参回落到的根 ≡ resolveRoot 直接判空的根')
 	assert.deepEqual(resolveRoot(script.memoryRoot), resolveRoot(DEFAULT_MEMORY_ROOT), '两边都落到默认根，不是进程 cwd')
-})
-
-test('readCapped：文件不存在返回 missing（常态，非错误）', () => {
-	assert.deepEqual(readCapped(join(base, 'no-such-file.md')), { status: 'missing' })
-})
-
-test('readCapped：小文件 ok 且不截断', () => {
-	const p = join(base, 'small.md')
-	writeFileSync(p, '内容很短', 'utf8')
-	const r = readCapped(p)
-	assert.equal(r.status, 'ok')
-	assert.equal(r.truncated, false)
-	assert.equal(r.origChars, '内容很短'.length)
-	assert.equal(r.text, '内容很短')
-})
-
-test('readCapped：超失控保护时头部截断并显式标注', () => {
-	const p = join(base, 'huge.md')
-	writeFileSync(p, 'x'.repeat(RUNAWAY_CEILING + 5000), 'utf8')
-	const r = readCapped(p)
-	assert.equal(r.status, 'ok')
-	assert.equal(r.truncated, true)
-	assert.equal(r.origChars, RUNAWAY_CEILING + 5000)
-	assert.ok(r.text.includes(`仅注入前 ${RUNAWAY_CEILING} 字符`), '截断标注必须显式在场')
-	assert.ok(r.text.length > RUNAWAY_CEILING && r.text.length < RUNAWAY_CEILING + 200, '只多出标注行')
-})
-
-test('readCapped：文件在但读失败返回 read-error（目录当文件喂入＝EISDIR 确定性触发）', () => {
-	const dir = join(base, 'a-directory')
-	mkdirSync(dir)
-	const r = readCapped(dir)
-	assert.equal(r.status, 'read-error')
-	assert.ok(typeof r.message === 'string' && r.message.length > 0)
 })
 
 test('scanSegment：read 缺参当场抛编程错误，不报 read-error（漏传是调用方的错，不是语料的病态）', () => {
@@ -264,6 +231,9 @@ test('composeMemory：非本机段有条目时只出尾行不装索引（对机�
 test('composeMemory：输出不含任何规则块（写侧纪律已并入 AGENTS.md，注入块只装索引）', () => {
 	const { root, store } = fixture('compose-no-rules')
 	writeFileSync(join(store, 'a-topic.md'), entry('共享条目', '触发词'), 'utf8')
+	// 夹具里真的铺一份旧写侧文件：断言「不含规则块」由此获得判别力——若组装回植了规则块，
+	// 这份文件的标题字样必然漏进输出，用例当场红；盘上没有这份文件时该断言只是恒真
+	writeFileSync(join(store, 'WRITING.md'), '# 记忆书写（写侧纪律）\n写侧纪律正文', 'utf8')
 	const text = composeMemory({ memoryRoot: root, machine: 'home' })
 	assert.ok(!text.includes('记忆书写'), '规则块的节标题不得出现')
 	assert.ok(!text.includes('写侧纪律'), '写侧纪律不再随索引注入')

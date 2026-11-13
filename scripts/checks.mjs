@@ -37,8 +37,8 @@ import { duplicateSectionHeadings, forEachWikilinkMatch, sectionDupNotice, secti
 import { isNonBlankString } from '../lib/value.js'
 
 /**
- * 条目级防膨胀两条线。判据只服务本脚本：注入侧不按它们截断（那里只有失控保护与索引
- * 预算两族），故常量不进 core.js——「哪条线在运行期有牙齿」靠分居表达，混进同一处
+ * 条目级防膨胀两条线。判据只服务本脚本：注入侧不按它们截断（那里只有索引
+ * 预算一族），故常量不进 core.js——「哪条线在运行期有牙齿」靠分居表达，混进同一处
  * 就要靠读注释分辨。
  *
  * - 单条黄线（ENTRY_LINE_YELLOW）：条目正文行数超线只出提示不判红。定档＝排除存量
@@ -129,8 +129,8 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 				),
 		}
 	})
-	// 正文族检查（节长、死链、失控、节重名）查的是整篇，头读那份窗口看不到——这一趟
-	// 自己整篇读（与读侧失控读取同一读法；读法是消费方的知识）。逐文件降级：读不动的
+	// 正文族检查（节长、死链、体量红线、节重名）查的是整篇，头读那份窗口看不到——这一趟
+	// 自己整篇读。逐文件降级：读不动的
 	// 条目已由 entry-readable 认领 read-error，这里跳过不重复报。
 	// 重名判定与节长度量各问 patterns 的同一份节判定，不在脚本里自拼「什么算一节」；
 	// 死链判据问 segments 的全库 stem 集，头扫描的段清单就是它的段界
@@ -350,12 +350,12 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-runaway',
-		label: '单条字符数在失控保护内（超线注入侧会截断丢尾，且只留一句截断标注）',
-		guard: `RUNAWAY_CEILING=${RUNAWAY_CEILING}（字符，与注入侧 readCapped 同一份常量）`,
+		label: '单条字符数在体量红线内（超线＝该收敛或拆条的膨胀形态）',
+		guard: `RUNAWAY_CEILING=${RUNAWAY_CEILING}（字符，单源常量在 lib/memory/core.js）`,
 		run: (site) =>
 			site.entries
 				.filter((entry) => entry.chars > RUNAWAY_CEILING)
-				.map((entry) => `${entry.kind}：条目 ${entry.name} ${entry.chars} 字符超失控保护 ${RUNAWAY_CEILING}（注入会被截断丢尾）——收敛正文或拆条`),
+				.map((entry) => `${entry.kind}：条目 ${entry.name} ${entry.chars} 字符超体量红线 ${RUNAWAY_CEILING}——收敛正文或拆条`),
 	},
 	{
 		id: 'entry-dead-link',
