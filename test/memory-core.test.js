@@ -1,7 +1,7 @@
 /**
  * dsh-memory 读侧单测（node:test，零宿主依赖）：记忆根路由、读取状态、索引预算、
  * 扫段派生索引、注入块组装。
- * 夹具在临时目录搭建，测后清理；写侧（upsert/edit/delete/lint）在 write.test.js。
+ * 夹具在临时目录搭建，测后清理。
  * 每个用例独占一个根目录——避免目录内容互相牵连。
  */
 import { before, test } from 'node:test'
@@ -157,7 +157,6 @@ test('注入装配的读法封顶：frontmatter 超 64KB 才闭合的条目不�
 
 test('scanSegment：names 是 readdir 全量、entries 逐条过命名判据（非条目名进 names 不进 entries）', () => {
 	const { store } = fixture('scan-names-vs-entries')
-	writeFileSync(join(store, 'WRITING.md'), '# 纪律\n', 'utf8')
 	writeFileSync(join(store, 'MEMORY.md'), '# 旧索引\n', 'utf8')
 	writeFileSync(join(store, 'note.txt'), '不是条目\n', 'utf8')
 	writeFileSync(join(store, 'ok.md'), entry('条目', '触发词'), 'utf8')
@@ -165,7 +164,7 @@ test('scanSegment：names 是 readdir 全量、entries 逐条过命名判据（�
 	const scan = scanSegment(store, { read: (path) => readFileSync(path, 'utf8') })
 	assert.deepEqual(scan.names, readdirSync(store).sort(), 'names ≡ readdir 全量（含非条目名）：离线自检的条目清点与保留文件判定都问它这一份')
 	assert.ok(scan.entries.every((one) => isEntryName(one.name)), 'entries 里逐条都是条目名：命名判据只有一处，非条目名一个都不该混进来')
-	assert.deepEqual(scan.entries.map((one) => one.name), ['ok.md'], '四条非条目名各不进 entries')
+	assert.deepEqual(scan.entries.map((one) => one.name), ['ok.md'], '三条非条目名各不进 entries')
 })
 
 test('scanSegment：kebab 名进 entries，非 kebab 名与「合 kebab 的保留名」都不进（读侧判据与写侧同一份）', () => {
@@ -193,31 +192,27 @@ test('isEntryName：规范形＝小写 kebab 且非保留名，两侧条件缺�
 	assert.equal(isEntryName('foo-.md'), true, '尾中划线：现判据放行')
 	assert.equal(isEntryName('foo--bar.md'), true, '连续中划线：现判据放行')
 	assert.equal(isEntryName('123.md'), true, '纯数字：现判据放行')
-	// 这一格是本判据的第二半条件：memory.md／writing.md 能过 kebab 正则，只有保留名排除拦得住；
-	// 少了那半，退役的索引文件与写侧纪律会以条目身份进索引
+	// 这一格是本判据的第二半条件：memory.md 能过 kebab 正则，只有保留名排除拦得住；
+	// 少了那半，退役的索引文件会以条目身份进索引
 	assert.equal(isEntryName('memory.md'), false, '扣掉保留名条件即复活退役索引名')
-	assert.equal(isEntryName('MEMORY.md'), false)
-	assert.equal(isEntryName('WRITING.md'), false)
+	assert.equal(isEntryName('MEMORY.md'), false, '保留名排除＋大写名不合 kebab 形，两半各拦一道')
 })
 
 test('composeMemory：空树返回空串（不注入）', () => {
 	assert.equal(composeMemory({ memoryRoot: join(base, 'empty-tree'), machine: 'home' }), '')
 })
 
-test('composeMemory：两段齐备时单串含头＋规则＋共享段＋本机段，块序正确', () => {
+test('composeMemory：两段齐备时单串含头＋共享段＋本机段，块序正确', () => {
 	const { root, store, machineDir } = fixture('compose-full')
-	writeFileSync(join(store, 'WRITING.md'), '写侧纪律正文', 'utf8')
 	writeFileSync(join(store, 'a-topic.md'), entry('共享条目', '触发词／召回词'), 'utf8')
 	writeFileSync(join(machineDir, 'b-topic.md'), entry('本机条目', '另一组触发词'), 'utf8')
 
 	const text = composeMemory({ memoryRoot: root, machine: 'home' })
 	const headerAt = text.indexOf('[记忆索引]')
-	const rulesAt = text.indexOf('## 记忆书写（写侧纪律）')
 	const sharedAt = text.indexOf('## 共享（跨机同步）')
 	const machineAt = text.indexOf('## 本机（home）')
-	assert.ok(headerAt !== -1 && rulesAt !== -1 && sharedAt !== -1 && machineAt !== -1)
-	assert.ok(headerAt < rulesAt && rulesAt < sharedAt && sharedAt < machineAt, '块序：头→规则→共享→本机')
-	assert.ok(text.includes('写侧纪律正文'))
+	assert.ok(headerAt !== -1 && sharedAt !== -1 && machineAt !== -1)
+	assert.ok(headerAt < sharedAt && sharedAt < machineAt, '块序：头→共享→本机')
 	assert.ok(text.includes(`基目录：${store}`) && text.includes(`基目录：${machineDir}`))
 	assert.ok(text.includes('- [共享条目](a-topic.md) — 触发词／召回词'), '索引行由 frontmatter 派生')
 	assert.ok(text.includes('- [本机条目](b-topic.md) — 另一组触发词'))
@@ -266,12 +261,13 @@ test('composeMemory：非本机段有条目时只出尾行不装索引（对机�
 	assert.ok(!再装.includes('machines/laptop'), '空段不占尾行——每台机器都建了目录时尾行会变成一串零')
 })
 
-test('composeMemory：缺 WRITING.md 时规则块省略、共享段照常（互不牵连）', () => {
-	const { root, store } = fixture('compose-no-writing')
+test('composeMemory：输出不含任何规则块（写侧纪律已并入 AGENTS.md，注入块只装索引）', () => {
+	const { root, store } = fixture('compose-no-rules')
 	writeFileSync(join(store, 'a-topic.md'), entry('共享条目', '触发词'), 'utf8')
 	const text = composeMemory({ memoryRoot: root, machine: 'home' })
-	assert.ok(!text.includes('记忆书写'))
-	assert.ok(text.includes('- [共享条目](a-topic.md) — 触发词'))
+	assert.ok(!text.includes('记忆书写'), '规则块的节标题不得出现')
+	assert.ok(!text.includes('写侧纪律'), '写侧纪律不再随索引注入')
+	assert.ok(text.includes('- [共享条目](a-topic.md) — 触发词'), '索引段照常')
 })
 
 test('composeMemory：条目名被目录占用 → onIssue 报 read-error、好条目照常', () => {
@@ -344,32 +340,6 @@ test('composeMemory：条目头跨一个分块边界且边界劈开三字节汉�
 	assert.ok(!text.includes('�'), '半个字不许变成替换符')
 })
 
-test('composeMemory：没传 onIssue 且纪律块读不动 → 不抛、纪律块静默缺席', () => {
-	const { root, store } = fixture('compose-writing-no-reporter')
-	// 与下一条同一格支路、另一个前提：调用方压根没给上报口（胶水层不传、脚本传）。缺省兜底
-	// 就守在这一格——删掉它这里就是 TypeError: report is not a function，而注入块连同索引
-	// 一起当场炸掉。判据是「不抛」，不是「报出了什么」：没上报口时按定义报不出去。
-	mkdirSync(join(store, 'WRITING.md'), { recursive: true })
-	writeFileSync(join(store, 'topic.md'), entry('好条目', '触发词'), 'utf8')
-	const text = composeMemory({ memoryRoot: root, machine: 'home' })
-	assert.ok(!text.includes('## 记忆书写'), '读不动的纪律块不进注入块')
-	assert.ok(text.includes('- [好条目](topic.md) — 触发词'), '上报口缺席不得牵连索引块——这一格就是兜底存在的理由')
-})
-
-test('composeMemory：写侧纪律块读不动 → onIssue 报 read-error、纪律块缺席但不牵连索引块', () => {
-	const { root, store } = fixture('compose-writing-read-error')
-	// WRITING.md 是目录：existsSync 为真、readFileSync 抛 EISDIR——纪律块读失败与条目读
-	// 失败是同一个出口的另一次触发，纪律被静默丢掉比超预算更难查，故这一格必须报出来
-	mkdirSync(join(store, 'WRITING.md'), { recursive: true })
-	writeFileSync(join(store, 'topic.md'), entry('好条目', '触发词'), 'utf8')
-	const issues = []
-	const text = composeMemory({ memoryRoot: root, machine: 'home', onIssue: (kind, path, detail) => issues.push([kind, path, detail]) })
-	assert.deepEqual(issues.map(([kind, path]) => [kind, path.endsWith('WRITING.md')]), [['read-error', true]], `须报到纪律块的文件名，实际 ${JSON.stringify(issues)}`)
-	assert.ok(issues[0][2].length > 0, 'detail 携带错误信息')
-	assert.ok(!text.includes('## 记忆书写'), '读不动的纪律块不进注入块')
-	assert.ok(text.includes('- [好条目](topic.md) — 触发词'), '纪律块读失败不得牵连索引块')
-})
-
 test('composeMemory：条目名被悬空软链占位 → statSync 抛错走 read-error（与同名目录那格分开）', () => {
 	const { root, store } = fixture('compose-stat-error')
 	writeFileSync(join(store, 'good.md'), entry('好条目', '触发词'), 'utf8')
@@ -422,21 +392,6 @@ test('composeMemory：原地改写条目（只改文件内容，不动增删改�
 	const second = composeMemory({ memoryRoot: root, machine: 'home' })
 	assert.ok(second.includes('- [新标题](kept.md) — 新触发词'), '原地改写下一趟即新：触发词当场换血')
 	assert.ok(!second.includes('原触发词'), '旧触发词不得残留')
-})
-
-test('composeMemory：WRITING.md 改动（同长度改写）下一趟即新', () => {
-	const { root, store } = fixture('compose-rules-rewrite')
-	const rules = join(store, 'WRITING.md')
-	const 原文 = '写侧纪律正文甲'
-	const 改写文 = '写侧纪律正文乙'
-	assert.equal(Buffer.byteLength(原文, 'utf8'), Buffer.byteLength(改写文, 'utf8'), '两段文字逐字节等长——同长度改写是尺寸维看不出的那一档')
-	writeFileSync(rules, 原文, 'utf8')
-	const first = composeMemory({ memoryRoot: root, machine: 'home' })
-	assert.ok(first.includes(原文), '改写前旧纪律正文在场')
-	writeFileSync(rules, 改写文, 'utf8')
-	const second = composeMemory({ memoryRoot: root, machine: 'home' })
-	assert.ok(second.includes(改写文), '同长度改写下一趟即新：纪律文件每趟现读')
-	assert.ok(!second.includes(原文), '旧纪律正文不得残留')
 })
 
 test('composeMemory：机器身份传保留字 shared 或大写即抛（机器 id 不是段值，没有 shared 这一档）', () => {
@@ -534,12 +489,11 @@ test('composeMemory：非 kebab 名的 .md 文件零注入（Foo.md 不进索引
 	assert.ok(!text.includes('大写条目') && !text.includes('Foo.md'), '非 kebab 名零注入：读侧与写侧同一份判据，不再有「读侧进得了索引、写侧拒写」的两套说法')
 })
 
-test('composeMemory：段内只有保留文件时该段安静省略（不注入 header-only 噪声块）', () => {
+test('composeMemory：段内只有保留文件时该段安静省略（块为空，宿主滤除）', () => {
 	const { root, store } = fixture('compose-only-reserved')
-	writeFileSync(join(store, 'WRITING.md'), '写侧纪律正文', 'utf8')
 	writeFileSync(join(store, 'MEMORY.md'), '# 共享段索引\n', 'utf8')
 	const text = composeMemory({ memoryRoot: root, machine: 'home' })
-	assert.ok(text.includes('写侧纪律正文'), '规则块照常')
+	assert.equal(text, '', '无条目的共享段省略且无规则块可装：整块为空串')
 	assert.ok(!text.includes('## 共享（跨机同步）'), '无条目的共享段省略')
 	assert.ok(!text.includes('## 本机'), '无条目的本机段省略')
 })
@@ -724,7 +678,6 @@ test('composeMemory：同一段行、字符两重都撞 → 块尾同一段名�
 
 test('composeMemory：逐段截断真发生 → 块尾收一句总的（几段、切在哪一重）；没截断就不出现那行', () => {
 	const { root, store, machineDir } = fixture('compose-cut-note')
-	writeFileSync(join(store, 'WRITING.md'), '写侧纪律正文', 'utf8')
 	for (let i = 0; i < INDEX_LINE_BUDGET + 4; i += 1) {
 		writeFileSync(join(store, `h${String(i).padStart(3, '0')}.md`), entry(`共享${i}`, '触发词'), 'utf8')
 		writeFileSync(join(machineDir, `w${String(i).padStart(3, '0')}.md`), entry(`本机${i}`, '触发词'), 'utf8')

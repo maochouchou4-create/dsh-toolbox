@@ -58,9 +58,6 @@ const segmentDir = (memoryRoot, segment) => resolveScopeDir(resolveRoot(memoryRo
 function seedSegment(memoryRoot, segment, lines) {
 	const dir = segmentDir(memoryRoot, segment)
 	mkdirSync(dir, { recursive: true })
-	// 共享段连同 WRITING.md 一起铺：真实语料里它与共享段同在，缺了它「写侧纪律读不动」就是
-	// 一条真的判红（规则块在运行期被 warn 掉，块随之变小），而这些用例要判的是别的项
-	if (segment === SHARED_SEGMENT) writeFileSync(join(dir, 'WRITING.md'), '# 写侧纪律\n\n测试语料占位。\n', 'utf8')
 	lines.forEach((line, index) => {
 		const file = `topic-${index}.md`
 		const [, title, , description] = /^- \[(.+)\]\((.+)\) — (.*)$/.exec(line)
@@ -112,8 +109,8 @@ test('超预算语料：退出 1，报告里出现的每个检查项都在自报
 	// padding 按单行预算减去**该条**的前缀算出，条目各自都恰好落在行预算内：这条用例钉的
 	// 才是整块定档与段内字符预算那两项。定档一改条数跟着变，用例钉的仍是「超了就判红」。
 	// 造语料要按**段数**算而不是按整块算：逐段预算在运行期先截一段（单段至多
-	// INDEX_CHAR_BUDGET 字符），一段顶到头也只够到「写侧纪律＋一段」的量级，顶不过整块
-	// 那条线——两段各顶到头再加规则块才顶得过去（整块线余量是按现状块算的，现状块两段都
+	// INDEX_CHAR_BUDGET 字符），一段顶到头也只够到一段的量级，顶不过整块
+	// 那条线——两段各顶到头才顶得过去（整块线余量是按现状块算的，现状块两段都
 	// 没到顶）。条数按每段能把段内字符预算吃满来取，判据仍是常量推出来的
 	const perSegment = Math.ceil(INDEX_CHAR_BUDGET / (longLineOf(0).length + 1)) + 1
 	const lines = Array.from({ length: perSegment }, (_, index) => longLineOf(index))
@@ -247,8 +244,7 @@ test('段内重名结论的覆盖面：title 判不了的条目一并说出来�
 test('条目内 ## 节重名：只由那一项判红（标题是条目内唯一的节锚，重名即指不出是哪一节）', () => {
 	const root = join(base, 'section-dup')
 	mkdirSync(root, { recursive: true })
-	// 共享段铺一条合规条目（seedSegment 连带铺 WRITING.md）：本用例只该由节重名那项判红，
-	// 不许让「写侧纪律读不动」混进来
+	// 共享段铺一条合规条目：本用例只该由节重名那项判红，别项不得混进来
 	seedSegment(root, SHARED_SEGMENT, [])
 	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
 	// 重名节条目（整篇读才看得到）＋不同名的多节条目（不得误伤）＋无节条目（存量常态不报）
@@ -420,7 +416,6 @@ test('段里只有非 kebab 名的 .md：判红指向改名而不是指路接线
 	const root = join(base, 'non-kebab-only')
 	const dir = segmentDir(root, SHARED_SEGMENT)
 	mkdirSync(dir, { recursive: true })
-	writeFileSync(join(dir, 'WRITING.md'), '# 写侧纪律\n\n测试语料占位。\n', 'utf8')
 	// 段里躺着 .md、一条条目都没扫到：这不是「记忆根没接线」，是命名判据把它们全挡在门外。
 	// 指路「先接线」会把读报告的人送去修一条本来就好的线
 	writeFileSync(join(dir, 'Foo.md'), '---\ntitle: 大写条目\ndescription: 触发词\n---\n\n正文。\n')

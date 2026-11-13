@@ -5,29 +5,23 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 
 ## 开工前
 
-- **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/`）＋两件注入件
-  （`lib/memory/` 记忆索引／`lib/dispatch/` 工作流纪律）。派发规则面＝`lib/dispatch/data/` 两份文件
-  （`discipline.md` 工作类流程规则全文——日常工作形态＋决策级跑批流程，AGENTS.md 只留行为契约；每回合注入／`templates.md` 人读模板单文件：方案规范、三份
-  brief、形态词表、横切判据、安全五问（全仓唯一载体）、不做清单）。
-  **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
-  `discipline.md` 的加载期守卫在 `lib/dispatch/data.js`（非空／`{templates}` 恰一次）；
-  `templates.md` 的结构断言与纪律字节预算断言（骨架七节＋安全专项节各恰一次、五问锚点只在安全小节内、discipline.md 字节预算 10KB 上限）在 `test/dispatch-data.test.js`
-  ——改模板不挡加载（纪律照样注入），测试红指回改坏处；`test/dispatch-assembly.test.js` 钉住纪律
-  注入的注册形状。纪律注入读失败只 warn 一条并跳过本回合，不阻断请求。
+- **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/` 识图转述）＋一件
+  注入件（`lib/memory/` 记忆索引）。**数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）
+  随新会话加载，运行中会话保持旧代**。
 - **插件改动：新会话即新代，宿主不必重启**。宿主（web 形态）对插件 `lib/*.js` 逐会话导入：
   宿主进程不重启，新起会话（含 subagent）即加载盘上当前代码；运行中会话保持旧代到它结束。
   本会话不重启宿主（重启会掐断会话）；交付时报实际验到的，运行中会话的旧代行为不归本批背书。
   例外＝**装卸/替换已装包不换模块代**：`plugin_manager install_bundle D:\code\repos\dsh-toolbox`
   之后必须重启 dsh web 才激活。
 
-## memory 机制（写侧契约单源＝WRITING.md，此处只记它不载的）
+## memory 机制（写侧契约同改面＝插件三码件＋AGENTS.md 记忆书写节，此处只记它们不载的）
 
 - profile 接线（`~/.dsh/profiles/web/cordis.patch.yml` 的 `- id: dsh-toolbox` 行）：
   `machine: <机器名>`（小写字母数字与中划线）＋`memoryRoot: <agent-data 仓绝对路径>`
   （store＝memoryRoot/memory；两机都须显式配置）。
 - 四重预算在 `lib/memory/core.js` 声明（段内索引行数/字符、单条派生行、注入块整块）；数值别照抄
-  文档——`check:memory` 末尾自报当前定档与实测。整块超线**运行期不截**（截整块会连写侧纪律一起
-  截掉，规则被静默丢比超预算难查），只判红归离线自检。段真被截时块尾多一行
+  文档——`check:memory` 末尾自报当前定档与实测。整块超线**运行期不截**（截整块会整批静默丢
+  索引行，丢了比超预算难查），只判红归离线自检。段真被截时块尾多一行
   「本次注入有 N 段索引超预算已截断」；一段没截那行不出现。
 - `composeMemory` 每回合现读现算、不留任何跨回合结果：条目原地手改（改正文/触发词）下回合
   即见；实测成本对照模型调用无感（具体数字归 git 历史）。读侧诊断（frontmatter 不合规、重名
@@ -36,7 +30,7 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
   修法＝改撞名条目的 frontmatter title 键（title 与文件名本就是两回事），不是删条目。
 - 写侧围栏：memory 写改删走宿主 write/edit/rm，受会话文件策略围栏——记忆根在工作区之外时写记忆
   才要求 `danger-full-access`；两机记忆根都指 agent-data 仓、落在常用工作区内，常规会话不受围栏
-  影响。工作流不写盘：批次的记账落在记忆条目，插件没有第二份过程数据档。
+  影响。批次的记账落在记忆条目，插件没有第二份过程数据档。
 
 ## see_image 通道
 
@@ -60,22 +54,21 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 ## 结构（深模块口径）
 
 ```text
-lib/index.js            胶水：工具走 FEATURES 表、两件注入各自 try/catch 隔离；configShape 并集
+lib/index.js            胶水：工具走 FEATURES 表、注入件 try/catch 隔离；configShape 并集
 lib/paths.js            跨工具族路径原语（~ 展开）
 lib/value.js            跨工具族值判据原语（isNonBlankString）
-lib/warn-once.js        告警去重工厂（makeWarnOnce：两件注入共用「同消息只报一次」）
+lib/warn-once.js        告警去重工厂（makeWarnOnce：注入告警「同消息只报一次」）
 lib/working-dir.js      会话活目录收口（session.header.cwd，工具与注入同读一处）
 lib/fs-guard.js         错误码词表与族标识（codedFsError，零 node:fs）
 lib/memory-root.js      记忆根默认值/归一、store 落点、错误文案归一（零 node:fs）
 lib/memory/             记忆注入＋自检：index.js 装配；core/frontmatter/patterns/naming/assemble/segments 纯模块
 lib/see-image/          识图工具：index.js 装配＋route.js 路由现读＋vision.js 嗅探/终态映射（直连 node:fs）
 lib/client.js           浏览器半：插件页「识图路由」卡（经典脚本、createElement、无构建）
-lib/dispatch/           工作流纪律注入：discipline.js＋data.js（加载守卫）＋data/（discipline.md／templates.md）
 test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-memory-index.mjs 薄壳
 ```
 
-每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（dispatch 目录只有
-`registerDiscipline`；注入件同样按 `register(ctx, config)` 调）。胶水逐件独立 try/catch，一件起不来
+每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（注入件同样按
+`register(ctx, config)` 调）。胶水逐件独立 try/catch，一件起不来
 不连坐另一件。纯函数文件零宿主依赖、可直接单测；含宿主 import 的装配文件由 `test/imports.test.js`
 静态解析钉住接线（防搬家断链、防 inject 漏声明）；各文件为什么落在这层，理由在文件头注释。
 
@@ -84,8 +77,8 @@ test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-me
 契约散在三处，**改一处必须同改其余处**：注入装配面 `lib/memory/index.js`（注册与
 描述词）、判定与派生 `lib/memory/naming.js`（条目名与保留名判定）与
 `lib/memory/frontmatter.js`（frontmatter 契约与索引行派生）、跨仓的书写规范
-`D:\code\repos\agent-data\memory\WRITING.md`（每轮随索引注入进上下文的写侧
-纪律）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
+agent-data 的 AGENTS.md「记忆书写」节（规则唯一家——写侧纪律原文住在那里，
+不再随索引注入）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
 常量（防膨胀两条线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
 两处各抄一份。
 
@@ -111,8 +104,8 @@ node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs <记忆根> <机�
   `machines/<id>/` 不存在也以 1 退出（配了机器名却没有私有目录，先做条目迁移）。
   只有共享段的记忆根未给第二参不算错，命令末尾会提示未给机器 id。
   覆盖项与定档数值都以脚本自报为准（跑上面那条命令，末尾逐项打印 id／判据／守的常量）——本文件不手抄清单，脚本一改就会与手抄的那份分家。
-- **超线先收敛**：新增或改写记忆条目后若整块超定档，先并／删条目、精修 `WRITING.md`
-  散文；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
+- **超线先收敛**：新增或改写记忆条目后若整块超定档，先并／删条目、精修 AGENTS.md
+  「记忆书写」节散文；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
   「还能装几条新条目」换算（用实测的条目派生行均长），不按百分比——百分比定的线在语料
   一变就名不副实，实测按百分比定的线连一条新条目都装不下，等于每次写记忆都要抬线。
 - 识图面改动加一道端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，

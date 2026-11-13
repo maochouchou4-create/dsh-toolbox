@@ -1,7 +1,7 @@
 /**
  * 夹具自身的单测（node:test，零宿主依赖）：共用件一旦自己漂了，它服务的那二十几个文件会一起
  * 在与被测对象无关的原因上红，而症状（某个用例读不到目录）指向的是夹具不是生产。所以夹具
- * 也守自己那份契约：临时根两种时序都活到该活的那一刻、守卫当场抛、拷贝逐字节相等。
+ * 也守自己那份契约：临时根两种时序都活到该活的那一刻、守卫当场抛。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,9 +9,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFil
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-	DISPATCH_DATA_DIR,
-	DISPATCH_DATA_FILES,
-	copyDataFiles,
 	memoryTree,
 	removeTempRoot,
 	requireTestContext,
@@ -127,22 +124,3 @@ test('memoryTree：名字空或带分隔符当场拒（拼错的层级会造出�
 	assert.equal(memoryTree(base, 'no-machine').machineDir, undefined)
 })
 
-test('copyDataFiles：两份逐字节相等（文本面逐字节），跑两遍结果同', (t) => {
-	const dir = join(tempRoot(t, 'copy-data'), 'data')
-	copyDataFiles(dir)
-	const first = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
-	for (const [file, bytes] of first) {
-		assert.ok(bytes.equals(readFileSync(join(DISPATCH_DATA_DIR, file))), `${file} 与盘上逐字节相等：解析再序列化会改缩进与键序，而现读面那些用例比的就是键序敏感的形状`)
-	}
-	assert.deepEqual(DISPATCH_DATA_FILES.length, 2, '现读面两份（名单从生产侧现读，见 helpers 的 DATA_FILES 对齐）')
-	copyDataFiles(dir)
-	const second = new Map(DISPATCH_DATA_FILES.map((file) => [file, readFileSync(join(dir, file))]))
-	for (const [file, bytes] of first) {
-		assert.ok(second.get(file).equals(bytes), `${file} 拷两遍结果同（幂等：第二遍别把第一遍改坏）`)
-	}
-	// 子集那一档：只拷几份就只建那几份，少拷的那些不该被建出来（建出来＝读到的不是「不存在」）
-	const partial = join(tempRoot(t, 'copy-partial'), 'data')
-	copyDataFiles(partial, ['templates.md'])
-	assert.deepEqual(existsSync(join(partial, 'templates.md')), true)
-	assert.deepEqual(existsSync(join(partial, 'discipline.md')), false)
-})

@@ -155,8 +155,7 @@ test('浏览器半接线：模块 id／槽位键都取包名，词条五键齐�
 	const keys = Object.keys(seen.dicts.en)
 	assert.deepEqual(五键.filter((key) => !keys.includes(key)), [], '壳直读的五键缺一即渲染期崩')
 	assert.deepEqual(Object.keys(seen.dicts.zh).sort(), keys.sort(), '中英词条键集须一致')
-	// 卡片头部说明行逐字（与工具描述的「路由见插件页·识图路由」互为指路：那侧的同字断言在
-	// test/dispatch-assembly.test.js 的识图路由接线用例里）
+	// 卡片头部说明行逐字（与工具描述的「路由见插件页·识图路由」互为指路）
 	assert.equal(seen.dicts.zh.visionRouteTitle, '识图路由')
 	assert.equal(seen.dicts.zh.visionRouteNotice, '图未直达模型时由这条路由转述；保存即生效，无需重启')
 	// 交给壳的 props 面：labels 五键壳是直读的（缺一即渲染期崩），多传的键壳不认——两边都钉住。

@@ -60,7 +60,7 @@ function consumedServices(source) {
 test('胶水→工具模块的导入名在目标 export 语句内（防搬家断链）', () => {
 	const glue = readLib('index.js')
 	const imports = parseLocalImports(glue)
-	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js') && imports.has('./dispatch/discipline.js'), '胶水须装配 memory、see_image 与纪律注入三个模块')
+	assert.ok(imports.has('./memory/index.js') && imports.has('./see-image/index.js'), '胶水须装配 memory 与 see_image 两个模块')
 	for (const [specifier, names] of imports) {
 		const exported = parseExportNames(readLib(specifier.replace('./', '')))
 		for (const name of names) {
@@ -73,7 +73,6 @@ test('工具模块→纯函数文件的导入名在目标导出面内（动态�
 	const cases = [
 		['memory/index.js', ['registerMemory', 'configShape']],
 		['see-image/index.js', ['registerSeeImage', 'configShape']],
-		['dispatch/discipline.js', ['registerDiscipline']],
 	]
 	for (const [file, expected] of cases) {
 		const imports = parseLocalImports(readLib(file))
@@ -98,7 +97,6 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// see-image/vision.js），DOA 要到运行期才炸，而这条用例正是提前拦住它的那道
 	const used = new Set([
 		...consumedServices(glue),
-		...consumedServices(readLib('dispatch/discipline.js')),
 		...consumedServices(readLib('memory/index.js')),
 		...consumedServices(readLib('see-image/index.js')),
 		...consumedServices(readLib('see-image/vision.js')),
@@ -118,9 +116,6 @@ test('inject 声明与 ctx.* 消费双向对齐（少＝DOA，多＝噪音）', 
 	// 意味着 FEATURES 表动它不会红——少这一行 import 哪都在，调用线一断注入就静默死
 	// （症状＝会话里再无记忆块，而无任何报错），故把调用本身钉在源码上
 	assert.ok(stripComments(glue).includes('registerMemory(ctx, config)'), '胶水须独立装配记忆索引注入（registerMemory(ctx, config)）——写侧退役后它只剩注入，调用线一断即静默死')
-	// 纪律注入同理独立装配：注入件不占 FEATURES 行，FEATURES 表动它不会红。
-	// 调用线一断的症状是「纪律整块静默缺席」（会话照常跑，只是流程没人提），必须钉在源码上
-	assert.ok(stripComments(glue).includes('registerDiscipline(ctx, config)'), '胶水须独立装配跑批纪律注入（registerDiscipline(ctx, config)）——调用线一断纪律即静默缺席')
 	// 胶水的 FEATURES 表＝逐工具隔离的粒度：工具多一件而表里少一行，隔离就少一件；反过来，
 	// 多件工具写进一行就是「一件起不来，另几件陪葬」——逐工具隔离正是本层存在的理由
 	const features = [...glue.matchAll(/^\t\['([\w_]+)', (\w+)\],$/gm)].map((match) => [match[1], match[2]])
@@ -213,7 +208,7 @@ test('浏览器半的依赖面哨兵：client.js 静态 require 的每件都在�
  * 登记，而登记是有人看着的显式动作。
  *
  * 表只回答「每个文件各自直不直」。各 true 行的理由各是各的：读侧的失控读与段扫描
- * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件），data.js 读数据面。
+ * 刻意直连（枚举与体检遍历不经端口——宿主 fs 契约只管会话内文件）。
  */
 const NODE_FS_DIRECT = new Map([
 	['memory/frontmatter.js', false],
@@ -229,8 +224,6 @@ const NODE_FS_DIRECT = new Map([
 	['see-image/route.js', false],
 	// 浏览器半：前端静态模块表的注册脚本，只碰 window/require 面，不碰磁盘
 	['client.js', false],
-	['dispatch/discipline.js', false],
-	['dispatch/data.js', true],
 	['working-dir.js', false],
 	['paths.js', false],
 	['value.js', false],
@@ -241,11 +234,11 @@ const NODE_FS_DIRECT = new Map([
 ])
 
 /**
- * 定性表必须覆盖到的模块域：lib/ 根与四个子目录。每个域下的 .js 都要在表上定性过——
+ * 定性表必须覆盖到的模块域：lib/ 根与三个子目录。每个域下的 .js 都要在表上定性过——
  * 覆盖只到一部分时，「新增文件漏定性」就只在那部分成立，文档承诺比机器口径宽，
  * 读到的人会以为全仓都有牙。
  */
-const NODE_FS_SCOPES = ['.', 'memory', 'see-image', 'dispatch']
+const NODE_FS_SCOPES = ['.', 'memory', 'see-image']
 
 /**
  * node:fs 的同步调用面：全量符号集（fs 同步 API，含 openSync/readSync/closeSync 这类
@@ -298,7 +291,7 @@ test('lib/ 各模块的 node:fs 直连按文件判定（读侧与端口本尊显
 		if (direct) {
 			// 「必须」是反方向的那一半：只有它，文件哪天悄悄改走别的路（或多出新的直连模块）
 			// 才会红；没有它，单向禁令分不出「设计变更」与「漏改」
-			assert.ok(imports > 0, `${file} 按设计直连 node:fs（读侧失控读与段扫描、端口本尊、数据面读取各是自己的理由），导入面却没有登记`)
+			assert.ok(imports > 0, `${file} 按设计直连 node:fs（读侧失控读与段扫描、端口本尊各是自己的理由），导入面却没有登记`)
 			assert.ok(calls > 0, `${file} 登记了 node:fs 直连却一个调用也没有——导入面与实际用法脱节，这条判定对它空转`)
 		} else {
 			assert.equal(imports, 0, `${file} 出现 node:fs 导入——它登记为零直连（该经端口的经端口，装配层由宿主能力代劳）`)

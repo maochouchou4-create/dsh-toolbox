@@ -1,7 +1,7 @@
 /**
- * 测试夹具的共用件：条目正文模板、临时根、记忆树、现读数据目录。
+ * 测试夹具的共用件：条目正文模板、临时根、记忆树。
  *
- * 收口理由分三层，每层都对着一种「两边各自都对、于是没人发现」的分家：
+ * 收口理由分两层，每层都对着一种「两边各自都对、于是没人发现」的分家：
  *
  * ①条目正文模板（frontmatter 两键加正文）此前多个测试文件各写一份逐字相同的它（写侧退役后
  *   现消费方＝memory-core／memory-check-script）。frontmatter 是契约且在收紧（恰好两键），模板一分
@@ -15,16 +15,14 @@
  *   memory-core 的「~ 展开」用例把目录造在 homedir 之下——它要验的正是根被展开到 homedir，
  *   挪进临时根就验不到那一层了。
  *
- * ③记忆树（store 顶层共享段加可选机器私有段）与现读数据目录（拷一份真数据再改坏）此前各有三四个文件
- *   各写一遍，目录名各拼各的——测试盘上摆了什么，读用例的人得逐个文件自己认。现读面那份文件名
- *   清单也从生产侧（data.js 的 DATA_FILES）现读，不在本模块手抄。
+ * ③记忆树（store 顶层共享段加可选机器私有段）此前各有三四个文件各写一遍，目录名各拼各的
+ *   ——测试盘上摆了什么，读用例的人得逐个文件自己认。
  *
  */
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DATA_FILES } from '../lib/dispatch/data.js'
 
 export const entry = (title, description, body = '正文') => `---\ntitle: ${title}\ndescription: ${description}\n---\n\n${body}\n`
 
@@ -33,8 +31,6 @@ export const entry = (title, description, body = '正文') => `---\ntitle: ${tit
 /** 仓根：下面几个常量都由它派生，而它自己没人直接用——导出就等于给「派生值另有消费者」留一个口子。 */
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const LIB_DIR = join(ROOT_DIR, 'lib')
-const DISPATCH_DIR = join(LIB_DIR, 'dispatch')
-export const DISPATCH_DATA_DIR = join(DISPATCH_DIR, 'data')
 export const SCRIPTS_DIR = join(ROOT_DIR, 'scripts')
 
 /* ---------- 本包登记的工具名（接线自查的那份名单） ---------- */
@@ -48,13 +44,6 @@ export const SCRIPTS_DIR = join(ROOT_DIR, 'scripts')
 export const TOOL_NAMES = [
 	'see_image',
 ]
-
-/**
- * 现读面的两份数据文件名。名单从生产侧现读而不是在这里手抄：手抄那一份是加载器规格的第二处
- * 表述，数据面增一份文件时它就少拷一份，而症状不是「少了一个文件」，是某条用例在无关的原因上红
- * （例如临时目录里读不到 discipline.md，报的却是「数据形状不合」）。
- */
-export const DISPATCH_DATA_FILES = DATA_FILES.map((e) => e.file)
 
 /* ---------- 临时根 ---------- */
 
@@ -157,23 +146,3 @@ export const memoryTree = (base, name, machineId) => {
 	return { root, store, machineDir }
 }
 
-/* ---------- 现读数据目录（拷真数据 → 改坏 → 断言 → 删） ---------- */
-
-/** 把给定的几份数据拷进目标目录（缺省两份全拷；目录不存在就建），返回该目录。 */
-export const copyDataFiles = (dir, files = DISPATCH_DATA_FILES) => {
-	mkdirSync(dir, { recursive: true })
-	for (const file of files) writeFileSync(join(dir, file), readFileSync(join(DISPATCH_DATA_DIR, file)))
-	return dir
-}
-
-/**
- * 一份可随意改坏的临时数据目录。run 拿到目录后自己改（改坏再断言），故 mutator 与断言不再分两
- * 个形参——原先那个 mutate 形参的用途只是「把改的动作排在 run 前面」，而 run 里改同样排在断言
- * 前面，少一个形参少一处能传错位的入口。
- */
-export const withDataDir = (t, run) => withTempDir(t, 'dispatch-data', (dir) => run(copyDataFiles(dir)))
-
-/** 改一份文本数据（discipline.md／templates.md）再写回；改坏模板不走 JSON 重写那一套。 */
-export const editText = (dir, file, mutate) => {
-	writeFileSync(join(dir, file), mutate(readFileSync(join(dir, file), 'utf8')))
-}

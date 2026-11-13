@@ -31,7 +31,7 @@ import {
 } from '../lib/memory/core.js'
 import { DEFAULT_MEMORY_ROOT, describeError, resolveRoot } from '../lib/memory-root.js'
 import { findFenceEnd, frontmatterLines, FRONTMATTER_KEYS } from '../lib/memory/frontmatter.js'
-import { RESERVED_STEMS, RETIRED_INDEX_NAME, WRITING_FILE, isEntryName, isRetiredIndexFile } from '../lib/memory/naming.js'
+import { RESERVED_STEMS, RETIRED_INDEX_NAME, isEntryName, isRetiredIndexFile } from '../lib/memory/naming.js'
 import { knownStems, listSegmentDirs } from '../lib/memory/segments.js'
 import { duplicateSectionHeadings, forEachWikilinkMatch, sectionDupNotice, sectionHeadings, styleWarnings } from '../lib/memory/patterns.js'
 import { isNonBlankString } from '../lib/value.js'
@@ -185,15 +185,6 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 			}
 		}
 	}
-	// 写侧纪律的字符数读不到即记一条 issue：静默归 0 会让整块变小、block-chars 随之达标，
-	// 脚本印「全部达标」，而规则块在运行期是被 warn 掉的——规则被静默丢掉比超预算更难查
-	const rulesPath = join(root.store, WRITING_FILE)
-	let rulesChars = 0
-	try {
-		rulesChars = readFileSync(rulesPath, 'utf8').length
-	} catch (error) {
-		record('写侧纪律')('read-error', rulesPath, describeError(error))
-	}
 	// 机器 id 不合规（与 config.machine 同值域）在这里就拦：它是路径的一段，放过去会让
 	// 后面每一次 resolveScopeDir 都抛，而机器名写错该报的是「这个名字不合规」而不是崩溃。
 	// 不合规时后面一律按「没给机器身份」装配：否则 composeMemory 会在这句话之后当场抛，
@@ -232,7 +223,6 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 		machineDir,
 		machineDirExists,
 		machineValid,
-		rulesChars,
 		stemsDegraded,
 	}
 }
@@ -309,8 +299,8 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-readable',
-		label: `条目、段目录与写侧纪律 ${WRITING_FILE} 读得动（读失败即失去判定覆盖面，不许静默）`,
-		guard: `扫描期 read-error issue（段扫描与 ${WRITING_FILE} 两路都收）`,
+		label: '条目与段目录读得动（读失败即失去判定覆盖面，不许静默）',
+		guard: '扫描期 read-error issue（段扫描收集）',
 		claims: ['read-error'],
 		run: (site) => site.issues.filter((item) => item.issue === 'read-error').map((item) => `${item.kind}：${item.path} —— ${item.detail}`),
 	},
@@ -401,7 +391,7 @@ export const CHECKS = [
 		guard: `BLOCK_CHAR_BUDGET=${BLOCK_CHAR_BUDGET}`,
 		run: (site) =>
 			site.block.length > BLOCK_CHAR_BUDGET
-				? [`注入块 ${site.block.length} 字符超 ${BLOCK_CHAR_BUDGET} 整块定档（写侧纪律 ${site.rulesChars} ＋ 两段索引 ＋ 引导行）`]
+				? [`注入块 ${site.block.length} 字符超 ${BLOCK_CHAR_BUDGET} 整块定档（两段索引＋引导行）`]
 				: [],
 	},
 	{
@@ -477,7 +467,7 @@ export function renderReport(site) {
 	push()
 	// 行数按内容行计：空树时块为空串，行数是 0 而不是 split 出来的那一行
 	const blockLines = site.block === '' ? 0 : site.block.trimEnd().split('\n').length
-	push(`真实注入块（机器 ${site.machineGiven ? site.machine : '未给'}）：${site.block.length} 字符／${blockLines} 行（含规则块与索引）`)
+	push(`真实注入块（机器 ${site.machineGiven ? site.machine : '未给'}）：${site.block.length} 字符／${blockLines} 行（索引）`)
 	if (!site.machineGiven) {
 		// 「只有共享段」在没给机器 id 时是预期形态，但注入块本身也少了本机段与尾行——
 		// 这句话是把「本次量到的不是全量」说清楚，判红的那一项另说
@@ -486,7 +476,6 @@ export function renderReport(site) {
 	push(
 		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符；防膨胀线：单条黄线 ${ENTRY_LINE_YELLOW} 行（不判红），单节红线 ${SECTION_LENGTH_RED} 行`,
 	)
-	push(`其中写侧纪律 ${WRITING_FILE} 占 ${site.rulesChars} 字符`)
 	push()
 	if (site.block.length === 0) push('（记忆内容为空：记忆根未接线，或共享段与本机段都无条目——注入块为空，宿主滤除）')
 
