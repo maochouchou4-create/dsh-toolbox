@@ -34,11 +34,10 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
 
 ```text
 lib/index.js            胶水：装配 memory 注入件＋try/catch 隔离；configShape 直通
-lib/paths.js            路径原语（~ 展开）
 lib/value.js            值判据原语（isNonBlankString）
 lib/warn-once.js        告警去重工厂（makeWarnOnce：注入告警「同消息只报一次」）
 lib/fs-guard.js         错误码词表与族标识（codedFsError，零 node:fs）
-lib/memory-root.js      记忆根默认值/归一、store 落点、错误文案归一（零 node:fs）
+lib/memory-root.js      记忆根默认值/归一（含 ~ 展开）、store 落点、错误文案归一（零 node:fs）
 lib/memory/             记忆注入＋自检：index.js 装配；core/frontmatter/patterns/naming/assemble/segments 纯模块
 test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-memory-index.mjs 薄壳
 ```
