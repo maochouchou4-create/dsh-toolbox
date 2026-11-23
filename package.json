@@ -1,13 +1,12 @@
 {
 	"name": "dsh-toolbox",
-	"version": "2.4.1",
-	"description": "DSH 个人工具箱：see_image 识图转述＋memory 记忆索引注入。",
+	"version": "2.5.0",
+	"description": "DSH 个人工具箱：memory 记忆索引注入。",
 	"license": "MIT",
 	"type": "module",
 	"main": "lib/index.js",
 	"exports": {
 		".": "./lib/index.js",
-		"./client": "./lib/client.js",
 		"./package.json": "./package.json",
 		"./locale/*.json": "./locale/*.json",
 		"./icon": "./icon.svg"
@@ -15,15 +14,6 @@
 	"dsh": {
 		"bundle": {
 			"patch": "./cordis.patch.yml"
-		},
-		"client": {
-			"platform": "web",
-			"inject": [
-				"@deepseek-ai/dsh-client-locale",
-				"@deepseek-ai/dsh-client-ui-settings",
-				"@deepseek-ai/dsh-client-ui-plugin-manager",
-				"@deepseek-ai/dsh-api-remotes"
-			]
 		}
 	},
 	"files": [
@@ -50,12 +40,9 @@
 		"dsh",
 		"cordis",
 		"plugin",
-		"memory",
-		"vision"
+		"memory"
 	],
 	"peerDependencies": {
-		"@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.3.0",
-		"@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0",
 		"@deepseek-ai/schemastery": ">=3.18.4 <4"
 	},
 	"repository": {

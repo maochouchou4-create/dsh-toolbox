@@ -11,7 +11,6 @@ import assert from 'node:assert/strict'
 import { INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
 import { nonEmptyOrDefault } from '../lib/memory-root.js'
 import { forEachWikilinkMatch, styleWarnings } from '../lib/memory/patterns.js'
-import { resolveActiveCwd } from '../lib/working-dir.js'
 import { makeWarnOnce } from '../lib/warn-once.js'
 
 test('forEachWikilinkMatch：行号从 1 起，同行多匹配与跨行各自对位', () => {
@@ -87,19 +86,6 @@ test('styleWarnings：日期戳与派生行超长各出一条（kind 标注）�
 	assert.ok(超长[0].text.includes('收敛 description'), 超长[0].text)
 	// 两条同时命中时都在
 	assert.equal(styleWarnings({ description: '2026-01-02 记', indexLine: 超一行 }).length, 2)
-})
-
-test('resolveActiveCwd：无 agent 返回 undefined，有 agent 取会话 header.cwd', () => {
-	// 无 agent 的脚本化/预览路径：返回 undefined，由下游按自己的默认解析（不猜 process.cwd()）
-	assert.equal(resolveActiveCwd(undefined), undefined)
-	// 有 agent：活目录就是会话 header.cwd，原样透传不改写
-	assert.equal(resolveActiveCwd({ session: { header: { cwd: '/work/live' } } }), '/work/live')
-	// 会话没带 cwd（宿主里 cwd 是可选字段）＝合法缺省，不是契约断裂
-	assert.equal(resolveActiveCwd({ session: { header: {} } }), undefined)
-	// 契约断裂当场抛：静默回落成 undefined 会让消费方的相对路径改按启动目录解析，
-	// 症状出现在几层之外，最难查
-	assert.throws(() => resolveActiveCwd({}), /session\.header/)
-	assert.throws(() => resolveActiveCwd({ session: {} }), /session\.header/)
 })
 
 test('makeWarnOnce：同消息只报一次，新消息各自报，两工厂互不串状态', () => {

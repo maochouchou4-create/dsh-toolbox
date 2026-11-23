@@ -1,13 +1,11 @@
 # dsh-toolbox（仓级）
 
-DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 README 全文渲染进插件页，长文会把
-「识图路由」卡顶出首屏）；本文件＝开发文档＋施工纪律：能力边界、契约、通道机制、结构都在这里。
+DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 README 全文渲染进插件页）；本文件＝开发文档＋施工纪律：能力边界、契约、通道机制、结构都在这里。
 
 ## 开工前
 
-- **改动落点地图（先看这条再找文件）**：本包终态＝一件工具（`lib/see-image/` 识图转述）＋一件
-  注入件（`lib/memory/` 记忆索引）。**数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）
-  随新会话加载，运行中会话保持旧代**。
+- **改动落点地图（先看这条再找文件）**：本包终态＝一件注入件（`lib/memory/` 记忆索引）。
+  **数据文件现读不缓存——改完下次请求即生效；代码（`lib/*.js`）随新会话加载，运行中会话保持旧代**。
 - **插件改动：新会话即新代，宿主不必重启**。宿主（web 形态）对插件 `lib/*.js` 逐会话导入：
   宿主进程不重启，新起会话（含 subagent）即加载盘上当前代码；运行中会话保持旧代到它结束。
   本会话不重启宿主（重启会掐断会话）；交付时报实际验到的，运行中会话的旧代行为不归本批背书。
@@ -32,45 +30,22 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
   才要求 `danger-full-access`；两机记忆根都指 agent-data 仓、落在常用工作区内，常规会话不受围栏
   影响。批次的记账落在记忆条目，插件没有第二份过程数据档。
 
-## see_image 通道
-
-- 走宿主 llm 通道（不自带 HTTP、不存任何 key）。出厂路由 `zai-coding-cn/glm-5.3-flash`（免费档；
-  zai 适配层在该模型自动关 thinking）；空白回落出厂——`lib/client.js` 的 FALLBACK_ROUTE 与
-  `lib/see-image/route.js` 必须逐字一致，`test/client.test.js` 对拍。
-- 换路由改的是同一份值，两个口：插件页「识图路由」卡片（主口，选中保存即生效、不必重启）／
-  profile 层 `visionProvider`＋`visionModel` 覆盖（跳过 UI 的口子）。
-- 图片经 attachments 存为 durable 引用后，适配层按模型目录 inputLimits 自动缩放/压缩
-  （flash 档：≤2000×2000、≤4.5 MiB、jpegQuality 80）。
-- 输出预算单次 16384 token＝防模型复读失控的保险丝；撞线不报错，正文尾注「转写被截断」降级交货，
-  要剩余内容就把图裁块分别再识。
-- 每次调用在宿主附件仓留 durable 附件（内容寻址、同图去重）；宿主无附件 GC/释放 API，长期单调
-  增长＝已知边界（F5 口径），不接受就别把 see_image 开给高频自动化流程。
-- attachment 入口：占位符 hex（≥8 位前缀或完整 64 位）在 `<DSH_HOME>/attachments/v1/objects/`
-  按前缀定位（DSH home＝宿主 profileContext.home，本仓不自行推算）；前缀歧义与零命中显式报错。
-  占位符真实场景＝会话先用视觉模型收图、中途切纯文本模型后的历史图回放；**往纯文本模型的新消息
-  贴图不产生占位符**——宿主 prompt 入口整条拒收（session/attachment-invalid，
-  MODEL_DOES_NOT_SUPPORT_IMAGES）；给纯文本模型喂图的正路＝`see_image(path=…)`。
-
 ## 结构（深模块口径）
 
 ```text
-lib/index.js            胶水：工具走 FEATURES 表、注入件 try/catch 隔离；configShape 并集
-lib/paths.js            跨工具族路径原语（~ 展开）
-lib/value.js            跨工具族值判据原语（isNonBlankString）
+lib/index.js            胶水：装配 memory 注入件＋try/catch 隔离；configShape 直通
+lib/paths.js            路径原语（~ 展开）
+lib/value.js            值判据原语（isNonBlankString）
 lib/warn-once.js        告警去重工厂（makeWarnOnce：注入告警「同消息只报一次」）
-lib/working-dir.js      会话活目录收口（session.header.cwd，工具与注入同读一处）
 lib/fs-guard.js         错误码词表与族标识（codedFsError，零 node:fs）
 lib/memory-root.js      记忆根默认值/归一、store 落点、错误文案归一（零 node:fs）
 lib/memory/             记忆注入＋自检：index.js 装配；core/frontmatter/patterns/naming/assemble/segments 纯模块
-lib/see-image/          识图工具：index.js 装配＋route.js 路由现读＋vision.js 嗅探/终态映射（直连 node:fs）
-lib/client.js           浏览器半：插件页「识图路由」卡（经典脚本、createElement、无构建）
 test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-memory-index.mjs 薄壳
 ```
 
-每工具目录的模块接口只有两件：`register(ctx, config)` 与 `configShape`（注入件同样按
-`register(ctx, config)` 调）。胶水逐件独立 try/catch，一件起不来
-不连坐另一件。纯函数文件零宿主依赖、可直接单测；含宿主 import 的装配文件由 `test/imports.test.js`
-静态解析钉住接线（防搬家断链、防 inject 漏声明）；各文件为什么落在这层，理由在文件头注释。
+模块接口只有两件：`register(ctx, config)` 与 `configShape`。注入起不来只降级记忆块并留全栈日志
+（胶水 try/catch），不把整包拖进 DOA。纯函数文件零宿主依赖、可直接单测；含宿主 import 的装配文件由
+`test/imports.test.js` 静态解析钉住接线（防搬家断链、防 inject 漏声明）；各文件为什么落在这层，理由在文件头注释。
 
 ## 改 memory 契约时
 
@@ -108,15 +83,12 @@ node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs <记忆根> <机�
   「记忆书写」节散文；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
   「还能装几条新条目」换算（用实测的条目派生行均长），不按百分比——百分比定的线在语料
   一变就名不副实，实测按百分比定的线连一条新条目都装不下，等于每次写记忆都要抬线。
-- 识图面改动加一道端到端：合成四考区图（如 /tmp/vision_probe_q4.png）＋大字 OCR，
-  答案与图吻合才留——不测易分辨的图，测「像素真喂进去了」。
 - `npm test` 覆盖不到运行期（宿主接线、注入块在真实会话里的样子），所以它是下限
   不是上限：改动触及注入或工具契约时，附上你实际验到了什么、没验到什么。
 
 ## 硬边界
 
-- `lib/memory/` 下除装配层（`index.js`）外一律零宿主依赖，可直接单测；
-  `lib/see-image/vision.js` 同。新增文件按这条规则就位，不要维护枚举清单。
+- `lib/memory/` 下除装配层（`index.js`）外一律零宿主依赖，可直接单测。新增文件按这条规则就位，不要维护枚举清单。
   `test/imports.test.js` 静态解析钉住导入面与 node:fs 直连的定性表，搬家断链、
   新模块漏定性都会红。
 - 版本号随契约走：工具参数面、注入块结构、frontmatter 契约任一变更都算破坏性变更，

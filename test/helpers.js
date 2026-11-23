@@ -33,18 +33,6 @@ const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const LIB_DIR = join(ROOT_DIR, 'lib')
 export const SCRIPTS_DIR = join(ROOT_DIR, 'scripts')
 
-/* ---------- 本包登记的工具名（接线自查的那份名单） ---------- */
-
-/**
- * 本包登记的工具名，逐字同 lib/index.js 的 FEATURES 表 label 列（顺序也同）。
- *
- * 名单本身是 FEATURES 表的投影（imports.test 对着源码钉 label 列）：在这里另手抄一份独立数组，
- * 就等于给「本包有哪些工具」留了第二个真相源——加一件工具时它静默漏一项，而 schema 自查照样全绿。
- */
-export const TOOL_NAMES = [
-	'see_image',
-]
-
 /* ---------- 临时根 ---------- */
 
 const makeTempRoot = (label) => mkdtempSync(join(tmpdir(), `dsh-${label}-`))

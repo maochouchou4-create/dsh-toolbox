@@ -62,7 +62,7 @@ export const SECTION_LENGTH_RED = 60
  * 工作目录相关）。argv[3] 就是机器 id：它同时也是 `machines/<id>/` 的目录名，故与插件
  * config.machine 同形、同值域。
  *
- * 「给了」问 lib/value.js 那份跨族原语——本文件要与 dsh-memory 的 Config 回退判同一件事，
+ * 「给了」问 lib/value.js 那份共用判据——本文件要与插件 Config 的回退判同一件事，
  * 两者各抄一份时「算不算给了」就在脚本与插件之间分叉。判的是解析后的值而不是数位置参数
  * 个数：空串与纯空白经 `||` 回落后与缺参同形，可它们仍是调用方**写下来**的形参，判据必须
  * 看得见这件事——`node scripts/check-memory-index.mjs "" ""` 收了两个空串，脚本却拿默认根
