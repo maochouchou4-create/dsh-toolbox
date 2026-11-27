@@ -53,7 +53,7 @@ test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-me
 `lib/memory/frontmatter.js`（frontmatter 契约与索引行派生）、跨仓的书写规范
 agent-data 的 AGENTS.md「记忆书写」节（规则唯一家——写侧纪律原文住在那里，
 不再随索引注入）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
-常量（防膨胀两条线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
+常量（节字数红线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
 两处各抄一份。
 
 ## 完成标准

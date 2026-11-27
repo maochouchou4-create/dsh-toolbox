@@ -7,7 +7,7 @@
  * 入口只剩一种答案，也就没有守卫可写错。
  *
  * 检查面有两族：注入块预算（截不截、超不超线）与条目内容健康（frontmatter 契约、节
- * 组织、死链、日期戳、防膨胀两条线）。memory 写侧工具退役后，后一族是从写侧 lint 收编
+ * 组织、死链、日期戳、节字数红线）。memory 写侧工具退役后，后一族是从写侧 lint 收编
  * 过来的——全库体检只剩这一处，判据与文案都沿用同一批共享模块（patterns/segments/
  * frontmatter），不在脚本里另写一份。
  *
@@ -37,23 +37,21 @@ import { duplicateSectionHeadings, forEachWikilinkMatch, sectionDupNotice, secti
 import { isNonBlankString } from '../lib/value.js'
 
 /**
- * 条目级防膨胀两条线。判据只服务本脚本：注入侧不按它们截断（那里只有索引
+ * 条目级防膨胀线。判据只服务本脚本：注入侧不按它截断（那里只有索引
  * 预算一族），故常量不进 core.js——「哪条线在运行期有牙齿」靠分居表达，混进同一处
  * 就要靠读注释分辨。
  *
- * - 单条黄线（ENTRY_LINE_YELLOW）：条目正文行数超线只出提示不判红。定档＝排除存量
- *   超线提示后语料正文行上限的上取整档（首档实测：99/152 两条存量之外上限 74，取 80）
- *   ——它是「先收敛再加」的那声提醒，不是闸门；存量超线条目常驻提示正是要的效果（促收不拦行）。
- * - 节长红线（SECTION_LENGTH_RED）：单节行数超线判红。定档取现存最长一节的上方一档
- *   ——红线必须让现行语料通过，否则每次自检都在报一批改不了的旧账，红线很快被习惯性
- *   无视；同时把「一节吞掉大半条」的形态拦在下次追加之前。分布是中段断档的（多数节
- *   十几行、个别长节远超），红线落位看的是最长那档而非中位数。
+ * - 节字数红线（SECTION_CHARS_RED）：单节正文字符数超线判红。量的对象是字不是行——行数线
+ *   挡不住把字挤进长行。首个 ## 标题之前的正文也算一节：没有节的条目同样按字量。定档理由：
+ *   节是按行段读的单位，一节超过一次行段读的量，就是「这一节回答的问题太大」；现存分布
+ *   断档（多数节很短、少数长节远超），红线落在断档里。
  *
- * 确需抬线先重新实测分布，把新实测值与理由写进 commit message——这两条线没有运行期
+ * 确需抬线先重新实测分布，把新实测值与理由写进 commit message——这条线没有运行期
  * 消费方，注释里的数字最容易陈旧，实测值归 git 历史。
  */
-export const ENTRY_LINE_YELLOW = 80
-export const SECTION_LENGTH_RED = 60
+export const SECTION_CHARS_RED = 3000
+/** 首个 ## 标题之前那段正文在报告里的节名（它没有标题行，报错句里得有个指得出来的名字）。 */
+export const SECTION_LEAD_TITLE = '（首个 ## 标题之前）'
 
 /**
  * 取参与否收在参数对象里：薄壳与单测从这里拿「给了什么」，不从 process.argv 现场解析。
@@ -164,22 +162,33 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
 			const lines = frontmatterLines(text)
 			const fenceEnd = findFenceEnd(lines)
 			// 无闭合围栏的条目按「全文即正文」量：它已由 entry-frontmatter 判红，
-			// 行数量个大概即可，不为坏 frontmatter 另立分支
+			// 字数量个大概即可，不为坏 frontmatter 另立分支
 			const bodyStart = fenceEnd === -1 ? 0 : fenceEnd + 1
 			// 以 \n 结尾的文件 split 出的最后一个空串不是一行，剥掉再计
 			const bodyEnd = lines.length - (lines[lines.length - 1] === '' ? 1 : 0)
+			// 一节的字数＝节内各行去行尾空白后的长度和（CRLF 与行末空格不是内容）；from/to 是
+			// 同一份行数组的下标，不另切数组
+			const charsBetween = (from, to) => {
+				let chars = 0
+				for (let index = from; index < to; index += 1) chars += lines[index].trimEnd().length
+				return chars
+			}
+			// 节界：首个 ## 标题之前的正文算第一节（没有节的条目由此同样按字量），其后每节自带
+			// 标题行起、止于下一节标题（末节止于正文尾）；节字数不含标题行。标题之前只有空行时
+			// 不立这一节
 			const headings = sectionHeadings(text)
-			const sections = headings.map((heading, index) => ({
-				title: heading.title,
-				// 节长含节标题行、止于下一节标题（末节止于正文尾）：行号是同一份行数组的
-				// 下标，差值即行数，不必再切一次
-				len: (index + 1 < headings.length ? headings[index + 1].line : bodyEnd) - heading.line,
-			}))
+			const bounds = [...headings.map((heading) => heading.line), bodyEnd]
+			const sections = []
+			const leadChars = charsBetween(bodyStart, bounds[0])
+			if (leadChars > 0) sections.push({ title: SECTION_LEAD_TITLE, chars: leadChars })
+			headings.forEach((heading, index) => {
+				sections.push({ title: heading.title, chars: charsBetween(heading.line + 1, bounds[index + 1]) })
+			})
 			const deadLinks = []
 			forEachWikilinkMatch(text, (stem, line) => {
 				if (!stems.has(stem)) deadLinks.push({ stem, line })
 			})
-			entries.push({ kind, path, name, chars: text.length, bodyLines: bodyEnd - bodyStart, sections, deadLinks })
+			entries.push({ kind, path, name, chars: text.length, sections, deadLinks })
 			for (const title of duplicateSectionHeadings(text)) {
 				issues.push({ kind, issue: 'entry-section-dup', path, detail: sectionDupNotice(title) })
 			}
@@ -233,8 +242,6 @@ export function collectSite({ memoryRoot, machine, rootGiven, machineGiven }) {
  * 常量一改这里自动跟着改。run(site) 返回该站场上这一项待收敛的条目（人读的一行一个）。
  * claims 列出这一项**认领**的 issue kind：认领是显式登记的，于是「扫描出了没人认领的
  * issue kind」本身成为一项可判的事（见 issue-unclaimed），而不是随报告一起无声消失。
- * soft: true 的是黄线项：只出提示、不进 violations（判红与提示分档——红是「必须收敛」，
- * 黄是「先收敛再加」；分档的落点在 renderReport 与 collectViolations 的 soft 过滤）。
  */
 export const CHECKS = [
 	{
@@ -339,13 +346,13 @@ export const CHECKS = [
 	},
 	{
 		id: 'entry-section-length',
-		label: `单节行数在红线上（一节吞掉大半条＝该收敛或该拆条的膨胀形态）`,
-		guard: `SECTION_LENGTH_RED=${SECTION_LENGTH_RED}（行；现存最长一节的上方一档，抬线先重测分布）`,
+		label: '单节字数在红线上（一节回答的问题太大＝该按问题拆节，而不是把字挤进长行）',
+		guard: `SECTION_CHARS_RED=${SECTION_CHARS_RED}（字符；节内各行去行尾空白后的长度和，不含标题行与 frontmatter；首个 ## 标题之前的正文算一节）`,
 		run: (site) =>
 			site.entries.flatMap((entry) =>
 				entry.sections
-					.filter((section) => section.len > SECTION_LENGTH_RED)
-					.map((section) => `${entry.kind}：${entry.path} 的节「${section.title}」${section.len} 行超红线 ${SECTION_LENGTH_RED}——先收敛该节（销账即删、活事实归位），或把这一节拆成独立条目`),
+					.filter((section) => section.chars > SECTION_CHARS_RED)
+					.map((section) => `${entry.kind}：${entry.path} 的节「${section.title}」${section.chars} 字超红线 ${SECTION_CHARS_RED}——先问这一节回答的问题是不是太大：是就按问题拆节（节标题写成会来查的人的话），不是就收敛（销账即删、活事实归位）`),
 			),
 	},
 	{
@@ -374,16 +381,6 @@ export const CHECKS = [
 			site.segments.flatMap((segment) =>
 				segment.styles.map((style) => `${segment.kind}：条目 ${style.name} —— ${style.text}`),
 			),
-	},
-	{
-		id: 'entry-lines-hint',
-		label: '单条正文行数在黄线下（超线是「先收敛再加」的提醒，不是闸门）',
-		guard: `ENTRY_LINE_YELLOW=${ENTRY_LINE_YELLOW}（行；排除存量提示后语料上限 74 的上取整档）`,
-		soft: true,
-		run: (site) =>
-			site.entries
-				.filter((entry) => entry.bodyLines > ENTRY_LINE_YELLOW)
-				.map((entry) => `${entry.kind}：条目 ${entry.name} 正文 ${entry.bodyLines} 行过黄线 ${ENTRY_LINE_YELLOW}——追加前先收敛：销账段删掉、活事实归位`),
 	},
 	{
 		id: 'block-chars',
@@ -433,13 +430,13 @@ export const CHECKS = [
 	},
 ]
 
-/** 跑完一份检查项数组，返回全部待收敛条目（带 id，报告与自报名单靠它对上）。黄线项不进这里。 */
+/** 跑完一份检查项数组，返回全部待收敛条目（带 id，报告与自报名单靠它对上）。 */
 export function collectViolations(site) {
-	return CHECKS.filter((check) => !check.soft).flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
+	return CHECKS.flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
 }
 
 /**
- * 报告：现场清点 → 逐项判定 → 黄线提示 → 自报名单。末段清单由 CHECKS 生成而不是手抄文案
+ * 报告：现场清点 → 逐项判定 → 自报名单。末段清单由 CHECKS 生成而不是手抄文案
  * 常量——另写一份就是给「覆盖了哪几项」造出下一次改动就会漂的旁证，而这正是本检查存在的
  * 理由。「全部达标」那句也不枚举覆盖范围：枚举一份只点几类的清单，等于在本文件里养第二份
  * 真相。
@@ -474,7 +471,7 @@ export function renderReport(site) {
 		push('提示：未给机器 id，本次装配只有共享段（本机段与尾行均不含本机）')
 	}
 	push(
-		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符；防膨胀线：单条黄线 ${ENTRY_LINE_YELLOW} 行（不判红），单节红线 ${SECTION_LENGTH_RED} 行`,
+		`预算：段内索引 ${INDEX_LINE_BUDGET} 行／${INDEX_CHAR_BUDGET} 字符（逐段），派生行 ${INDEX_LINE_CHAR_BUDGET} 字符，整块 ${BLOCK_CHAR_BUDGET} 字符；防膨胀线：单节红线 ${SECTION_CHARS_RED} 字`,
 	)
 	push()
 	if (site.block.length === 0) push('（记忆内容为空：记忆根未接线，或共享段与本机段都无条目——注入块为空，宿主滤除）')
@@ -486,13 +483,6 @@ export function renderReport(site) {
 		for (const violation of violations) push(`  · [${violation.id}] ${violation.text}`)
 	} else {
 		push(`全部达标：${CHECKS.length} 项检查全过（逐项见下）。`)
-	}
-	// 黄线提示单独一段、用「~」前缀：不进 violations、不参与退出码，行形也与病灶行分开，
-	// 「必须收敛」与「可以先收敛」两股流在报告与测试里都各认各的
-	const hints = CHECKS.filter((check) => check.soft).flatMap((check) => check.run(site).map((text) => ({ id: check.id, text })))
-	if (hints.length > 0) {
-		push(`${hints.length} 条黄线提示（不判红）：`)
-		for (const hint of hints) push(`  ~ [${hint.id}] ${hint.text}`)
 	}
 	push()
 	push(`本命令覆盖 ${CHECKS.length} 项（检查项数组即清单，改这一份就够）：`)

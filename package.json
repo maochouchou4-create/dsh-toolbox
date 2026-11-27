@@ -1,6 +1,6 @@
 {
 	"name": "dsh-toolbox",
-	"version": "2.5.1",
+	"version": "2.5.2",
 	"description": "DSH 个人工具箱：memory 记忆索引注入。",
 	"license": "MIT",
 	"type": "module",

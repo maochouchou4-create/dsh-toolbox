@@ -23,7 +23,7 @@ import { spawnSync } from 'node:child_process'
 import { BLOCK_CHAR_BUDGET, INDEX_CHAR_BUDGET, INDEX_LINE_BUDGET, INDEX_LINE_CHAR_BUDGET, RUNAWAY_CEILING, SHARED_SEGMENT, resolveScopeDir } from '../lib/memory/core.js'
 import { resolveRoot } from '../lib/memory-root.js'
 import { deriveIndexLine } from '../lib/memory/frontmatter.js'
-import { CHECKS, ENTRY_LINE_YELLOW, SECTION_LENGTH_RED, collectSite, readOptions, renderReport } from '../scripts/checks.mjs'
+import { CHECKS, SECTION_CHARS_RED, SECTION_LEAD_TITLE, collectSite, readOptions, renderReport } from '../scripts/checks.mjs'
 import { composeMemory } from '../lib/memory/assemble.js'
 import { SCRIPTS_DIR, tempRoot } from './helpers.js'
 
@@ -263,21 +263,36 @@ test('条目内 ## 节重名：只由那一项判红（标题是条目内唯一�
 	assert.deepEqual(check.claims, ['entry-section-dup'], '新 issue kind 必须被显式认领（否则 check:memory 红在 issue-unclaimed）')
 })
 
-test('单节行数超红线：只由那一项判红，未超线的节不牵进来（阈值问常量，不写死第二个数）', () => {
-	const root = join(base, 'section-length')
+test('节字数超红线：只由那一项判红（行数不多但字多——量的是字，行数线挡不住把字挤进长行）', () => {
+	const root = join(base, 'section-chars')
 	mkdirSync(root, { recursive: true })
 	seedSegment(root, SHARED_SEGMENT, [])
 	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
-	// 超线节：标题行＋红线那么多的内容行 ⇒ 节长＝红线＋1。行数由常量算出，抬线时这条
-	// 用例的语料跟着长，钉的仍是「超了就判红」
-	seedRaw(root, 'home', 'long.md', `---\ntitle: 长节条目\ndescription: 触发词\n---\n\n## 大节\n${'行。\n'.repeat(SECTION_LENGTH_RED)}`)
-	// 恰在红线下的一节（标题行＋红线−1 行内容 ⇒ 节长＝红线）不得误伤
-	seedRaw(root, 'home', 'mid.md', `---\ntitle: 中节条目\ndescription: 触发词\n---\n\n## 中节\n${'行。\n'.repeat(SECTION_LENGTH_RED - 1)}`)
+	// 对照一：59 行内容、每行约 51 字，合计刚过红线——行数不及旧的 60 行线，按字量才判红。
+	// 行数与每行字数由常量算：抬线时语料跟着长，钉的仍是「超了就判红」
+	const rows = 59
+	const wideRow = '字'.repeat(Math.ceil((SECTION_CHARS_RED + 1) / rows))
+	seedRaw(root, 'home', 'wide.md', `---\ntitle: 宽节条目\ndescription: 触发词\n---\n\n## 宽节\n${(wideRow + '\n').repeat(rows)}`)
 	const { code, stdout } = runScript([root, 'home'])
-	assert.equal(code, 1, `节长超红线须以 1 退出：\n${stdout}`)
+	assert.equal(code, 1, `节字数超红线须以 1 退出：\n${stdout}`)
 	assert.deepEqual(violationIds(stdout), ['entry-section-length'], `只该由这一项判红：\n${stdout}`)
-	assert.ok(stdout.includes('long.md') && stdout.includes('大节'), `病灶须点名条目与节：\n${stdout}`)
-	assert.ok(!stdout.includes('mid.md'), `恰在红线上的节不报：\n${stdout}`)
+	assert.ok(stdout.includes('wide.md') && stdout.includes('宽节'), `病灶须点名条目与节：\n${stdout}`)
+	assert.ok(stdout.includes(`${wideRow.length * rows} 字超红线 ${SECTION_CHARS_RED}`), `报错句须给出实测字数与红线：\n${stdout}`)
+})
+
+test('节字数在红线内：行数再多也不判红（行数不再是判据，碎行不必为了过线去合并）', () => {
+	const root = join(base, 'section-chars-ok')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 对照二：61 行内容、合计不到红线的一半——行数早过旧的 60 行线，按字量是绿的
+	const rows = 61
+	const narrowRow = '字'.repeat(Math.floor(SECTION_CHARS_RED / (rows * 2)))
+	seedRaw(root, 'home', 'tall.md', `---\ntitle: 碎行条目\ndescription: 触发词\n---\n\n## 碎行节\n${(narrowRow + '\n').repeat(rows)}`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 0, `字数在线内的节不因行数判红：\n${stdout}`)
+	assert.ok(stdout.includes('全部达标'), stdout)
+	assert.deepEqual(violationIds(stdout), [])
 })
 
 test('wikilink 死链：只由那一项判红，活链不牵进来（stem 集跨段共享，跨段活链也不误伤）', () => {
@@ -310,36 +325,20 @@ test('description 带日期戳：只由那一项判红（判据问 patterns 单�
 	assert.ok(!violationIds(stdout).includes('entry-index-line'), stdout)
 })
 
-test('单条字符数超体量红线：只由那一项判红（超线＝该收敛或拆条的膨胀形态）', () => {
+test('单条字符数超体量红线：体量那一项判红（没有节的正文按「首个标题之前」那一节同时报节字数）', () => {
 	const root = join(base, 'runaway')
 	mkdirSync(root, { recursive: true })
 	seedSegment(root, SHARED_SEGMENT, [])
 	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
 	// 字符数由常量推：正文比体量红线还长就必超（frontmatter 只占几十字符）。正文是单行
-	// 长串，行数黄线不沾、节长红线不沾——deepEqual 钉的正是「只有体量红线那一项判红」
+	// 长串、没有 ## 节——首个标题之前的正文也算一节，于是节字数红线与体量红线两项都报
 	seedRaw(root, 'home', 'huge.md', `---\ntitle: 失控条目\ndescription: 触发词\n---\n\n${'字'.repeat(RUNAWAY_CEILING)}\n`)
 	const { code, stdout } = runScript([root, 'home'])
 	assert.equal(code, 1, `失控条目须以 1 退出：\n${stdout}`)
-	assert.deepEqual(violationIds(stdout), ['entry-runaway'], `只该由这一项判红：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-section-length', 'entry-runaway'], `节字数与体量两项判红，别项不混进来：\n${stdout}`)
 	assert.ok(stdout.includes('huge.md'), stdout)
+	assert.ok(stdout.includes(SECTION_LEAD_TITLE), `没有节的正文以「首个标题之前」那一节报出来：\n${stdout}`)
 	assert.ok(stdout.includes(`超体量红线 ${RUNAWAY_CEILING}`), stdout)
-})
-
-test('黄线只提示不判红：正文行数过黄线时退出 0 且「全部达标」，提示段单独列出', () => {
-	const root = join(base, 'yellow-line')
-	mkdirSync(root, { recursive: true })
-	seedSegment(root, SHARED_SEGMENT, [])
-	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
-	// 过黄线一条：正文行数＝黄线＋1（无 ## 节，故节长红线不沾；行短，失控线也不沾）
-	seedRaw(root, 'home', 'fat.md', `---\ntitle: 过黄线条目\ndescription: 触发词\n---\n\n${'行。\n'.repeat(ENTRY_LINE_YELLOW)}`)
-	const { code, stdout } = runScript([root, 'home'])
-	assert.equal(code, 0, `黄线不得改变退出码：\n${stdout}`)
-	assert.ok(stdout.includes('全部达标'), `无红线病灶时须印全部达标：\n${stdout}`)
-	assert.deepEqual(violationIds(stdout), [], '黄线条目不得出现在病灶段')
-	// 提示段用「~」前缀单独成段：与病灶行（「·」前缀）在报告文本上就分得开
-	assert.ok(stdout.includes('条黄线提示（不判红）'), `须有黄线提示段：\n${stdout}`)
-	assert.ok(/^ {2}~ \[entry-lines-hint\] /m.test(stdout), `黄线行须以 ~ 前缀列出：\n${stdout}`)
-	assert.ok(stdout.includes(`过黄线 ${ENTRY_LINE_YELLOW}`), stdout)
 })
 
 test('没人认领的 issue kind：兜底项把它报出来，而不是让它随报告消失', () => {
