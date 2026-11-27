@@ -295,6 +295,65 @@ test('节字数在红线内：行数再多也不判红（行数不再是判据�
 	assert.deepEqual(violationIds(stdout), [])
 })
 
+test('节字数的边界：恰好压线是绿的，多一个字就红（边界两侧都要有用例，判定写成 >= 或 > 都会翻红）', () => {
+	// 红线由常量算：60 行 × 每行 SECTION_CHARS_RED/60 字＝恰好红线；再多一行一个字＝红线＋1
+	const rows = 60
+	const row = '字'.repeat(SECTION_CHARS_RED / rows)
+	const seed = (label, extra) => {
+		const root = join(base, label)
+		mkdirSync(root, { recursive: true })
+		seedSegment(root, SHARED_SEGMENT, [])
+		seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+		seedRaw(root, 'home', 'edge.md', `---\ntitle: 压线条目\ndescription: 触发词\n---\n\n## 压线节\n${(row + '\n').repeat(rows)}${extra}`)
+		return root
+	}
+	const exact = runScript([seed('section-chars-exact', ''), 'home'])
+	assert.equal(exact.code, 0, `恰好 ${SECTION_CHARS_RED} 字须判绿：\n${exact.stdout}`)
+	assert.ok(exact.stdout.includes('全部达标'), exact.stdout)
+	const over = runScript([seed('section-chars-over-1', '字\n'), 'home'])
+	assert.equal(over.code, 1, `红线＋1 字须判红：\n${over.stdout}`)
+	assert.ok(over.stdout.includes(`${SECTION_CHARS_RED + 1} 字超红线 ${SECTION_CHARS_RED}`), `报错句须给出实测字数：\n${over.stdout}`)
+})
+
+test('围栏代码块里的 `## ` 行不立节：不报重名，字数算在它所在的真节上', () => {
+	const root = join(base, 'section-fence')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 栏内两行同名 `## 示例`：若被当成节，这里会报节重名
+	seedRaw(root, 'home', 'fenced.md', '---\ntitle: 带示例的条目\ndescription: 触发词\n---\n\n## 真节\n\n```md\n## 示例\n正文\n\n## 示例\n```\n\n## 另一节\n\n正文\n')
+	// 栏内的 `## 假节` 后面塞超线的内容：这些字属于「真节」，红清单点名的是真节
+	const rows = 60
+	const row = '字'.repeat(Math.ceil((SECTION_CHARS_RED + 1) / rows))
+	seedRaw(root, 'home', 'wide.md', `---\ntitle: 宽节带示例\ndescription: 触发词\n---\n\n## 真节\n\n\`\`\`md\n## 假节\n${(row + '\n').repeat(rows)}\`\`\`\n`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `宽节须判红：\n${stdout}`)
+	assert.ok(stdout.includes('wide.md') && stdout.includes('真节'), `字数算在真节上：\n${stdout}`)
+	assert.ok(!stdout.includes('假节'), `栏内的行不是节：\n${stdout}`)
+	assert.ok(!stdout.includes('fenced.md'), `栏内同名行不报重名：\n${stdout}`)
+	assert.deepEqual(violationIds(stdout), ['entry-section-length'], `只该由节字数那一项判红：\n${stdout}`)
+})
+
+test('节字数的计入口径：行尾空白不计，frontmatter 没闭合按全文量', () => {
+	const root = join(base, 'section-counting')
+	mkdirSync(root, { recursive: true })
+	seedSegment(root, SHARED_SEGMENT, [])
+	seedSegment(root, 'home', [deriveIndexLine({ title: '正常条目', description: '触发词', file: 'ok.md' })])
+	// 卷首 60 行、每行 50 个空格再垫 1 个字：按去行尾空白的口径卷首只有 1 个字；按原始字符量是红线＋1
+	seedRaw(root, 'home', 'blank-lead.md', `---\ntitle: 空白卷首\ndescription: 触发词\n---\n${`${' '.repeat(50)}\n`.repeat(60)}字\n\n## 真节\n\n正文\n`)
+	// 节内 60 行、每行 40 个字补 70 个尾随空格：计入口径 2,400 字；原始字符量 6,600
+	seedRaw(root, 'home', 'padded.md', `---\ntitle: 尾随空白\ndescription: 触发词\n---\n\n## 带空格的节\n\n${`${'字'.repeat(40)}${' '.repeat(70)}\n`.repeat(60)}`)
+	// frontmatter 没闭合：没有可剥的围栏，全文按正文量，字数落在卷首节上
+	seedRaw(root, 'home', 'unclosed.md', `---\ntitle: 没闭合\ndescription: 触发词\n${'字'.repeat(SECTION_CHARS_RED + 100)}\n`)
+	const { code, stdout } = runScript([root, 'home'])
+	assert.equal(code, 1, `没闭合的那条须判红：\n${stdout}`)
+	assert.ok(stdout.includes('unclosed.md') && stdout.includes(SECTION_LEAD_TITLE), `没闭合的条目按卷首节点名：\n${stdout}`)
+	assert.ok(violationIds(stdout).includes('entry-frontmatter'), `没闭合本身由 frontmatter 那项报：\n${stdout}`)
+	assert.ok(violationIds(stdout).includes('entry-section-length'), `全文的字数由节字数那项报：\n${stdout}`)
+	assert.ok(!stdout.includes('blank-lead.md'), `卷首的空白行不立卷首节：\n${stdout}`)
+	assert.ok(!stdout.includes('padded.md'), `行尾空白不计入字数：\n${stdout}`)
+})
+
 test('wikilink 死链：只由那一项判红，活链不牵进来（stem 集跨段共享，跨段活链也不误伤）', () => {
 	const root = join(base, 'dead-link')
 	mkdirSync(root, { recursive: true })

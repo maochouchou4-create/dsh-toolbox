@@ -10,8 +10,76 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { INDEX_LINE_CHAR_BUDGET } from '../lib/memory/core.js'
 import { nonEmptyOrDefault } from '../lib/memory-root.js'
-import { forEachWikilinkMatch, styleWarnings } from '../lib/memory/patterns.js'
+import { duplicateSectionHeadings, forEachWikilinkMatch, sectionHeadings, styleWarnings } from '../lib/memory/patterns.js'
 import { makeWarnOnce } from '../lib/warn-once.js'
+
+test('duplicateSectionHeadings：标题按去空白后的串比对，尾随空白写法不同也算重名', () => {
+	// 「## 甲」与「## 甲 」是同一个节锚：各写一次就是重名
+	assert.deepEqual(duplicateSectionHeadings('## 甲\n正文\n\n## 甲  \n正文\n\n## 乙\n'), ['甲'])
+	assert.deepEqual(duplicateSectionHeadings('## 甲\n\n## 乙\n'), [])
+})
+
+test('sectionHeadings：行号从剥掉 frontmatter 后算起，标题去首尾空白，病态写法与围栏内的行不算节', () => {
+	/** 取 [标题, 行号] 对，便于逐项比对。 */
+	const pairs = (text) => sectionHeadings(text).map(({ title, line }) => [title, line])
+	// 常规：frontmatter 占 0–4 行（含空行），首个标题落在下标 5；尾随空白不构成「另一个标题」
+	assert.deepEqual(
+		pairs('---\ntitle: 甲\ndescription: 触发词\n---\n\n## 甲节  \n正文\n\n## 乙节\n'),
+		[
+			['甲节', 5],
+			['乙节', 8],
+		],
+	)
+	// 无 frontmatter：标题可以在首行
+	assert.deepEqual(pairs('## 首行节\n正文\n'), [['首行节', 0]])
+	// CRLF：行尾归一后再判，标题不带 \r
+	assert.deepEqual(pairs('## 甲节\r\n正文\r\n## 乙节\r\n'), [
+		['甲节', 0],
+		['乙节', 2],
+	])
+	// 病态写法：`##x`（无空格）、`###`（子标题）、空标题都不立节
+	assert.deepEqual(pairs('##x 不是节\n### 子标题\n## \n## 真节\n'), [['真节', 3]])
+	// frontmatter 里的 `## ` 行不算节（扫描面从围栏之后起）
+	assert.deepEqual(pairs('---\n## 甲\ndescription: x\n---\n## 乙\n'), [['乙', 4]])
+})
+
+test('sectionHeadings：围栏代码块里的 `## ` 行是示例不是节，围栏按 CommonMark 规则配对', () => {
+	/** 取 [标题, 行号] 对，便于逐项比对。 */
+	const pairs = (text) => sectionHeadings(text).map(({ title, line }) => [title, line])
+	// 反引号围栏：开栏行带语言名、关栏行裸着；栏内两行同名 `## ` 不立节（重名假红的来源）
+	assert.deepEqual(pairs('## 真节\n```md\n## 示例\n## 示例\n```\n## 下一节\n'), [
+		['真节', 0],
+		['下一节', 5],
+	])
+	// 波浪线围栏与反引号围栏互不配对：``` 栏内的 ~~~ 不关栏
+	assert.deepEqual(pairs('```md\n~~~\n## 栏内\n```\n## 栏外\n'), [['栏外', 4]])
+	// 波浪线自己也能开栏：栏内的 `## ` 同样不算节
+	assert.deepEqual(pairs('~~~md\n## 栏内\n~~~\n## 栏外\n'), [['栏外', 3]])
+	// 关栏行不短于开栏行（CommonMark）：四个反引号开的栏，栏内三个反引号的那行关不上
+	assert.deepEqual(pairs('````\n## 栏内\n```\n## 仍栏内\n````\n## 栏外\n'), [['栏外', 5]])
+	// 缩进不超过三格的围栏也算开栏；栏内 `## ` 同样不算
+	assert.deepEqual(pairs('## 甲\n   ```\n## 栏内\n   ```\n## 乙\n'), [
+		['甲', 0],
+		['乙', 4],
+	])
+	// 栏没关到文末：后面的 `## ` 全在栏内，一个都不立
+	assert.deepEqual(pairs('## 甲\n```\n## 栏内一\n## 栏内二\n'), [['甲', 0]])
+	// 关栏行不许带 info 串：栏内引用的 ` ```text ` 只是内容，关不掉栏
+	assert.deepEqual(pairs('## 甲\n```\n## 栏内\n```text\n## 仍栏内\n```\n## 栏外\n'), [
+		['甲', 0],
+		['栏外', 6],
+	])
+	// 反引号围栏的 info 串里有反引号＝整行不是围栏（关栏位：关不掉栏）
+	assert.deepEqual(pairs('## 甲\n```\n## 栏内\n``` a`b\n## 仍栏内\n```\n## 栏外\n'), [
+		['甲', 0],
+		['栏外', 6],
+	])
+	// 同一条规则在开栏位：开不出栏，吞不掉后面的节
+	assert.deepEqual(pairs('## 甲\n``` a`b\n## 乙\n'), [
+		['甲', 0],
+		['乙', 2],
+	])
+})
 
 test('forEachWikilinkMatch：行号从 1 起，同行多匹配与跨行各自对位', () => {
 	/** 跑一遍并收集 (原始串, 行号)。 */
