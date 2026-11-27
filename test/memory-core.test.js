@@ -228,7 +228,7 @@ test('composeMemory：非本机段有条目时只出尾行不装索引（对机�
 	assert.ok(!再装.includes('machines/laptop'), '空段不占尾行——每台机器都建了目录时尾行会变成一串零')
 })
 
-test('composeMemory：输出不含任何规则块（写侧纪律已并入 AGENTS.md，注入块只装索引）', () => {
+test('composeMemory：输出不含任何规则块（写法细则住在 memory-writing 技能，注入块只装索引）', () => {
 	const { root, store } = fixture('compose-no-rules')
 	writeFileSync(join(store, 'a-topic.md'), entry('共享条目', '触发词'), 'utf8')
 	// 夹具里真的铺一份旧写侧文件：断言「不含规则块」由此获得判别力——若组装回植了规则块，

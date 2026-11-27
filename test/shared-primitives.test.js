@@ -73,11 +73,11 @@ test('styleWarnings：日期戳与派生行超长各出一条（kind 标注）�
 	// 合规：两条都不该报（超长判定是 `>`，恰满预算不报）
 	assert.deepEqual(styleWarnings({ description: '触发词', indexLine: 短行 }), [])
 	assert.deepEqual(styleWarnings({ description: '触发词', indexLine: 刚好 }), [], `恰 ${INDEX_LINE_CHAR_BUDGET} 字符不报`)
-	// 日期戳：文案须指向写侧纪律出处，否则读到的人不知道该去问哪条规则
+	// 日期戳：文案须指向写法细则的出处，否则读到的人不知道该去问哪条规则
 	const 日期戳 = styleWarnings({ description: '2026-01-02 记', indexLine: 短行 })
 	assert.equal(日期戳.length, 1)
 	assert.equal(日期戳[0].kind, 'date-stamp', '消费方按 kind 拣选，kind 是对外契约')
-	assert.ok(日期戳[0].text.includes('日期戳') && 日期戳[0].text.includes('AGENTS.md 记忆书写节'), 日期戳[0].text)
+	assert.ok(日期戳[0].text.includes('日期戳') && 日期戳[0].text.includes('memory-writing'), 日期戳[0].text)
 	// 超长：文案须给收敛方向，只说「超了」等于把判断留给读到的人
 	const 超长 = styleWarnings({ description: '触发词', indexLine: 超一行 })
 	assert.equal(超长.length, 1)

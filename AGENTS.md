@@ -12,7 +12,7 @@ DSH 插件包。README 只留插件页展示的短卡（宿主把已装包 READM
   例外＝**装卸/替换已装包不换模块代**：`plugin_manager install_bundle D:\code\repos\dsh-toolbox`
   之后必须重启 dsh web 才激活。
 
-## memory 机制（写侧契约同改面＝插件三码件＋AGENTS.md 记忆书写节，此处只记它们不载的）
+## memory 机制（写侧契约同改面＝插件三码件＋agent-data 的 memory-writing 技能（细则）与 AGENTS.md 记忆书写节（指针），此处只记它们不载的）
 
 - profile 接线（`~/.dsh/profiles/web/cordis.patch.yml` 的 `- id: dsh-toolbox` 行）：
   `machine: <机器名>`（小写字母数字与中划线）＋`memoryRoot: <agent-data 仓绝对路径>`
@@ -51,8 +51,8 @@ test/ scripts/          node:test 单测；checks.mjs 检查项数组＋check-me
 契约散在三处，**改一处必须同改其余处**：注入装配面 `lib/memory/index.js`（注册与
 描述词）、判定与派生 `lib/memory/naming.js`（条目名与保留名判定）与
 `lib/memory/frontmatter.js`（frontmatter 契约与索引行派生）、跨仓的书写规范
-agent-data 的 AGENTS.md「记忆书写」节（规则唯一家——写侧纪律原文住在那里，
-不再随索引注入）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
+agent-data 的 `skills/memory-writing` 技能（写法细则的唯一家；AGENTS.md「记忆书写」节只留加载指针，
+细则不随索引注入）。规范与实现不同步＝条目按旧格式写进来、`check:memory` 判红或漏判；改判定
 常量（节字数红线等）时同步 `scripts/checks.mjs` 的 guard 文案与镜像测试，数字不在
 两处各抄一份。
 
@@ -78,8 +78,8 @@ node D:\code\repos\dsh-toolbox\scripts\check-memory-index.mjs <记忆根> <机�
   `machines/<id>/` 不存在也以 1 退出（配了机器名却没有私有目录，先做条目迁移）。
   只有共享段的记忆根未给第二参不算错，命令末尾会提示未给机器 id。
   覆盖项与定档数值都以脚本自报为准（跑上面那条命令，末尾逐项打印 id／判据／守的常量）——本文件不手抄清单，脚本一改就会与手抄的那份分家。
-- **超线先收敛**：新增或改写记忆条目后若整块超定档，先并／删条目、精修 AGENTS.md
-  「记忆书写」节散文；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
+- **超线先收敛**：新增或改写记忆条目后若整块超定档，先并／删条目、收紧条目 description
+  （索引行由它派生）；不自动抬线。确需抬线必须在 commit message 里写明新实测值与理由，且新余量按
   「还能装几条新条目」换算（用实测的条目派生行均长），不按百分比——百分比定的线在语料
   一变就名不副实，实测按百分比定的线连一条新条目都装不下，等于每次写记忆都要抬线。
 - `npm test` 覆盖不到运行期（宿主接线、注入块在真实会话里的样子），所以它是下限
